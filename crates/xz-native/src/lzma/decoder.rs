@@ -18,6 +18,7 @@ use super::dict::Dict;
 use super::{LzmaProps, NUM_STATES};
 use crate::error::{Error, Result};
 use alloc::boxed::Box;
+use core::hint::select_unpredictable;
 
 const TOP: u32 = 1 << 24;
 const BIT_MODEL_TOTAL_BITS: u32 = 11;
@@ -141,13 +142,42 @@ impl<const SAFE: bool> Input<'_, SAFE> {
             let b = if SAFE {
                 *self.buf.get(self.pos).ok_or(Stop::NeedInput)?
             } else {
-                self.buf[self.pos]
+                debug_assert!(self.pos < self.buf.len());
+                // SAFETY: the fast path starts a symbol only with at least
+                // FAST_MIN bytes left, more than one symbol can read.
+                #[allow(unsafe_code)]
+                unsafe {
+                    *self.buf.get_unchecked(self.pos)
+                }
             };
             self.pos += 1;
             rc.range <<= 8;
             rc.code = (rc.code << 8) | b as u32;
         }
         Ok(())
+    }
+}
+
+/// Reads a probability. Every index is a constant offset plus a bit-tree
+/// symbol or context bounded by its tree, so it is always within `Probs`
+/// (`PROBS_SIZE` covers the largest literal coder, lc + lp = 4).
+#[inline(always)]
+fn prob(probs: &Probs, i: usize) -> u32 {
+    debug_assert!(i < PROBS_SIZE);
+    // SAFETY: see above; checked by debug assertions in tests and fuzzing.
+    #[allow(unsafe_code)]
+    unsafe {
+        *probs.get_unchecked(i) as u32
+    }
+}
+
+#[inline(always)]
+fn set_prob(probs: &mut Probs, i: usize, p: u32) {
+    debug_assert!(i < PROBS_SIZE);
+    // SAFETY: as in `prob`.
+    #[allow(unsafe_code)]
+    unsafe {
+        *probs.get_unchecked_mut(i) = p as u16;
     }
 }
 
@@ -161,21 +191,50 @@ fn bit<const SAFE: bool>(
     i: usize,
 ) -> core::result::Result<u32, Stop> {
     inp.normalize(rc)?;
-    let p = probs[i] as u32;
+    let p = prob(probs, i);
     if SAFE {
         undo.push(i, p as u16);
     }
     let bound = (rc.range >> BIT_MODEL_TOTAL_BITS) * p;
     if rc.code < bound {
         rc.range = bound;
-        probs[i] = (p + ((BIT_MODEL_TOTAL - p) >> MOVE_BITS)) as u16;
+        set_prob(probs, i, p + ((BIT_MODEL_TOTAL - p) >> MOVE_BITS));
         Ok(0)
     } else {
         rc.range -= bound;
         rc.code -= bound;
-        probs[i] = (p - (p >> MOVE_BITS)) as u16;
+        set_prob(probs, i, p - (p >> MOVE_BITS));
         Ok(1)
     }
+}
+
+/// Branchless version of [`bit`] for bit trees, where the decoded bits are
+/// unpredictable: the result selects with conditional moves instead of a
+/// branch (what liblzma's x86-64 assembly does).
+#[inline(always)]
+fn bit_bl<const SAFE: bool>(
+    rc: &mut Rc,
+    inp: &mut Input<'_, SAFE>,
+    probs: &mut Probs,
+    undo: &mut Undo,
+    i: usize,
+) -> core::result::Result<u32, Stop> {
+    inp.normalize(rc)?;
+    let p = prob(probs, i);
+    if SAFE {
+        undo.push(i, p as u16);
+    }
+    let bound = (rc.range >> BIT_MODEL_TOTAL_BITS) * p;
+    let one = rc.code >= bound;
+    rc.range = select_unpredictable(one, rc.range.wrapping_sub(bound), bound);
+    rc.code = select_unpredictable(one, rc.code.wrapping_sub(bound), rc.code);
+    let p = select_unpredictable(
+        one,
+        p - (p >> MOVE_BITS),
+        p + ((BIT_MODEL_TOTAL - p) >> MOVE_BITS),
+    );
+    set_prob(probs, i, p);
+    Ok(one as u32)
 }
 
 /// Bit tree of `BITS` bits rooted at `base + 1`; returns the symbol
@@ -190,7 +249,7 @@ fn bittree<const SAFE: bool, const BITS: u32>(
 ) -> core::result::Result<u32, Stop> {
     let mut sym = 1u32;
     for _ in 0..BITS {
-        sym = (sym << 1) + bit(rc, inp, probs, undo, base + sym as usize)?;
+        sym = (sym << 1) + bit_bl(rc, inp, probs, undo, base + sym as usize)?;
     }
     Ok(sym - (1 << BITS))
 }
@@ -208,7 +267,7 @@ fn bittree_rev<const SAFE: bool>(
     let mut i = 1usize;
     let mut out = 0u32;
     for k in 0..bits {
-        let b = bit(rc, inp, probs, undo, base + i)?;
+        let b = bit_bl(rc, inp, probs, undo, base + i)?;
         i = (i << 1) + b as usize;
         out |= b << k;
     }
@@ -305,7 +364,7 @@ fn symbol<const SAFE: bool>(
             while sym < 0x100 {
                 match_byte <<= 1;
                 let match_bit = match_byte & offset;
-                let b = bit(
+                let b = bit_bl(
                     rc,
                     inp,
                     probs,
