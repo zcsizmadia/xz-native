@@ -1,0 +1,26 @@
+[package]
+name = "xz-native"
+description = "Pure Rust XZ/LZMA compression, compatible with xz 5.8.4"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "../../README.md"
+keywords = ["xz", "lzma", "lzma2", "compression", "decompression"]
+categories = ["compression", "no-std"]
+
+[features]
+default = ["std"]
+## std::io adapters and runtime CPU feature detection.
+std = []
+## Disable all SIMD/CPU-specific code paths (for testing the portable fallbacks).
+portable = []
+
+[dependencies]
+
+[dev-dependencies]
+
+[lints]
+workspace = true

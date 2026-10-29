@@ -1,0 +1,41 @@
+[package]
+name = "xz-native-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+xz-native = { path = "../crates/xz-native" }
+# C liblzma 5.8.4, the reference for differential fuzzing only.
+liblzma = { version = "0.4.9", features = ["static"] }
+
+[[bin]]
+name = "decode_xz"
+path = "fuzz_targets/decode_xz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_lzma"
+path = "fuzz_targets/decode_lzma.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "diff_liblzma"
+path = "fuzz_targets/diff_liblzma.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1

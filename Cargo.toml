@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/xz-native", "crates/xz-bench"]
+default-members = ["crates/xz-native"]
+exclude = ["fuzz", "third_party"]
+
+[workspace.package]
+version = "5.8.400-alpha.1"
+edition = "2024"
+rust-version = "1.89"
+license = "0BSD"
+repository = "https://github.com/zcsizmadia/xz-native"
+authors = ["Zoltan Csizmadia <zcsizmadia@gmail.com>"]
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# Not available on the minimum supported Rust version.
+chunks_exact_to_as_chunks = "allow"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+# Optimized tests with debug assertions and overflow checks (CI).
+[profile.ci]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true
+lto = false
+codegen-units = 16
+panic = "unwind"
+incremental = true
+
+[profile.bench]
+lto = "fat"
+codegen-units = 1
+debug = 1

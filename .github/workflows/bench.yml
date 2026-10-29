@@ -1,0 +1,42 @@
+name: Benchmarks
+
+# Shared CI runners are noisy: treat these numbers as trends, and run
+# `cargo bench -p xz-bench` on a quiet machine for real comparisons.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 1"
+
+jobs:
+  bench:
+    name: bench ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64, os: ubuntu-24.04 }
+          - { name: linux-arm64, os: ubuntu-24.04-arm }
+          - { name: windows-x64, os: windows-latest }
+          - { name: windows-arm64, os: windows-11-arm }
+          - { name: macos-arm64, os: macos-latest }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run benchmarks
+        shell: bash
+        run: |
+          cargo bench -p xz-bench -- --warm-up-time 1 --measurement-time 5 2>&1 | tee bench.txt
+          {
+            echo "## ${{ matrix.name }}"
+            echo
+            echo "| Benchmark | Throughput (low / mid / high) |"
+            echo "|---|---|"
+            grep -E '^(decode|check)/|thrpt' bench.txt | paste - - \
+              | sed -E 's/ +/ /g; s/^([^ \t]+)[ \t]+thrpt: \[(.*)\]$/| \1 | \2 |/'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: criterion-${{ matrix.name }}
+          path: target/criterion
