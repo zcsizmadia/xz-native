@@ -58,6 +58,12 @@ fn ours(input: &[u8], format: Format) -> Option<Vec<u8>> {
                 flat == streaming,
                 "one-shot and streaming decoders disagree"
             );
+            let threads = xz_native::DecoderOptions { threads: 4, ..opts };
+            let threaded = xz_native::decompress_with_options(input, threads).ok();
+            assert!(
+                threaded == flat,
+                "threaded and single-threaded decoders disagree"
+            );
             flat
         }
     }
@@ -129,6 +135,19 @@ fn samples() -> Vec<(Vec<u8>, Format)> {
         f.arm64();
         f.lzma2(&LzmaOptions::new_preset(3).unwrap());
         v.push((compress(data, &f, Check::Crc32), Format::Xz));
+        // Multi-Block, for the threaded decoder.
+        let mut mt = Vec::new();
+        let enc = liblzma::stream::MtStreamBuilder::new()
+            .threads(2)
+            .block_size(4096)
+            .preset(1)
+            .check(Check::Crc64)
+            .encoder()
+            .unwrap();
+        liblzma::read::XzEncoder::new_stream(&data[..], enc)
+            .read_to_end(&mut mt)
+            .unwrap();
+        v.push((mt, Format::Xz));
         let mut out = Vec::new();
         let enc = Stream::new_lzma_encoder(&LzmaOptions::new_preset(6).unwrap()).unwrap();
         liblzma::read::XzEncoder::new_stream(&data[..], enc)

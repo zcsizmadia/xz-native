@@ -30,6 +30,11 @@ pub struct DecoderOptions {
     /// Fail with [`Error::Options`] on a check type this implementation can't
     /// verify (default: false; the check is skipped, as liblzma does).
     pub fail_on_unsupported_check: bool,
+    /// Threads for one-shot decoding of multi-Block .xz data with
+    /// [`crate::decompress_with_options`] (default: 1; 0 = one per CPU).
+    /// Blocks are decoded in parallel; results and errors are identical to
+    /// single-threaded decoding. Needs the `std` feature, otherwise ignored.
+    pub threads: usize,
 }
 
 impl Default for DecoderOptions {
@@ -39,6 +44,7 @@ impl Default for DecoderOptions {
             concatenated: true,
             ignore_check: false,
             fail_on_unsupported_check: false,
+            threads: 1,
         }
     }
 }

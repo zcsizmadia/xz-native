@@ -259,3 +259,92 @@ pub(crate) fn decompress(input: &[u8], opts: &DecoderOptions) -> Result<Vec<u8>>
     }
     Ok(out)
 }
+
+/// Decodes one Block of a parsed file, which must match its Index record.
+#[cfg(feature = "std")]
+fn decode_entry(
+    input: &[u8],
+    b: &crate::seek::BlockEntry,
+    opts: &DecoderOptions,
+) -> Result<Vec<u8>> {
+    let start = usize::try_from(b.compressed_offset).map_err(|_| Error::Data)?;
+    let end = usize::try_from(b.compressed_offset + b.unpadded_size.next_multiple_of(4))
+        .map_err(|_| Error::Data)?;
+    let block = input.get(start..end).ok_or(Error::Data)?;
+    let size = (*block.first().ok_or(Error::Data)? as usize + 1) * 4;
+    if block[0] == 0 || size > block.len() {
+        return Err(Error::Data);
+    }
+    let hdr = decode_block_header(&block[..size], b.check)?;
+    let mem: u64 = hdr.filters.iter().map(|f| f.decoder_mem_usage()).sum();
+    if mem > opts.memlimit {
+        return Err(Error::MemLimit);
+    }
+    let mut out =
+        Vec::with_capacity(usize::try_from(b.uncompressed_size).map_err(|_| Error::MemLimit)?);
+    let (used, unpadded, uncompressed) =
+        decode_block(&block[size..], &mut out, &hdr, b.check, !opts.ignore_check)?;
+    if size + used != block.len()
+        || unpadded != b.unpadded_size
+        || uncompressed != b.uncompressed_size
+    {
+        return Err(Error::Data);
+    }
+    Ok(out)
+}
+
+/// Multithreaded [`decompress`]: decodes the Blocks of a multi-Block file in
+/// parallel, located through the Index. Any problem, including an Index that
+/// can't be parsed, falls back to the single-threaded decoder, so results and
+/// errors are the same as without threads.
+#[cfg(feature = "std")]
+pub(crate) fn decompress_threads(input: &[u8], opts: &DecoderOptions) -> Result<Vec<u8>> {
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    let threads = match opts.threads {
+        0 => std::thread::available_parallelism().map_or(1, |n| n.get()),
+        n => n,
+    };
+    if threads < 2 || !opts.concatenated {
+        return decompress(input, opts);
+    }
+    let Ok(blocks) = crate::seek::parse_slice(input, opts) else {
+        return decompress(input, opts);
+    };
+    if blocks.len() < 2 {
+        return decompress(input, opts);
+    }
+
+    let next = AtomicUsize::new(0);
+    let failed = AtomicBool::new(false);
+    let results: Vec<Mutex<Option<Vec<u8>>>> = blocks.iter().map(|_| Mutex::new(None)).collect();
+    std::thread::scope(|s| {
+        for _ in 0..threads.min(blocks.len()) {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    if i >= blocks.len() || failed.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    match decode_entry(input, &blocks[i], opts) {
+                        Ok(v) => *results[i].lock().unwrap() = Some(v),
+                        Err(_) => failed.store(true, Ordering::Relaxed),
+                    }
+                }
+            });
+        }
+    });
+    if failed.load(Ordering::Relaxed) {
+        // Report exactly what the single-threaded decoder reports.
+        return decompress(input, opts);
+    }
+    let total = blocks
+        .last()
+        .map_or(0, |b| b.uncompressed_offset + b.uncompressed_size);
+    let mut out = Vec::with_capacity(usize::try_from(total).map_err(|_| Error::MemLimit)?);
+    for r in results {
+        out.extend_from_slice(&r.into_inner().unwrap().expect("every Block was decoded"));
+    }
+    Ok(out)
+}

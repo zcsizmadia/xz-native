@@ -41,6 +41,10 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
 
 /// Decompresses .xz data with options.
 pub fn decompress_with_options(input: &[u8], opts: DecoderOptions) -> Result<Vec<u8>> {
+    #[cfg(feature = "std")]
+    if opts.threads != 1 {
+        return crate::xz::flat::decompress_threads(input, &opts);
+    }
     crate::xz::flat::decompress(input, &opts)
 }
 

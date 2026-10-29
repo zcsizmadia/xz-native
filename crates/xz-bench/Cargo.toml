@@ -15,7 +15,7 @@ criterion = { version = "0.8", default-features = false, features = ["cargo_benc
 lzma-rust2 = "0.24"
 # C liblzma 5.8.4 built from the bundled source. Used only as a speed
 # reference and to produce test inputs; never a dependency of xz-native.
-liblzma = { version = "0.4.9", features = ["static"] }
+liblzma = { version = "0.4.9", features = ["static", "parallel"] }
 liblzma-sys = { version = "0.4.9", features = ["static"] }
 
 [[bench]]
