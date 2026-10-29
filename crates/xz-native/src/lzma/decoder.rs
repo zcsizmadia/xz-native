@@ -142,13 +142,42 @@ impl<const SAFE: bool> Input<'_, SAFE> {
             let b = if SAFE {
                 *self.buf.get(self.pos).ok_or(Stop::NeedInput)?
             } else {
-                self.buf[self.pos]
+                debug_assert!(self.pos < self.buf.len());
+                // SAFETY: the fast path starts a symbol only with at least
+                // FAST_MIN bytes left, more than one symbol can read.
+                #[allow(unsafe_code)]
+                unsafe {
+                    *self.buf.get_unchecked(self.pos)
+                }
             };
             self.pos += 1;
             rc.range <<= 8;
             rc.code = (rc.code << 8) | b as u32;
         }
         Ok(())
+    }
+}
+
+/// Reads a probability. Every index is a constant offset plus a bit-tree
+/// symbol or context bounded by its tree, so it is always within `Probs`
+/// (`PROBS_SIZE` covers the largest literal coder, lc + lp = 4).
+#[inline(always)]
+fn prob(probs: &Probs, i: usize) -> u32 {
+    debug_assert!(i < PROBS_SIZE);
+    // SAFETY: see above; checked by debug assertions in tests and fuzzing.
+    #[allow(unsafe_code)]
+    unsafe {
+        *probs.get_unchecked(i) as u32
+    }
+}
+
+#[inline(always)]
+fn set_prob(probs: &mut Probs, i: usize, p: u32) {
+    debug_assert!(i < PROBS_SIZE);
+    // SAFETY: as in `prob`.
+    #[allow(unsafe_code)]
+    unsafe {
+        *probs.get_unchecked_mut(i) = p as u16;
     }
 }
 
@@ -162,19 +191,19 @@ fn bit<const SAFE: bool>(
     i: usize,
 ) -> core::result::Result<u32, Stop> {
     inp.normalize(rc)?;
-    let p = probs[i] as u32;
+    let p = prob(probs, i);
     if SAFE {
         undo.push(i, p as u16);
     }
     let bound = (rc.range >> BIT_MODEL_TOTAL_BITS) * p;
     if rc.code < bound {
         rc.range = bound;
-        probs[i] = (p + ((BIT_MODEL_TOTAL - p) >> MOVE_BITS)) as u16;
+        set_prob(probs, i, p + ((BIT_MODEL_TOTAL - p) >> MOVE_BITS));
         Ok(0)
     } else {
         rc.range -= bound;
         rc.code -= bound;
-        probs[i] = (p - (p >> MOVE_BITS)) as u16;
+        set_prob(probs, i, p - (p >> MOVE_BITS));
         Ok(1)
     }
 }
@@ -191,7 +220,7 @@ fn bit_bl<const SAFE: bool>(
     i: usize,
 ) -> core::result::Result<u32, Stop> {
     inp.normalize(rc)?;
-    let p = probs[i] as u32;
+    let p = prob(probs, i);
     if SAFE {
         undo.push(i, p as u16);
     }
@@ -204,7 +233,7 @@ fn bit_bl<const SAFE: bool>(
         p - (p >> MOVE_BITS),
         p + ((BIT_MODEL_TOTAL - p) >> MOVE_BITS),
     );
-    probs[i] = p as u16;
+    set_prob(probs, i, p);
     Ok(one as u32)
 }
 
