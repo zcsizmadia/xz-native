@@ -1,0 +1,30 @@
+name: Miri
+
+# Slow (about 30+ minutes), so manual only for now; see the issue about a
+# faster subset for every PR.
+on:
+  workflow_dispatch:
+
+jobs:
+  miri:
+    name: miri ${{ matrix.target }}
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Little endian and big endian.
+        target: [x86_64-unknown-linux-gnu, s390x-unknown-linux-gnu]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - run: cargo miri setup --target ${{ matrix.target }}
+      - name: Unit tests
+        run: cargo miri test -p xz-native --lib --target ${{ matrix.target }}
+      - name: xz test files
+        run: cargo miri test -p xz-native --test xz_test_files --target ${{ matrix.target }}
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation

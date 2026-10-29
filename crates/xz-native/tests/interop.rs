@@ -59,6 +59,10 @@ fn stream_decode(
 fn xz_cli_interop() {
     let corpus = corpus();
     for opts in OPTIONS {
+        if !common::xz_supports(opts) {
+            eprintln!("installed xz doesn't support {opts:?}; skipping");
+            continue;
+        }
         for (name, data) in &corpus {
             let mut args = vec!["-z", "-c"];
             args.extend_from_slice(opts);
