@@ -19,7 +19,7 @@ concurrency:
 jobs:
   fuzz:
     name: fuzz ${{ matrix.target }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -28,7 +28,7 @@ jobs:
       # Short runs on pushes and PRs, long runs nightly or on demand.
       SECONDS_PER_TARGET: ${{ github.event_name == 'schedule' && '1800' || github.event.inputs.seconds || '180' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - uses: dtolnay/rust-toolchain@nightly
@@ -39,7 +39,7 @@ jobs:
         with:
           workspaces: fuzz
       - name: Restore corpus
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
@@ -60,22 +60,23 @@ jobs:
       - name: Fuzz
         working-directory: fuzz
         run: >
-          cargo fuzz run ${{ matrix.target }} --
+          cargo fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} --
           -max_total_time=${{ env.SECONDS_PER_TARGET }}
           -rss_limit_mb=4096 -timeout=60 -max_len=1048576
       - name: Minimize corpus
         if: always()
         working-directory: fuzz
-        run: cargo fuzz cmin ${{ matrix.target }} || true
+        run: cargo fuzz cmin --target x86_64-unknown-linux-gnu ${{ matrix.target }} || true
       - name: Save corpus
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-artifacts-${{ matrix.target }}
           path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore

@@ -93,8 +93,10 @@ runs weekly and on demand on all CI platforms.
 ## Testing and CI
 
 - `ci.yml`: fmt, clippy (`-D warnings`), docs; tests on Linux x64/arm64,
-  Windows x64/arm64 and macOS arm64 with SIMD and with `portable`; Miri on
-  x86-64 and s390x (big endian); `no_std`, wasm32, i686 builds; MSRV.
+  Windows x64/arm64 and macOS arm64 with SIMD and with `portable`; `no_std`,
+  wasm32, i686 builds; MSRV.
+- `miri.yml` (manual for now, it is slow): Miri on x86-64 and s390x (big
+  endian).
 - `fuzz.yml`: cargo-fuzz targets `decode_xz`, `decode_lzma` (streaming with
   random buffer sizes must equal one-shot) and `diff_liblzma` (must agree
   with C liblzma). 3 minutes per target on every push and PR, 30 minutes

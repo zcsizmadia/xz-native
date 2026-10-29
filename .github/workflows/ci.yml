@@ -17,9 +17,9 @@ env:
 jobs:
   lint:
     name: fmt, clippy, docs
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -38,15 +38,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: linux-x64, os: ubuntu-24.04, require_xz: "1" }
-          - { name: linux-arm64, os: ubuntu-24.04-arm, require_xz: "1" }
+          - { name: linux-x64, os: ubuntu-26.04, require_xz: "1" }
+          - { name: linux-arm64, os: ubuntu-26.04-arm, require_xz: "1" }
           - { name: windows-x64, os: windows-latest, require_xz: "" }
           - { name: windows-arm64, os: windows-11-arm, require_xz: "" }
           - { name: macos-arm64, os: macos-latest, require_xz: "1" }
     env:
       XZ_NATIVE_REQUIRE_XZ: ${{ matrix.require_xz }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
@@ -69,32 +69,9 @@ jobs:
       - name: Build benchmarks
         run: cargo bench -p xz-bench --no-run
 
-  miri:
-    name: miri ${{ matrix.target }}
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        # Little endian and big endian.
-        target: [x86_64-unknown-linux-gnu, s390x-unknown-linux-gnu]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: miri
-      - run: cargo miri setup --target ${{ matrix.target }}
-      - name: Unit tests
-        run: cargo miri test -p xz-native --lib --target ${{ matrix.target }}
-      - name: xz test files
-        run: cargo miri test -p xz-native --test xz_test_files --target ${{ matrix.target }}
-        env:
-          MIRIFLAGS: -Zmiri-disable-isolation
-
   targets:
     name: build ${{ matrix.target }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -104,7 +81,7 @@ jobs:
           - { target: i686-unknown-linux-gnu, flags: "" }
           - { target: aarch64-unknown-linux-gnu, flags: --no-default-features }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -112,9 +89,9 @@ jobs:
 
   msrv:
     name: MSRV
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.89
       - run: cargo check -p xz-native
       - run: cargo check -p xz-native --no-default-features

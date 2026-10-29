@@ -70,6 +70,22 @@ pub fn corpus() -> Vec<(String, Vec<u8>)> {
     v
 }
 
+/// Version of the system `xz` as (major, minor), if installed.
+pub fn xz_version() -> Option<(u32, u32)> {
+    let out = Command::new("xz").arg("--version").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    // "xz (XZ Utils) 5.8.4"
+    let ver = text.lines().next()?.rsplit(' ').next()?;
+    let mut it = ver.split('.').map(|p| p.parse().ok());
+    Some((it.next()??, it.next()??))
+}
+
+/// Whether the system `xz` supports the options (RISC-V needs xz 5.6).
+pub fn xz_supports(args: &[&str]) -> bool {
+    let needs_5_6 = args.iter().any(|a| a.starts_with("--riscv"));
+    !needs_5_6 || xz_version().is_some_and(|v| v >= (5, 6))
+}
+
 /// Runs the system `xz` with `args`, feeding `input` on stdin.
 /// Returns None if xz isn't installed (unless XZ_NATIVE_REQUIRE_XZ is set).
 pub fn xz(args: &[&str], input: &[u8]) -> Option<Vec<u8>> {
