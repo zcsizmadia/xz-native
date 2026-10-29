@@ -60,6 +60,12 @@ pub(crate) fn crc32_generic(data: &[u8], crc: u32) -> u32 {
 #[inline]
 pub fn crc32(data: &[u8], crc: u32) -> u32 {
     #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+    if data.len() >= super::x86::VPCLMUL_MIN_LEN && crate::cpu::has_vpclmul() {
+        // SAFETY: the required CPU features were detected above.
+        #[allow(unsafe_code)]
+        return unsafe { super::x86::crc32_vpclmul(data, crc) };
+    }
+    #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
     if crate::cpu::has_clmul() {
         // SAFETY: the required CPU features were detected above.
         #[allow(unsafe_code)]

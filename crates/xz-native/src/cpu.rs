@@ -62,6 +62,21 @@ pub(crate) fn has_clmul() -> bool {
     }
 }
 
+/// 256-bit carry-less multiplication for wide CRC folding (x86-64:
+/// VPCLMULQDQ + AVX2, plus everything [`has_clmul`] needs for the tail).
+#[inline]
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn has_vpclmul() -> bool {
+    #[cfg(not(feature = "portable"))]
+    {
+        x86_has!("vpclmulqdq", "avx2", "pclmulqdq", "sse4.1", "ssse3")
+    }
+    #[cfg(feature = "portable")]
+    {
+        false
+    }
+}
+
 /// ARMv8 CRC32 instructions.
 #[inline]
 #[cfg(target_arch = "aarch64")]
