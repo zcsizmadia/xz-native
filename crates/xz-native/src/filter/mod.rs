@@ -8,6 +8,7 @@ pub use bcj::BcjKind;
 use crate::error::{Error, Result};
 use crate::lzma::lzma2::Lzma2Decoder;
 use crate::lzma::{LzDriver, Progress, lzma2_dict_size};
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 pub(crate) const FILTER_DELTA: u64 = 0x03;
@@ -263,8 +264,9 @@ pub(crate) struct ChainDecoder {
 }
 
 impl ChainDecoder {
-    /// `filters` must have passed [`validate_chain`].
-    pub(crate) fn new(filters: &[Filter]) -> Self {
+    /// `filters` must have passed [`validate_chain`]. With a known
+    /// uncompressed size, the dictionary is no larger than that.
+    pub(crate) fn new(filters: &[Filter], uncompressed: Option<u64>) -> Self {
         let (last, rest) = filters.split_last().expect("validated chain");
         let Filter::Lzma2 { dict_size } = *last else {
             unreachable!("validated chain")
@@ -279,7 +281,7 @@ impl ChainDecoder {
             .collect();
         Self {
             stages,
-            lz: LzDriver::new(Lzma2Decoder::new(), dict_size),
+            lz: LzDriver::new(Lzma2Decoder::new(), cap_dict(dict_size, uncompressed)),
         }
     }
 
@@ -306,5 +308,81 @@ fn decode_level(
             Ok(r)
         }
         Some((Stage::Bcj(b), rest)) => b.decode(&mut |i, o| decode_level(rest, lz, i, o), inp, out),
+    }
+}
+
+#[derive(Debug)]
+enum InPlace {
+    Delta(Box<Delta>),
+    Bcj { bcj: Bcj, start_offset: u32 },
+}
+
+/// The non-last filters of a chain, applied in place to a Block decoded
+/// into one buffer. Each stage tracks how far it has filtered.
+#[derive(Debug)]
+pub(crate) struct InPlaceFilters {
+    /// In decoding order: the filter next to LZMA2 first.
+    stages: Vec<(InPlace, usize)>,
+}
+
+impl InPlaceFilters {
+    /// `filters` must have passed [`validate_chain`]; `start` is the Block's
+    /// first byte in the buffer.
+    pub(crate) fn new(filters: &[Filter], start: usize) -> Self {
+        let rest = &filters[..filters.len() - 1];
+        let stages = rest
+            .iter()
+            .rev()
+            .map(|f| {
+                let s = match *f {
+                    Filter::Delta { distance } => InPlace::Delta(Box::new(Delta::new(distance))),
+                    Filter::Bcj { kind, start_offset } => InPlace::Bcj {
+                        bcj: Bcj::new(kind, false),
+                        start_offset,
+                    },
+                    Filter::Lzma2 { .. } => unreachable!("validated chain"),
+                };
+                (s, start)
+            })
+            .collect();
+        Self { stages }
+    }
+
+    /// Filters newly decoded bytes up to `end`. Returns the end of the
+    /// prefix that is final. With `finish`, everything up to `end` is final.
+    pub(crate) fn process(
+        &mut self,
+        buf: &mut [u8],
+        start: usize,
+        end: usize,
+        finish: bool,
+    ) -> usize {
+        let mut avail = end;
+        for (stage, done) in &mut self.stages {
+            match stage {
+                InPlace::Delta(d) => {
+                    d.decode(&mut buf[*done..avail]);
+                    *done = avail;
+                }
+                InPlace::Bcj { bcj, start_offset } => {
+                    let now_pos = start_offset.wrapping_add((*done - start) as u32);
+                    *done += bcj.code(now_pos, &mut buf[*done..avail]);
+                    if finish {
+                        *done = avail;
+                    }
+                }
+            }
+            avail = *done;
+        }
+        avail
+    }
+}
+
+/// Limits a dictionary to the uncompressed size when that is known: matches
+/// can't reach further back than the data decoded so far.
+pub(crate) fn cap_dict(dict_size: u32, uncompressed: Option<u64>) -> u32 {
+    match uncompressed {
+        Some(u) => dict_size.min(u.min(u32::MAX as u64) as u32),
+        None => dict_size,
     }
 }

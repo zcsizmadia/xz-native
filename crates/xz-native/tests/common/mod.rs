@@ -80,10 +80,17 @@ pub fn xz_version() -> Option<(u32, u32)> {
     Some((it.next()??, it.next()??))
 }
 
-/// Whether the system `xz` supports the options (RISC-V needs xz 5.6).
+/// Whether the system `xz` supports the options (ARM64 needs xz 5.4,
+/// RISC-V 5.6).
 pub fn xz_supports(args: &[&str]) -> bool {
-    let needs_5_6 = args.iter().any(|a| a.starts_with("--riscv"));
-    !needs_5_6 || xz_version().is_some_and(|v| v >= (5, 6))
+    let needed = if args.iter().any(|a| a.starts_with("--riscv")) {
+        (5, 6)
+    } else if args.iter().any(|a| a.starts_with("--arm64")) {
+        (5, 4)
+    } else {
+        (5, 0)
+    };
+    xz_version().is_some_and(|v| v >= needed)
 }
 
 /// Runs the system `xz` with `args`, feeding `input` on stdin.
