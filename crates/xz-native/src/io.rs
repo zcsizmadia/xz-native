@@ -2,6 +2,7 @@
 
 use crate::alone::LzmaDecoderAlone;
 use crate::error::Result;
+use crate::lzip::LzipDecoder;
 use crate::xz::stream::{DecoderOptions, Status, XzDecoder};
 use std::io::{self, BufRead, Read};
 
@@ -33,6 +34,17 @@ impl Decode for LzmaDecoderAlone {
         finish: bool,
     ) -> Result<(usize, usize, Status)> {
         LzmaDecoderAlone::decode(self, input, output, finish)
+    }
+}
+
+impl Decode for LzipDecoder {
+    fn decode(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+    ) -> Result<(usize, usize, Status)> {
+        LzipDecoder::decode(self, input, output, finish)
     }
 }
 
@@ -123,6 +135,45 @@ impl<R: BufRead> LzmaReader<R> {
 }
 
 impl<R: BufRead> Read for LzmaReader<R> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        read_with(&mut self.dec, &mut self.inner, &mut self.done, out)
+    }
+}
+
+/// Decompressing reader for .lz (lzip) data.
+///
+/// Data after the last member is left unread in the inner reader, except
+/// that leading bytes matching the start of the "LZIP" magic are consumed
+/// (see [`LzipDecoder`]).
+#[derive(Debug)]
+pub struct LzipReader<R> {
+    inner: R,
+    dec: LzipDecoder,
+    done: bool,
+}
+
+impl<R: BufRead> LzipReader<R> {
+    /// Creates a reader for concatenated members without a memory limit.
+    pub fn new(inner: R) -> Self {
+        Self::with_options(inner, DecoderOptions::default())
+    }
+
+    /// Creates a reader with options (see [`LzipDecoder::with_options`]).
+    pub fn with_options(inner: R, opts: DecoderOptions) -> Self {
+        Self {
+            inner,
+            dec: LzipDecoder::with_options(opts),
+            done: false,
+        }
+    }
+
+    /// Returns the inner reader.
+    pub fn into_inner(self) -> R {
+        self.inner
+    }
+}
+
+impl<R: BufRead> Read for LzipReader<R> {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         read_with(&mut self.dec, &mut self.inner, &mut self.done, out)
     }

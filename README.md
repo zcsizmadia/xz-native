@@ -14,8 +14,8 @@ library [Lzma.Net](https://github.com/zcsizmadia/Lzma.Net).
   on corrupt input. Tested against the xz test files, the `xz` CLI and C
   liblzma (differential tests and CI fuzzing).
 
-> **Status:** early development. Decoding of `.xz` and `.lzma` works and is
-> heavily tested; the encoder is next. See the
+> **Status:** early development. Decoding of `.xz`, `.lzma` and `.lz` works
+> and is heavily tested; the encoder is next. See the
 > [roadmap](docs/PROPOSAL.md#milestones) and the
 > [issues](https://github.com/zcsizmadia/xz-native/issues).
 
@@ -46,7 +46,7 @@ without `std`, like `lzma_code` in liblzma.
 | `.xz` (multi-block, concatenated streams, padding) | yes | planned |
 | `.lzma` (LZMA_Alone) | yes | planned |
 | Raw LZMA1 / LZMA2 | internal | planned |
-| `.lz` (lzip) | planned | - |
+| `.lz` (lzip, versions 0 and 1, concatenated members, trailing data) | yes | - |
 | Filters: x86, ARM, ARM-Thumb, ARM64, PowerPC, IA-64, SPARC, RISC-V, Delta | yes | planned |
 | Checks: None, CRC32, CRC64, SHA-256 | yes | planned |
 | Multithreading | planned | planned |
