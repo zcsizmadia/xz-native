@@ -38,6 +38,13 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
 
 /// Decompresses .xz data with options.
 pub fn decompress_with_options(input: &[u8], opts: DecoderOptions) -> Result<Vec<u8>> {
+    crate::xz::flat::decompress(input, &opts)
+}
+
+/// Streaming-decoder version of [`decompress_with_options`], used to test
+/// that both paths agree.
+#[doc(hidden)]
+pub fn decompress_streaming(input: &[u8], opts: DecoderOptions) -> Result<Vec<u8>> {
     let mut d = XzDecoder::with_options(opts);
     decode_all(input, |i, o, f| d.decode(i, o, f))
 }

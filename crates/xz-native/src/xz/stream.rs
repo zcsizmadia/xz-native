@@ -44,7 +44,7 @@ impl Default for DecoderOptions {
 
 /// Running summary of Block or Index records, compared at the Index.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-struct RecordHash {
+pub(crate) struct RecordHash {
     count: u64,
     unpadded: u64,
     uncompressed: u64,
@@ -52,7 +52,7 @@ struct RecordHash {
 }
 
 impl RecordHash {
-    fn add(&mut self, unpadded: u64, uncompressed: u64) -> Result<()> {
+    pub(crate) fn add(&mut self, unpadded: u64, uncompressed: u64) -> Result<()> {
         self.count += 1;
         self.unpadded = self
             .unpadded
@@ -83,7 +83,7 @@ enum IndexSeq {
 }
 
 #[derive(Debug)]
-struct IndexDecoder {
+pub(crate) struct IndexDecoder {
     seq: IndexSeq,
     vli: VliReader,
     remaining: u64,
@@ -97,7 +97,7 @@ struct IndexDecoder {
 }
 
 impl IndexDecoder {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             seq: IndexSeq::Indicator,
             vli: VliReader::default(),
@@ -112,7 +112,7 @@ impl IndexDecoder {
     }
 
     /// Feeds bytes; returns `(consumed, done)`.
-    fn feed(&mut self, inp: &[u8], blocks: &RecordHash) -> Result<(usize, bool)> {
+    pub(crate) fn feed(&mut self, inp: &[u8], blocks: &RecordHash) -> Result<(usize, bool)> {
         let mut i = 0;
         let hashed = 0;
         while i < inp.len() {
@@ -184,7 +184,7 @@ impl IndexDecoder {
     }
 
     /// Total Index size including the CRC32.
-    fn total_size(&self) -> u64 {
+    pub(crate) fn total_size(&self) -> u64 {
         self.size + 4
     }
 }
@@ -336,7 +336,7 @@ impl XzDecoder {
                     }
                     let verify = !self.opts.ignore_check;
                     self.block = Some(BlockState {
-                        chain: ChainDecoder::new(&h.filters),
+                        chain: ChainDecoder::new(&h.filters, h.uncompressed_size),
                         header_size: h.header_size as u64,
                         declared_compressed: h.compressed_size,
                         declared_uncompressed: h.uncompressed_size,

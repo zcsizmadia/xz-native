@@ -66,7 +66,11 @@ impl LzmaDecoderAlone {
             }
             let mut dec = LzmaDecoder::new(props);
             dec.set_uncompressed((size != u64::MAX).then_some(size), true);
-            self.lz = Some(LzDriver::new(dec, dict_size));
+            let known = (size != u64::MAX).then_some(size);
+            self.lz = Some(LzDriver::new(
+                dec,
+                crate::filter::cap_dict(dict_size, known),
+            ));
         }
         let lz = self.lz.as_mut().unwrap();
         let (u, w, p) = lz.decode(&input[ip..], output)?;

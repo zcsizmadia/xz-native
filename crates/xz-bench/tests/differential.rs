@@ -43,7 +43,13 @@ fn ours(input: &[u8], lzma_alone: bool) -> Option<Vec<u8>> {
             memlimit: MEMLIMIT,
             ..Default::default()
         };
-        xz_native::decompress_with_options(input, opts).ok()
+        let flat = xz_native::decompress_with_options(input, opts).ok();
+        let streaming = xz_native::decompress_streaming(input, opts).ok();
+        assert!(
+            flat == streaming,
+            "one-shot and streaming decoders disagree"
+        );
+        flat
     }
 }
 

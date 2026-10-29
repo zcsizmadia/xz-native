@@ -58,6 +58,19 @@ pub fn xz_stream(input: &[u8], seed: u8) -> Outcome {
     stream(input, seed, |i, o, f| d.decode(i, o, f))
 }
 
+/// One-shot decode. Only for inputs small enough that the largest possible
+/// LZMA expansion stays within memory (it has no output cap).
+pub fn xz_oneshot(input: &[u8]) -> Outcome {
+    if input.len() > 4096 {
+        return Outcome::Skip;
+    }
+    match xz_native::decompress_with_options(input, xz_options()) {
+        Ok(v) => Outcome::Ok(v),
+        Err(xz_native::Error::MemLimit) => Outcome::Skip,
+        Err(_) => Outcome::Err,
+    }
+}
+
 pub fn lzma_stream(input: &[u8], seed: u8) -> Outcome {
     let mut d = LzmaDecoderAlone::new(MEMLIMIT);
     stream(input, seed, |i, o, f| d.decode(i, o, f))

@@ -42,6 +42,7 @@ pub use filter::{BcjKind, Filter};
 pub use io::{LzmaReader, XzReader};
 pub use lzma::LzmaProps;
 pub use oneshot::{
-    decompress, decompress_lzma, decompress_lzma_with_memlimit, decompress_with_options,
+    decompress, decompress_lzma, decompress_lzma_with_memlimit, decompress_streaming,
+    decompress_with_options,
 };
 pub use xz::stream::{DecoderOptions, Status, XzDecoder};

@@ -29,6 +29,10 @@ pub(crate) struct Dict {
     has_wrapped: bool,
     /// Set by the LZMA2 decoder; the driver resets after flushing.
     pub(crate) need_reset: bool,
+    /// Position of the oldest byte after the last reset.
+    base: usize,
+    /// Flat mode: `buf` is the output itself and never wraps.
+    flat: bool,
 }
 
 impl Dict {
@@ -51,15 +55,43 @@ impl Dict {
             size,
             has_wrapped: false,
             need_reset: false,
+            base: INIT_POS,
+            flat: false,
         };
         d.reset();
         d
     }
 
+    /// A dictionary that decodes straight into `buf`, starting at `start`
+    /// (an LZMA2 dictionary reset point). The caller grows `buf` and sets
+    /// `limit` before each decode call.
+    pub(crate) fn new_flat(buf: Vec<u8>, start: usize) -> Self {
+        Self {
+            buf,
+            pos: start,
+            full: 0,
+            limit: start,
+            size: usize::MAX,
+            has_wrapped: false,
+            need_reset: false,
+            base: start,
+            flat: true,
+        }
+    }
+
+    /// Returns the buffer of a flat dictionary.
+    pub(crate) fn into_buf(self) -> Vec<u8> {
+        self.buf
+    }
+
     pub(crate) fn reset(&mut self) {
-        self.pos = INIT_POS;
+        if self.flat {
+            self.base = self.pos;
+        } else {
+            self.pos = INIT_POS;
+            self.buf[INIT_POS - 1] = 0;
+        }
         self.full = 0;
-        self.buf[INIT_POS - 1] = 0;
         self.has_wrapped = false;
         self.need_reset = false;
     }
@@ -77,7 +109,7 @@ impl Dict {
     #[inline(always)]
     fn update_full(&mut self) {
         if !self.has_wrapped {
-            self.full = self.pos - INIT_POS;
+            self.full = self.pos - self.base;
         }
     }
 
@@ -88,6 +120,7 @@ impl Dict {
         let idx = if d < self.pos {
             self.pos - d - 1
         } else {
+            debug_assert!(!self.flat);
             self.pos + self.size - REPEAT_MAX - d - 1
         };
         self.buf[idx]
@@ -95,7 +128,13 @@ impl Dict {
 
     #[inline(always)]
     pub(crate) fn get0(&self) -> u8 {
-        self.buf[self.pos - 1]
+        // The previous byte is 0 right after a reset. (A flat dictionary
+        // has the previous Block's data before `base`.)
+        if self.full == 0 {
+            0
+        } else {
+            self.buf[self.pos - 1]
+        }
     }
 
     #[inline(always)]
