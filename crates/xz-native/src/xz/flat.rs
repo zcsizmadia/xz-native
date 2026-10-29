@@ -227,7 +227,7 @@ pub(crate) fn decompress(input: &[u8], opts: &DecoderOptions) -> Result<Vec<u8>>
         }
 
         let mut index = IndexDecoder::new();
-        let (used, done) = index.feed(&input[pos..], &blocks)?;
+        let (used, done) = index.feed(&input[pos..], Some(&blocks))?;
         pos += used;
         if !done {
             return Err(Error::Truncated);

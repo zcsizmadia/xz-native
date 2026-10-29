@@ -7,6 +7,7 @@ use crate::error::{Error, Result};
 use crate::filter::ChainDecoder;
 use crate::lzma::Progress;
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 /// Status returned by streaming decoders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +95,10 @@ pub(crate) struct IndexDecoder {
     size: u64,
     crc_buf: [u8; 4],
     crc_pos: usize,
+    /// The records as `(unpadded, uncompressed)` pairs, if kept.
+    list: Option<Vec<(u64, u64)>>,
+    /// Most records `list` may hold (the memory limit).
+    max_records: u64,
 }
 
 impl IndexDecoder {
@@ -108,11 +113,36 @@ impl IndexDecoder {
             size: 0,
             crc_buf: [0; 4],
             crc_pos: 0,
+            list: None,
+            max_records: u64::MAX,
         }
     }
 
-    /// Feeds bytes; returns `(consumed, done)`.
-    pub(crate) fn feed(&mut self, inp: &[u8], blocks: &RecordHash) -> Result<(usize, bool)> {
+    /// An Index decoder that keeps the records and fails with
+    /// [`Error::MemLimit`] if the Index has more than `max_records`.
+    #[cfg(feature = "std")]
+    pub(crate) fn with_records(max_records: u64) -> Self {
+        Self {
+            list: Some(Vec::new()),
+            max_records,
+            ..Self::new()
+        }
+    }
+
+    /// The records kept by [`Self::with_records`], as `(unpadded,
+    /// uncompressed)` pairs.
+    #[cfg(feature = "std")]
+    pub(crate) fn into_records(self) -> Vec<(u64, u64)> {
+        self.list.unwrap_or_default()
+    }
+
+    /// Feeds bytes; returns `(consumed, done)`. With `blocks`, the Index must
+    /// match the Blocks decoded before it.
+    pub(crate) fn feed(
+        &mut self,
+        inp: &[u8],
+        blocks: Option<&RecordHash>,
+    ) -> Result<(usize, bool)> {
         let mut i = 0;
         let hashed = 0;
         while i < inp.len() {
@@ -125,7 +155,9 @@ impl IndexDecoder {
                 if self.crc_pos < 4 {
                     return Ok((i, false));
                 }
-                if u32::from_le_bytes(self.crc_buf) != self.crc.value() || self.records != *blocks {
+                if u32::from_le_bytes(self.crc_buf) != self.crc.value()
+                    || blocks.is_some_and(|b| self.records != *b)
+                {
                     return Err(Error::Data);
                 }
                 return Ok((i, true));
@@ -134,11 +166,19 @@ impl IndexDecoder {
             i += 1;
             self.size += 1;
             match self.seq {
-                IndexSeq::Indicator => self.seq = IndexSeq::Count,
+                IndexSeq::Indicator => {
+                    if b != 0 {
+                        return Err(Error::Data);
+                    }
+                    self.seq = IndexSeq::Count;
+                }
                 IndexSeq::Count => {
                     if let Some(v) = self.vli.push(b)? {
-                        if v != blocks.count {
+                        if blocks.is_some_and(|b| v != b.count) {
                             return Err(Error::Data);
+                        }
+                        if v > self.max_records {
+                            return Err(Error::MemLimit);
                         }
                         self.remaining = v;
                         self.seq = if v == 0 {
@@ -160,6 +200,9 @@ impl IndexDecoder {
                 IndexSeq::Uncompressed => {
                     if let Some(v) = self.vli.push(b)? {
                         self.records.add(self.unpadded, v)?;
+                        if let Some(list) = &mut self.list {
+                            list.push((self.unpadded, v));
+                        }
                         self.remaining -= 1;
                         self.seq = if self.remaining == 0 {
                             IndexSeq::Padding
@@ -189,9 +232,20 @@ impl IndexDecoder {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockSeq {
+    Data,
+    Padding,
+    Check,
+}
+
+/// Decoder for one Block after its header: the compressed data, Block
+/// Padding and the integrity check (liblzma `block_decoder.c`).
 #[derive(Debug)]
-struct BlockState {
+pub(crate) struct BlockDecoder {
+    seq: BlockSeq,
     chain: ChainDecoder,
+    check_type: Check,
     header_size: u64,
     declared_compressed: Option<u64>,
     declared_uncompressed: Option<u64>,
@@ -199,6 +253,136 @@ struct BlockState {
     padding: u64,
     uncompressed: u64,
     check: CheckState,
+    check_buf: [u8; 64],
+    check_pos: usize,
+}
+
+impl BlockDecoder {
+    /// Creates the decoder for a decoded Block Header, enforcing the memory
+    /// limit.
+    pub(crate) fn new(h: &BlockHeader, check: Check, opts: &DecoderOptions) -> Result<Self> {
+        let mem: u64 = h.filters.iter().map(|f| f.decoder_mem_usage()).sum();
+        if mem > opts.memlimit {
+            return Err(Error::MemLimit);
+        }
+        Ok(Self {
+            seq: BlockSeq::Data,
+            chain: ChainDecoder::new(&h.filters, h.uncompressed_size),
+            check_type: check,
+            header_size: h.header_size as u64,
+            declared_compressed: h.compressed_size,
+            declared_uncompressed: h.uncompressed_size,
+            compressed: 0,
+            padding: 0,
+            uncompressed: 0,
+            check: if opts.ignore_check {
+                CheckState::new(Check::None)
+            } else {
+                CheckState::new(check)
+            },
+            check_buf: [0; 64],
+            check_pos: 0,
+        })
+    }
+
+    /// Unpadded Size of the Block once it is done.
+    pub(crate) fn unpadded_size(&self) -> u64 {
+        self.header_size + self.compressed + self.check_type.size() as u64
+    }
+
+    /// Uncompressed bytes decoded so far.
+    pub(crate) fn uncompressed(&self) -> u64 {
+        self.uncompressed
+    }
+
+    /// Decodes until the input or output runs out or the Block (including
+    /// its check) ends. Returns `(input consumed, output written, done)`.
+    pub(crate) fn decode(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+    ) -> Result<(usize, usize, bool)> {
+        let mut ip = 0;
+        let mut op = 0;
+        loop {
+            match self.seq {
+                BlockSeq::Data => {
+                    let check_size = self.check_type.size() as u64;
+                    // Never read past the declared or largest valid size.
+                    let max_comp = match self.declared_compressed {
+                        Some(c) => c - self.compressed,
+                        None => UNPADDED_SIZE_MAX - self.header_size - check_size - self.compressed,
+                    };
+                    let avail = ((input.len() - ip) as u64).min(max_comp) as usize;
+                    let (u, w, p) = self
+                        .chain
+                        .decode(&input[ip..ip + avail], &mut output[op..])?;
+                    self.check.update(&output[op..op + w]);
+                    ip += u;
+                    op += w;
+                    self.compressed += u as u64;
+                    self.uncompressed += w as u64;
+                    if self
+                        .declared_uncompressed
+                        .is_some_and(|d| self.uncompressed > d)
+                        || self.uncompressed > VLI_MAX
+                    {
+                        return Err(Error::Data);
+                    }
+                    if p == Progress::End {
+                        if self
+                            .declared_compressed
+                            .is_some_and(|d| d != self.compressed)
+                            || self
+                                .declared_uncompressed
+                                .is_some_and(|d| d != self.uncompressed)
+                        {
+                            return Err(Error::Data);
+                        }
+                        self.seq = BlockSeq::Padding;
+                    } else if u == 0 && w == 0 {
+                        if max_comp == 0 && op < output.len() {
+                            // Declared compressed size used up mid-block.
+                            return Err(Error::Data);
+                        }
+                        return Ok((ip, op, false));
+                    }
+                }
+                BlockSeq::Padding => {
+                    if (self.compressed + self.padding).is_multiple_of(4) {
+                        self.seq = BlockSeq::Check;
+                        continue;
+                    }
+                    let Some(&byte) = input.get(ip) else {
+                        return Ok((ip, op, false));
+                    };
+                    if byte != 0 {
+                        return Err(Error::Data);
+                    }
+                    ip += 1;
+                    self.padding += 1;
+                }
+                BlockSeq::Check => {
+                    let size = self.check_type.size();
+                    let n = (size - self.check_pos).min(input.len() - ip);
+                    self.check_buf[self.check_pos..self.check_pos + n]
+                        .copy_from_slice(&input[ip..ip + n]);
+                    self.check_pos += n;
+                    ip += n;
+                    if self.check_pos < size {
+                        return Ok((ip, op, false));
+                    }
+                    let state = core::mem::replace(&mut self.check, CheckState::None);
+                    let mut computed = [0u8; 64];
+                    let n = state.finish(&mut computed);
+                    if n > 0 && computed[..n] != self.check_buf[..n] {
+                        return Err(Error::CheckMismatch);
+                    }
+                    return Ok((ip, op, true));
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,8 +391,6 @@ enum Seq {
     BlockHeaderFirst,
     BlockHeader,
     Block,
-    BlockPadding,
-    BlockCheck,
     Index,
     StreamFooter,
     StreamPadding,
@@ -225,7 +407,7 @@ pub struct XzDecoder {
     buf: Box<[u8; 1024]>,
     buf_pos: usize,
     buf_need: usize,
-    block: Option<BlockState>,
+    block: Option<BlockDecoder>,
     blocks: RecordHash,
     index: Option<IndexDecoder>,
     padding: u64,
@@ -330,95 +512,24 @@ impl XzDecoder {
                     }
                     let check = self.flags.unwrap().check;
                     let h = decode_block_header(&self.buf[..self.buf_need], check)?;
-                    let mem: u64 = h.filters.iter().map(|f| f.decoder_mem_usage()).sum();
-                    if mem > self.opts.memlimit {
-                        return Err(Error::MemLimit);
-                    }
-                    let verify = !self.opts.ignore_check;
-                    self.block = Some(BlockState {
-                        chain: ChainDecoder::new(&h.filters, h.uncompressed_size),
-                        header_size: h.header_size as u64,
-                        declared_compressed: h.compressed_size,
-                        declared_uncompressed: h.uncompressed_size,
-                        compressed: 0,
-                        padding: 0,
-                        uncompressed: 0,
-                        check: if verify {
-                            CheckState::new(check)
-                        } else {
-                            CheckState::new(Check::None)
-                        },
-                    });
+                    self.block = Some(BlockDecoder::new(&h, check, &self.opts)?);
                     self.seq = Seq::Block;
                 }
                 Seq::Block => {
-                    let check_size = self.flags.unwrap().check.size() as u64;
                     let b = self.block.as_mut().unwrap();
-                    // Never read past the declared or largest valid size.
-                    let max_comp = match b.declared_compressed {
-                        Some(c) => c - b.compressed,
-                        None => UNPADDED_SIZE_MAX - b.header_size - check_size - b.compressed,
-                    };
-                    let avail = ((input.len() - ip) as u64).min(max_comp) as usize;
-                    let (u, w, p) = b.chain.decode(&input[ip..ip + avail], &mut output[op..])?;
-                    b.check.update(&output[op..op + w]);
+                    let (u, w, done) = b.decode(&input[ip..], &mut output[op..])?;
                     ip += u;
                     op += w;
-                    b.compressed += u as u64;
-                    b.uncompressed += w as u64;
-                    if b.declared_uncompressed.is_some_and(|d| b.uncompressed > d)
-                        || b.uncompressed > VLI_MAX
-                    {
-                        return Err(Error::Data);
-                    }
-                    if p == Progress::End {
-                        if b.declared_compressed.is_some_and(|d| d != b.compressed)
-                            || b.declared_uncompressed.is_some_and(|d| d != b.uncompressed)
-                        {
-                            return Err(Error::Data);
-                        }
-                        self.seq = Seq::BlockPadding;
-                    } else if u == 0 && w == 0 {
-                        if max_comp == 0 && op < output.len() {
-                            // Declared compressed size used up mid-block.
-                            return Err(Error::Data);
-                        }
-                        break;
-                    }
-                }
-                Seq::BlockPadding => {
-                    let b = self.block.as_mut().unwrap();
-                    if (b.compressed + b.padding).is_multiple_of(4) {
-                        let size = self.flags.unwrap().check.size();
-                        self.expect(Seq::BlockCheck, size);
-                        continue;
-                    }
-                    let Some(&byte) = input.get(ip) else { break };
-                    if byte != 0 {
-                        return Err(Error::Data);
-                    }
-                    ip += 1;
-                    b.padding += 1;
-                }
-                Seq::BlockCheck => {
-                    if !self.fill(input, &mut ip) {
+                    if !done {
                         break;
                     }
                     let b = self.block.take().unwrap();
-                    let check = self.flags.unwrap().check;
-                    let check_size = check.size() as u64;
-                    let mut computed = [0u8; 64];
-                    let n = b.check.finish(&mut computed);
-                    if n > 0 && computed[..n] != self.buf[..n] {
-                        return Err(Error::CheckMismatch);
-                    }
-                    self.blocks
-                        .add(b.header_size + b.compressed + check_size, b.uncompressed)?;
+                    self.blocks.add(b.unpadded_size(), b.uncompressed())?;
                     self.expect(Seq::BlockHeaderFirst, 1);
                 }
                 Seq::Index => {
                     let idx = self.index.as_mut().unwrap();
-                    let (n, done) = idx.feed(&input[ip..], &self.blocks)?;
+                    let (n, done) = idx.feed(&input[ip..], Some(&self.blocks))?;
                     ip += n;
                     if !done {
                         break;

@@ -57,7 +57,9 @@ crates/xz-native/   the library (no_std + alloc; `std` feature for io)
   src/xz/           .xz headers, blocks, index, stream decoder
   src/alone.rs      .lzma
   src/lzip.rs       .lz (lzip)
-  tests/            xz test files, xz CLI interop
+  src/io.rs         std::io readers
+  src/seek.rs       seekable .xz reader (Index parsed backwards, per-Block decoding)
+  tests/            xz test files, xz CLI interop, seekable reader
 crates/xz-bench/    criterion benchmarks and the liblzma differential test
 fuzz/               cargo-fuzz targets (incl. differential vs liblzma)
 third_party/xz/     xz 5.8.4 source (reference only)

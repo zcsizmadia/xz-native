@@ -12,12 +12,12 @@
 //! # Ok::<(), xz_native::Error>(())
 //! ```
 //!
-//! Use [`XzReader`] for streaming with `std::io`, or the push-style
-//! [`XzDecoder`] without `std`. `.lzma` and `.lz` (lzip) have their own
-//! functions, readers and decoders ([`decompress_lzma`],
-//! [`decompress_lzip`], ...). CPU features (CLMUL, ARMv8 CRC, SHA
-//! extensions) are detected at run time; the `portable` feature disables
-//! all SIMD paths.
+//! Use [`XzReader`] for streaming with `std::io`, [`XzSeekableReader`] for
+//! random access to multi-Block files, or the push-style [`XzDecoder`]
+//! without `std`. `.lzma` and `.lz` (lzip) have their own functions, readers
+//! and decoders ([`decompress_lzma`], [`decompress_lzip`], ...). CPU features
+//! (CLMUL, ARMv8 CRC, SHA extensions) are detected at run time; the
+//! `portable` feature disables all SIMD paths.
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -35,6 +35,8 @@ mod io;
 mod lzip;
 mod lzma;
 mod oneshot;
+#[cfg(feature = "std")]
+mod seek;
 mod xz;
 
 pub use alone::LzmaDecoderAlone;
@@ -49,4 +51,6 @@ pub use oneshot::{
     decompress, decompress_lzip, decompress_lzip_with_memlimit, decompress_lzma,
     decompress_lzma_with_memlimit, decompress_streaming, decompress_with_options,
 };
+#[cfg(feature = "std")]
+pub use seek::XzSeekableReader;
 pub use xz::stream::{DecoderOptions, Status, XzDecoder};
