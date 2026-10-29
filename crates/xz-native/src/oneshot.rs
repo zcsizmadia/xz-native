@@ -2,11 +2,13 @@
 
 use crate::alone::LzmaDecoderAlone;
 use crate::error::Result;
+use crate::lzip::LzipDecoder;
 use crate::xz::stream::{DecoderOptions, Status, XzDecoder};
 use alloc::vec::Vec;
 
 fn decode_all(
     input: &[u8],
+    allow_trailing: bool,
     mut f: impl FnMut(&[u8], &mut [u8], bool) -> Result<(usize, usize, Status)>,
 ) -> Result<Vec<u8>> {
     let mut out: Vec<u8> = Vec::with_capacity(input.len().saturating_mul(4).clamp(4096, 1 << 26));
@@ -22,8 +24,9 @@ fn decode_all(
         ip += u;
         out.truncate(len + w);
         if s == Status::StreamEnd {
-            // Like `xz`, trailing data after the end is an error.
-            if ip != input.len() {
+            // Like `xz`, trailing data after the end is an error, except
+            // in .lz, which allows it.
+            if ip != input.len() && !allow_trailing {
                 return Err(crate::Error::Data);
             }
             return Ok(out);
@@ -46,17 +49,29 @@ pub fn decompress_with_options(input: &[u8], opts: DecoderOptions) -> Result<Vec
 #[doc(hidden)]
 pub fn decompress_streaming(input: &[u8], opts: DecoderOptions) -> Result<Vec<u8>> {
     let mut d = XzDecoder::with_options(opts);
-    decode_all(input, |i, o, f| d.decode(i, o, f))
+    decode_all(input, false, |i, o, f| d.decode(i, o, f))
 }
 
 /// Decompresses legacy .lzma data in one call.
 pub fn decompress_lzma(input: &[u8]) -> Result<Vec<u8>> {
     let mut d = LzmaDecoderAlone::default();
-    decode_all(input, |i, o, f| d.decode(i, o, f))
+    decode_all(input, false, |i, o, f| d.decode(i, o, f))
 }
 
 /// Decompresses legacy .lzma data with a memory usage limit in bytes.
 pub fn decompress_lzma_with_memlimit(input: &[u8], memlimit: u64) -> Result<Vec<u8>> {
     let mut d = LzmaDecoderAlone::new(memlimit);
-    decode_all(input, |i, o, f| d.decode(i, o, f))
+    decode_all(input, false, |i, o, f| d.decode(i, o, f))
+}
+
+/// Decompresses .lz (lzip) data in one call. Like `xz`, concatenated
+/// members are decoded and data after the last member is ignored.
+pub fn decompress_lzip(input: &[u8]) -> Result<Vec<u8>> {
+    decompress_lzip_with_memlimit(input, u64::MAX)
+}
+
+/// Decompresses .lz (lzip) data with a memory usage limit in bytes.
+pub fn decompress_lzip_with_memlimit(input: &[u8], memlimit: u64) -> Result<Vec<u8>> {
+    let mut d = LzipDecoder::new(memlimit);
+    decode_all(input, true, |i, o, f| d.decode(i, o, f))
 }

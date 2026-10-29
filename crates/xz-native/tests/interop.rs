@@ -4,7 +4,9 @@
 mod common;
 
 use common::{Rng, corpus, xz};
-use xz_native::{LzmaDecoderAlone, Status, XzDecoder, decompress, decompress_lzma};
+use xz_native::{
+    LzipDecoder, LzmaDecoderAlone, Status, XzDecoder, decompress, decompress_lzip, decompress_lzma,
+};
 
 const OPTIONS: &[&[&str]] = &[
     &["-0"],
@@ -130,5 +132,84 @@ fn concatenated_and_padded_streams() {
     // Truncation anywhere is an error.
     for cut in [1, 11, 12, 13, pa.len() / 2, pa.len() - 1] {
         assert!(decompress(&pa[..cut]).is_err(), "cut at {cut}");
+    }
+}
+
+/// Builds a .lz member around raw LZMA1 (lc=3, lp=0, pb=2, with EOPM) from
+/// `xz --format=raw`, since xz can't compress to .lz. `dict` is the
+/// dictionary size byte of the header and `lzma1` the encoder options.
+fn lzip_member(data: &[u8], version: u8, dict: u8, lzma1: &str) -> Option<Vec<u8>> {
+    let opt = format!("--lzma1={lzma1},lc=3,lp=0,pb=2");
+    let raw = xz(&["-z", "-c", "--format=raw", &opt], data)?;
+    let mut m = b"LZIP".to_vec();
+    m.extend_from_slice(&[version, dict]);
+    m.extend_from_slice(&raw);
+    m.extend_from_slice(&xz_native::crc32(data, 0).to_le_bytes());
+    m.extend_from_slice(&(data.len() as u64).to_le_bytes());
+    if version == 1 {
+        let size = m.len() as u64 + 8;
+        m.extend_from_slice(&size.to_le_bytes());
+    }
+    Some(m)
+}
+
+#[test]
+fn lzip_cli_interop() {
+    for (name, data) in &corpus() {
+        for (version, dict, lzma1) in [
+            (1, 0x12, "preset=0"),              // 256 KiB
+            (1, 0x17, "preset=6"),              // 8 MiB
+            (0, 0xB5, "preset=1,dict=1408KiB"), // 2 MiB - 5/16
+        ] {
+            let Some(packed) = lzip_member(data, version, dict, lzma1) else {
+                return;
+            };
+            // The reference must accept the member as built.
+            let check = xz(&["-d", "-c", "--format=lzip"], &packed).unwrap();
+            assert!(check == *data, "{lzma1} {name}: xz output differs");
+            let out = decompress_lzip(&packed).unwrap_or_else(|e| panic!("{lzma1} {name}: {e:?}"));
+            assert!(out == *data, "{lzma1} {name}: one-shot output differs");
+            if data.len() <= 600_000 {
+                let mut dec = LzipDecoder::default();
+                let out = stream_decode(&packed, data.len() as u64 + 3, |i, o, f| {
+                    dec.decode(i, o, f)
+                });
+                assert!(out == *data, "{lzma1} {name}: streamed output differs");
+            }
+        }
+    }
+}
+
+#[test]
+fn lzip_concatenated_members() {
+    let a = b"first member ".repeat(1000);
+    let b = b"second".repeat(777);
+    let (Some(ma), Some(mb)) = (
+        lzip_member(&a, 0, 0x14, "preset=1"),
+        lzip_member(&b, 1, 0x0C, "preset=0,dict=4KiB"),
+    ) else {
+        return;
+    };
+    let mut cat = ma.clone();
+    cat.extend_from_slice(&mb);
+    let mut expected = a.clone();
+    expected.extend_from_slice(&b);
+    for tail in [&b""[..], b"junk", b"LZ", b"\0\0\0\0"] {
+        let mut v = cat.clone();
+        v.extend_from_slice(tail);
+        assert_eq!(decompress_lzip(&v).unwrap(), expected, "{tail:?}");
+        let mut dec = LzipDecoder::default();
+        let out = stream_decode(&v, tail.len() as u64 + 1, |i, o, f| dec.decode(i, o, f));
+        assert_eq!(out, expected, "{tail:?}: streamed");
+    }
+    // Truncation anywhere is an error, except inside a trailing magic.
+    for cut in [1, 4, 5, 6, 7, ma.len() / 2, ma.len() - 1, cat.len() - 1] {
+        assert!(decompress_lzip(&cat[..cut]).is_err(), "cut at {cut}");
+    }
+    // Any change to the footer fields is an error.
+    for i in ma.len() - 12..ma.len() {
+        let mut bad = cat.clone();
+        bad[i] ^= 1;
+        assert!(decompress_lzip(&bad).is_err(), "byte {i}");
     }
 }

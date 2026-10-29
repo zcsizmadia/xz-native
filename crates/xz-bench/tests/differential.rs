@@ -1,12 +1,19 @@
 //! Deterministic differential test against C liblzma 5.8.4: valid streams
 //! and thousands of mutated ones (bit flips, byte changes, truncation,
-//! insertion) must give the same success/failure and identical output.
-//! The CI fuzz jobs do the same with coverage guidance.
+//! insertion, trailing data) must give the same success/failure and
+//! identical output. The CI fuzz jobs do the same with coverage guidance.
 
 use liblzma::stream::{Action, CONCATENATED, Check, Filters, LzmaOptions, Status, Stream};
 use std::io::Read;
 
 const MEMLIMIT: u64 = 256 << 20;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Format {
+    Xz,
+    Lzma,
+    Lzip,
+}
 
 struct Rng(u64);
 impl Rng {
@@ -21,11 +28,11 @@ impl Rng {
     }
 }
 
-fn reference(input: &[u8], lzma_alone: bool) -> Option<Vec<u8>> {
-    let s = if lzma_alone {
-        Stream::new_lzma_decoder(MEMLIMIT)
-    } else {
-        Stream::new_stream_decoder(MEMLIMIT, CONCATENATED)
+fn reference(input: &[u8], format: Format) -> Option<Vec<u8>> {
+    let s = match format {
+        Format::Xz => Stream::new_stream_decoder(MEMLIMIT, CONCATENATED),
+        Format::Lzma => Stream::new_lzma_decoder(MEMLIMIT),
+        Format::Lzip => Stream::new_lzip_decoder(MEMLIMIT, CONCATENATED),
     }
     .unwrap();
     let mut out = Vec::new();
@@ -35,26 +42,28 @@ fn reference(input: &[u8], lzma_alone: bool) -> Option<Vec<u8>> {
         .map(|_| out)
 }
 
-fn ours(input: &[u8], lzma_alone: bool) -> Option<Vec<u8>> {
-    if lzma_alone {
-        xz_native::decompress_lzma_with_memlimit(input, MEMLIMIT).ok()
-    } else {
-        let opts = xz_native::DecoderOptions {
-            memlimit: MEMLIMIT,
-            ..Default::default()
-        };
-        let flat = xz_native::decompress_with_options(input, opts).ok();
-        let streaming = xz_native::decompress_streaming(input, opts).ok();
-        assert!(
-            flat == streaming,
-            "one-shot and streaming decoders disagree"
-        );
-        flat
+fn ours(input: &[u8], format: Format) -> Option<Vec<u8>> {
+    match format {
+        Format::Lzma => xz_native::decompress_lzma_with_memlimit(input, MEMLIMIT).ok(),
+        // Like liblzma, data after the last member is ignored.
+        Format::Lzip => xz_native::decompress_lzip_with_memlimit(input, MEMLIMIT).ok(),
+        Format::Xz => {
+            let opts = xz_native::DecoderOptions {
+                memlimit: MEMLIMIT,
+                ..Default::default()
+            };
+            let flat = xz_native::decompress_with_options(input, opts).ok();
+            let streaming = xz_native::decompress_streaming(input, opts).ok();
+            assert!(
+                flat == streaming,
+                "one-shot and streaming decoders disagree"
+            );
+            flat
+        }
     }
 }
 
-fn compress(data: &[u8], filters: &Filters, check: Check) -> Vec<u8> {
-    let mut s = Stream::new_stream_encoder(filters, check).unwrap();
+fn encode(mut s: Stream, data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(data.len() + 1024);
     loop {
         let consumed = s.total_in() as usize;
@@ -70,7 +79,36 @@ fn compress(data: &[u8], filters: &Filters, check: Check) -> Vec<u8> {
     }
 }
 
-fn samples() -> Vec<(Vec<u8>, bool)> {
+fn compress(data: &[u8], filters: &Filters, check: Check) -> Vec<u8> {
+    encode(Stream::new_stream_encoder(filters, check).unwrap(), data)
+}
+
+/// A .lz member: raw LZMA1 (lc=3, lp=0, pb=2, ending with an EOPM) with
+/// the lzip header and footer. `dict` is the dictionary size byte.
+fn lzip_member(data: &[u8], preset: u32, version: u8, dict: u8) -> Vec<u8> {
+    let b2log = dict as u32 & 0x1F;
+    let dict_size = (1 << b2log) - ((dict as u32 >> 5) << (b2log - 4));
+    let mut opts = LzmaOptions::new_preset(preset).unwrap();
+    opts.dict_size(dict_size)
+        .literal_context_bits(3)
+        .literal_position_bits(0)
+        .position_bits(2);
+    let mut f = Filters::new();
+    f.lzma1(&opts);
+    let raw = encode(Stream::new_raw_encoder(&f).unwrap(), data);
+    let mut m = b"LZIP".to_vec();
+    m.extend_from_slice(&[version, dict]);
+    m.extend_from_slice(&raw);
+    m.extend_from_slice(&xz_native::crc32(data, 0).to_le_bytes());
+    m.extend_from_slice(&(data.len() as u64).to_le_bytes());
+    if version == 1 {
+        let size = m.len() as u64 + 8;
+        m.extend_from_slice(&size.to_le_bytes());
+    }
+    m
+}
+
+fn samples() -> Vec<(Vec<u8>, Format)> {
     let mut r = Rng(0xDEAD_BEEF_1234_5678);
     let text: Vec<u8> = (0..60_000)
         .map(|i| b"the quick brown fox jumps "[(i * 7 + r.below(3)) % 26])
@@ -81,22 +119,29 @@ fn samples() -> Vec<(Vec<u8>, bool)> {
         for preset in [0, 6] {
             let mut f = Filters::new();
             f.lzma2(&LzmaOptions::new_preset(preset).unwrap());
-            v.push((compress(data, &f, Check::Crc64), false));
+            v.push((compress(data, &f, Check::Crc64), Format::Xz));
             let mut f = Filters::new();
             f.x86();
             f.lzma2(&LzmaOptions::new_preset(preset).unwrap());
-            v.push((compress(data, &f, Check::Sha256), false));
+            v.push((compress(data, &f, Check::Sha256), Format::Xz));
         }
         let mut f = Filters::new();
         f.arm64();
         f.lzma2(&LzmaOptions::new_preset(3).unwrap());
-        v.push((compress(data, &f, Check::Crc32), false));
+        v.push((compress(data, &f, Check::Crc32), Format::Xz));
         let mut out = Vec::new();
         let enc = Stream::new_lzma_encoder(&LzmaOptions::new_preset(6).unwrap()).unwrap();
         liblzma::read::XzEncoder::new_stream(&data[..], enc)
             .read_to_end(&mut out)
             .unwrap();
-        v.push((out, true));
+        v.push((out, Format::Lzma));
+        // One version 1 member with an 8 MiB dictionary, and two members
+        // (version 0 with 64 KiB - 3/16, version 1 with 4 KiB).
+        v.push((lzip_member(data, 6, 1, 0x17), Format::Lzip));
+        let third = data.len() / 3;
+        let mut two = lzip_member(&data[..third], 1, 0, 0x70);
+        two.extend_from_slice(&lzip_member(&data[third..], 0, 1, 0x0C));
+        v.push((two, Format::Lzip));
     }
     v
 }
@@ -106,12 +151,14 @@ fn mutations_agree_with_liblzma() {
     let mut r = Rng(42);
     let mut cases = 0;
     let mut ok_cases = 0;
-    for (packed, alone) in samples() {
-        assert_eq!(ours(&packed, alone), reference(&packed, alone));
+    for (packed, format) in samples() {
+        assert_eq!(ours(&packed, format), reference(&packed, format));
         let iterations = if cfg!(debug_assertions) { 300 } else { 3000 };
+        // .lz allows trailing data, so it gets one more kind of mutation.
+        let kinds = if format == Format::Lzip { 6 } else { 5 };
         for _ in 0..iterations {
             let mut m = packed.clone();
-            match r.below(5) {
+            match r.below(kinds) {
                 0 => {
                     let i = r.below(m.len());
                     m[i] ^= 1 << r.below(8);
@@ -126,19 +173,26 @@ fn mutations_agree_with_liblzma() {
                     m[i] = r.next() as u8;
                 }
                 3 => m.truncate(r.below(m.len())),
-                _ => {
+                4 => {
                     let i = r.below(m.len());
                     m.insert(i, r.next() as u8);
                 }
+                _ => {
+                    // Trailing data, often starting like a new member.
+                    m.extend(b"LZIP\x01\x0C".iter().take(r.below(7)));
+                    if r.below(2) == 0 {
+                        m.push(r.next() as u8);
+                    }
+                }
             }
-            let a = ours(&m, alone);
-            let b = reference(&m, alone);
+            let a = ours(&m, format);
+            let b = reference(&m, format);
             if a != b {
                 std::fs::write(concat!(env!("CARGO_TARGET_TMPDIR"), "/mismatch.bin"), &m).unwrap();
             }
             assert!(
                 a == b,
-                "mismatch (alone={alone}): ours ok={} liblzma ok={}",
+                "mismatch ({format:?}): ours ok={} liblzma ok={}",
                 a.is_some(),
                 b.is_some()
             );

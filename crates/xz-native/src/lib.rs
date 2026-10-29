@@ -13,7 +13,9 @@
 //! ```
 //!
 //! Use [`XzReader`] for streaming with `std::io`, or the push-style
-//! [`XzDecoder`] without `std`. CPU features (CLMUL, ARMv8 CRC, SHA
+//! [`XzDecoder`] without `std`. `.lzma` and `.lz` (lzip) have their own
+//! functions, readers and decoders ([`decompress_lzma`],
+//! [`decompress_lzip`], ...). CPU features (CLMUL, ARMv8 CRC, SHA
 //! extensions) are detected at run time; the `portable` feature disables
 //! all SIMD paths.
 #![no_std]
@@ -30,6 +32,7 @@ mod error;
 mod filter;
 #[cfg(feature = "std")]
 mod io;
+mod lzip;
 mod lzma;
 mod oneshot;
 mod xz;
@@ -39,10 +42,11 @@ pub use check::{Check, Sha256, crc32, crc64};
 pub use error::{Error, Result};
 pub use filter::{BcjKind, Filter};
 #[cfg(feature = "std")]
-pub use io::{LzmaReader, XzReader};
+pub use io::{LzipReader, LzmaReader, XzReader};
+pub use lzip::LzipDecoder;
 pub use lzma::LzmaProps;
 pub use oneshot::{
-    decompress, decompress_lzma, decompress_lzma_with_memlimit, decompress_streaming,
-    decompress_with_options,
+    decompress, decompress_lzip, decompress_lzip_with_memlimit, decompress_lzma,
+    decompress_lzma_with_memlimit, decompress_streaming, decompress_with_options,
 };
 pub use xz::stream::{DecoderOptions, Status, XzDecoder};

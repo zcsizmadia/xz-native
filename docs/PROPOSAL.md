@@ -56,6 +56,7 @@ crates/xz-native/   the library (no_std + alloc; `std` feature for io)
   src/filter/       BCJ filters, Delta, filter chains
   src/xz/           .xz headers, blocks, index, stream decoder
   src/alone.rs      .lzma
+  src/lzip.rs       .lz (lzip)
   tests/            xz test files, xz CLI interop
 crates/xz-bench/    criterion benchmarks and the liblzma differential test
 fuzz/               cargo-fuzz targets (incl. differential vs liblzma)
