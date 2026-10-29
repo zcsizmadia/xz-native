@@ -10,10 +10,11 @@ use super::format::*;
 use super::stream::{DecoderOptions, IndexDecoder, RecordHash};
 use crate::check::{Check, CheckState};
 use crate::error::{Error, Result};
-use crate::filter::InPlaceFilters;
+use crate::filter::{ChainDecoder, InPlaceFilters};
 use crate::lzma::dict::Dict;
 use crate::lzma::lzma2::Lzma2Decoder;
 use crate::lzma::{LzCodec, Progress};
+use alloc::vec;
 use alloc::vec::Vec;
 
 /// Output decoded per step before filtering and checking it.
@@ -57,6 +58,31 @@ fn lzma2_sizes(input: &[u8]) -> Result<(u64, usize)> {
     }
 }
 
+/// The input ends inside a Block. liblzma decodes up to the end of the input
+/// before it reports truncation, so corrupt data before the cut is a data
+/// error. Decode the Block again, streaming, to find out which it is.
+#[cold]
+fn truncated_block_error(area: &[u8], hdr: &BlockHeader) -> Error {
+    let mut chain = ChainDecoder::new(&hdr.filters, hdr.uncompressed_size);
+    let mut buf = vec![0u8; STEP];
+    let mut ip = 0;
+    let mut total = 0u64;
+    loop {
+        let (used, written, progress) = match chain.decode(&area[ip..], &mut buf) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        ip += used;
+        total += written as u64;
+        if hdr.uncompressed_size.is_some_and(|u| total > u) {
+            return Error::Data;
+        }
+        if progress == Progress::End || (used == 0 && written == 0) {
+            return Error::Truncated;
+        }
+    }
+}
+
 /// Decodes one Block (after its header) and appends it to `out`. Returns the
 /// bytes consumed (Compressed Data, Block Padding and Check) and the
 /// Index record.
@@ -67,14 +93,21 @@ fn decode_block(
     check: Check,
     verify: bool,
 ) -> Result<(usize, u64, u64)> {
-    let area = match hdr.compressed_size {
-        Some(c) => {
-            let c = usize::try_from(c).map_err(|_| Error::Truncated)?;
-            input.get(..c).ok_or(Error::Truncated)?
-        }
-        None => input,
+    // `cut`: the input ends before the declared end of the Compressed Data.
+    let (area, cut) = match hdr.compressed_size.map(usize::try_from) {
+        Some(Ok(c)) if c <= input.len() => (&input[..c], false),
+        Some(_) => (input, true),
+        None => (input, false),
     };
-    let (total, comp_len) = lzma2_sizes(area)?;
+    let (total, comp_len) = match lzma2_sizes(area) {
+        // Like liblzma: running out of the declared Compressed Size is a
+        // data error, running out of input means decoding up to the cut.
+        Err(Error::Truncated) if hdr.compressed_size.is_some() && !cut => {
+            return Err(Error::Data);
+        }
+        Err(Error::Truncated) => return Err(truncated_block_error(area, hdr)),
+        r => r?,
+    };
     if hdr.uncompressed_size.is_some_and(|u| u != total)
         || hdr.compressed_size.is_some_and(|c| c != comp_len as u64)
         || total > VLI_MAX
