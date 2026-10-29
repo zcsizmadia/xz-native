@@ -1,5 +1,6 @@
 //! x86-64 SIMD implementations: CRC32/CRC64 with PCLMULQDQ folding (ported
-//! from liblzma's crc_x86_clmul.h) and SHA-256 with the SHA extensions.
+//! from liblzma's crc_x86_clmul.h), a 256-bit VPCLMULQDQ variant of it for
+//! large inputs, and SHA-256 with the SHA extensions.
 #![allow(unsafe_code, unused_unsafe)]
 
 use core::arch::x86_64::*;
@@ -63,11 +64,118 @@ fn read_u64(b: &[u8]) -> u64 {
     u64::from_le_bytes(b[..8].try_into().unwrap())
 }
 
+/// CRC32 (Ethernet) polynomial in reversed representation.
+const P32: u64 = 0xEDB8_8320;
+/// CRC64 (ECMA-182) polynomial in reversed representation.
+const P64: u64 = 0xC96C_5795_D787_0F42;
+
+/// `x^(bits + 63) mod p` in reversed bit order; `p` omits the implied top
+/// bit. Port of `calc_clrem` from liblzma's crc_clmul_consts_gen.c.
+const fn clrem(p: u64, bits: u32) -> u64 {
+    let mut r = p;
+    let mut i = 1;
+    while i < bits {
+        r = (r >> 1) ^ if r & 1 != 0 { p } else { 0 };
+        i += 1;
+    }
+    r
+}
+
+/// `floor(x^128 / p)` in reversed bit order. Port of `calc_cldiv`.
+const fn cldiv(p: u64) -> u64 {
+    let mut q = 0;
+    let mut r = p;
+    let mut i = 0;
+    while i < 64 {
+        q |= (r & 1) << i;
+        r = (r >> 1) ^ if r & 1 != 0 { p } else { 0 };
+        i += 1;
+    }
+    q
+}
+
+/// The pair of constants that folds a 128-bit lane forward by `bits` bits,
+/// as `[high, low]` (the `_mm_set_epi64x` argument order).
+const fn fold_by(p: u64, bits: u32) -> [u64; 2] {
+    [clrem(p, bits - 64), clrem(p, bits)]
+}
+
+/// CLMUL constants of one CRC, computed at compile time the same way as
+/// liblzma's crc_clmul_consts_gen.c. All pairs are `[high, low]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Consts {
+    /// Fold by 1024 bits: the VPCLMULQDQ main loop (4 x 256-bit lanes).
+    pub(crate) fold1024: [u64; 2],
+    /// Fold by 512 bits: the PCLMULQDQ main loop (4 x 128-bit lanes).
+    pub(crate) fold512: [u64; 2],
+    /// Fold by 256 bits: merging the 256-bit accumulators.
+    pub(crate) fold256: [u64; 2],
+    /// Fold by 128 bits.
+    pub(crate) fold128: [u64; 2],
+    /// Barrett reduction: `mu` (with the implied bit) and `p << 1`.
+    pub(crate) mu_p: [u64; 2],
+}
+
+const fn consts(p: u64) -> Consts {
+    Consts {
+        fold1024: fold_by(p, 1024),
+        fold512: fold_by(p, 512),
+        fold256: fold_by(p, 256),
+        fold128: fold_by(p, 128),
+        mu_p: [(cldiv(p) << 1) | 1, p << 1],
+    }
+}
+
+/// CRC32 is computed as a CRC64 by modulus scaling; with the reversed
+/// representation only `mu` differs (see crc_clmul_consts_gen.c).
+pub(crate) const CRC32: Consts = consts(P32);
+pub(crate) const CRC64: Consts = consts(P64);
+
+/// Bytes per iteration of the VPCLMULQDQ main loop (4 x 256 bits). Shorter
+/// inputs always take the 128-bit path.
+const WIDE_BLOCK: usize = 128;
+
+/// Inputs at least this long use the 256-bit VPCLMULQDQ path when the CPU
+/// has it. On Alder Lake it is ~1.5x faster than the 128-bit path already
+/// at 128 bytes and ~2x from 1 KiB, so there is no reason to start later.
+pub(crate) const VPCLMUL_MIN_LEN: usize = WIDE_BLOCK;
+
+#[inline]
+#[target_feature(enable = "sse2")]
+fn set128(k: [u64; 2]) -> __m128i {
+    _mm_set_epi64x(k[0] as i64, k[1] as i64)
+}
+
+#[inline]
+#[target_feature(enable = "avx2")]
+fn set256(k: [u64; 2]) -> __m256i {
+    _mm256_set_epi64x(k[0] as i64, k[1] as i64, k[0] as i64, k[1] as i64)
+}
+
+#[inline]
+#[target_feature(enable = "avx2")]
+fn load256(b: &[u8]) -> __m256i {
+    let b: &[u8; 32] = b[..32].try_into().unwrap();
+    // SAFETY: `b` is exactly 32 readable bytes; the load is unaligned.
+    unsafe { _mm256_loadu_si256(b.as_ptr().cast()) }
+}
+
+/// [`fold`] on both 128-bit lanes at once.
+#[inline]
+#[target_feature(enable = "avx2,vpclmulqdq")]
+fn fold_wide(v: __m256i, k: __m256i) -> __m256i {
+    _mm256_xor_si256(
+        _mm256_clmulepi64_epi128::<0x00>(v, k),
+        _mm256_clmulepi64_epi128::<0x11>(v, k),
+    )
+}
+
 /// Shared folding core. `crc` is already inverted. Returns the 128-bit value
 /// ready for Barrett reduction.
 #[inline]
 #[target_feature(enable = "pclmulqdq,ssse3,sse4.1")]
-fn fold_all(buf: &[u8], crc: u64, fold512: __m128i, fold128: __m128i) -> __m128i {
+fn fold_all(buf: &[u8], crc: u64, c: &Consts) -> __m128i {
+    let fold128 = set128(c.fold128);
     let size = buf.len();
     if size < 8 {
         let mut x = crc;
@@ -104,6 +212,7 @@ fn fold_all(buf: &[u8], crc: u64, fold512: __m128i, fold128: __m128i) -> __m128i
         let mut v0 = _mm_xor_si128(_mm_cvtsi64_si128(crc as i64), load(buf));
         let mut p = 16;
         if size - p >= 48 {
+            let fold512 = set128(c.fold512);
             let mut v1 = load(&buf[p..]);
             let mut v2 = load(&buf[p + 16..]);
             let mut v3 = load(&buf[p + 32..]);
@@ -119,22 +228,89 @@ fn fold_all(buf: &[u8], crc: u64, fold512: __m128i, fold128: __m128i) -> __m128i
             v0 = _mm_xor_si128(v2, fold(v0, fold128));
             v0 = _mm_xor_si128(v3, fold(v0, fold128));
         }
-        while size - p >= 16 {
-            v0 = _mm_xor_si128(load(&buf[p..]), fold(v0, fold128));
-            p += 16;
-        }
-        let rest = size - p;
-        if rest > 0 {
-            let mut v1 = load(&buf[size - 16..]);
-            v1 = keep_high_bytes(v1, rest);
-            v1 = _mm_or_si128(v1, shift_right(v0, rest));
-            v0 = shift_left(v0, 16 - rest);
-            v0 = _mm_xor_si128(v1, fold(v0, fold128));
-        }
-        let v1 = _mm_srli_si128::<8>(v0);
-        v0 = _mm_clmulepi64_si128::<0x10>(v0, fold128);
-        _mm_xor_si128(v0, v1)
+        fold_tail(buf, v0, p, fold128)
     }
+}
+
+/// Folds `buf[p..]` into `v0`, the folded state of `buf[..p]` (`p >= 16`),
+/// then does the 128-to-64-bit step that precedes Barrett reduction.
+#[inline]
+#[target_feature(enable = "pclmulqdq,ssse3,sse4.1")]
+fn fold_tail(buf: &[u8], mut v0: __m128i, mut p: usize, fold128: __m128i) -> __m128i {
+    let size = buf.len();
+    while size - p >= 16 {
+        v0 = _mm_xor_si128(load(&buf[p..]), fold(v0, fold128));
+        p += 16;
+    }
+    let rest = size - p;
+    if rest > 0 {
+        let mut v1 = load(&buf[size - 16..]);
+        v1 = keep_high_bytes(v1, rest);
+        v1 = _mm_or_si128(v1, shift_right(v0, rest));
+        v0 = shift_left(v0, 16 - rest);
+        v0 = _mm_xor_si128(v1, fold(v0, fold128));
+    }
+    let v1 = _mm_srli_si128::<8>(v0);
+    v0 = _mm_clmulepi64_si128::<0x10>(v0, fold128);
+    _mm_xor_si128(v0, v1)
+}
+
+/// VPCLMULQDQ folding core: four 256-bit accumulators whose 128-bit lanes
+/// are folded forward by 1024 bits per 128-byte block, then merged into one
+/// 128-bit state for [`fold_tail`]. Needs `buf.len() >= WIDE_BLOCK`; `crc`
+/// is already inverted.
+#[inline]
+#[target_feature(enable = "avx2,vpclmulqdq,pclmulqdq,ssse3,sse4.1")]
+fn fold_all_wide(buf: &[u8], crc: u64, c: &Consts) -> __m128i {
+    let (first, rest) = buf.split_at(WIDE_BLOCK);
+    let crc = _mm256_set_epi64x(0, 0, 0, crc as i64);
+    let mut x0 = _mm256_xor_si256(crc, load256(first));
+    let mut x1 = load256(&first[32..]);
+    let mut x2 = load256(&first[64..]);
+    let mut x3 = load256(&first[96..]);
+    let k = set256(c.fold1024);
+    let mut blocks = rest.chunks_exact(WIDE_BLOCK);
+    for b in &mut blocks {
+        x0 = _mm256_xor_si256(load256(b), fold_wide(x0, k));
+        x1 = _mm256_xor_si256(load256(&b[32..]), fold_wide(x1, k));
+        x2 = _mm256_xor_si256(load256(&b[64..]), fold_wide(x2, k));
+        x3 = _mm256_xor_si256(load256(&b[96..]), fold_wide(x3, k));
+    }
+    let k = set256(c.fold256);
+    x1 = _mm256_xor_si256(x1, fold_wide(x0, k));
+    x2 = _mm256_xor_si256(x2, fold_wide(x1, k));
+    x3 = _mm256_xor_si256(x3, fold_wide(x2, k));
+    let mut rest = blocks.remainder();
+    while rest.len() >= 32 {
+        x3 = _mm256_xor_si256(load256(rest), fold_wide(x3, k));
+        rest = &rest[32..];
+    }
+    let fold128 = set128(c.fold128);
+    let lo = _mm256_castsi256_si128(x3);
+    let hi = _mm256_extracti128_si256::<1>(x3);
+    let p = buf.len() - rest.len();
+    fold_tail(buf, _mm_xor_si128(hi, fold(lo, fold128)), p, fold128)
+}
+
+#[inline]
+#[target_feature(enable = "pclmulqdq,sse4.1")]
+fn crc32_reduce(v0: __m128i) -> u32 {
+    let mu_p = set128(CRC32.mu_p);
+    let v1 = _mm_clmulepi64_si128::<0x10>(v0, mu_p);
+    let v1 = _mm_clmulepi64_si128::<0x00>(v1, mu_p);
+    let v0 = _mm_xor_si128(v0, v1);
+    !(_mm_extract_epi32::<2>(v0) as u32)
+}
+
+#[inline]
+#[target_feature(enable = "pclmulqdq,sse4.1")]
+fn crc64_reduce(v0: __m128i) -> u64 {
+    let mu_p = set128(CRC64.mu_p);
+    let v1 = _mm_clmulepi64_si128::<0x10>(v0, mu_p);
+    let v2 = _mm_slli_si128::<8>(v1);
+    let v1 = _mm_clmulepi64_si128::<0x00>(v1, mu_p);
+    let v0 = _mm_xor_si128(_mm_xor_si128(v0, v2), v1);
+    !(_mm_extract_epi64::<1>(v0) as u64)
 }
 
 #[target_feature(enable = "pclmulqdq,ssse3,sse4.1")]
@@ -142,14 +318,7 @@ pub(crate) fn crc32_clmul(buf: &[u8], crc: u32) -> u32 {
     if buf.is_empty() {
         return crc;
     }
-    let fold512 = _mm_set_epi64x(0x1d95_13d7, 0x8f35_2d95);
-    let fold128 = _mm_set_epi64x(0xccaa_009e, 0xae68_9191);
-    let mu_p = _mm_set_epi64x(0xb4e5_b025_f701_1641_u64 as i64, 0x1_db71_0640);
-    let v0 = fold_all(buf, (!crc) as u64, fold512, fold128);
-    let v1 = _mm_clmulepi64_si128::<0x10>(v0, mu_p);
-    let v1 = _mm_clmulepi64_si128::<0x00>(v1, mu_p);
-    let v0 = _mm_xor_si128(v0, v1);
-    !(_mm_extract_epi32::<2>(v0) as u32)
+    crc32_reduce(fold_all(buf, (!crc) as u64, &CRC32))
 }
 
 #[target_feature(enable = "pclmulqdq,ssse3,sse4.1")]
@@ -157,21 +326,60 @@ pub(crate) fn crc64_clmul(buf: &[u8], crc: u64) -> u64 {
     if buf.is_empty() {
         return crc;
     }
-    let fold512 = _mm_set_epi64x(0x081f_6054_a784_2df4, 0x6ae3_efbb_9dd4_41f3);
-    let fold128 = _mm_set_epi64x(
-        0xdabe_95af_c787_5f40_u64 as i64,
-        0xe05d_d497_ca39_3ae4_u64 as i64,
-    );
-    let mu_p = _mm_set_epi64x(
-        0x9c3e_466c_1729_63d5_u64 as i64,
-        0x92d8_af2b_af0e_1e84_u64 as i64,
-    );
-    let v0 = fold_all(buf, !crc, fold512, fold128);
-    let v1 = _mm_clmulepi64_si128::<0x10>(v0, mu_p);
-    let v2 = _mm_slli_si128::<8>(v1);
-    let v1 = _mm_clmulepi64_si128::<0x00>(v1, mu_p);
-    let v0 = _mm_xor_si128(_mm_xor_si128(v0, v2), v1);
-    !(_mm_extract_epi64::<1>(v0) as u64)
+    crc64_reduce(fold_all(buf, !crc, &CRC64))
+}
+
+/// CRC32 with 256-bit VPCLMULQDQ folding. Correct for any length; inputs
+/// shorter than [`WIDE_BLOCK`] go to [`crc32_clmul`].
+#[target_feature(enable = "avx2,vpclmulqdq,pclmulqdq,ssse3,sse4.1")]
+pub(crate) fn crc32_vpclmul(buf: &[u8], crc: u32) -> u32 {
+    if buf.len() < WIDE_BLOCK {
+        return crc32_clmul(buf, crc);
+    }
+    crc32_reduce(fold_all_wide(buf, (!crc) as u64, &CRC32))
+}
+
+/// CRC64 with 256-bit VPCLMULQDQ folding; see [`crc32_vpclmul`].
+#[target_feature(enable = "avx2,vpclmulqdq,pclmulqdq,ssse3,sse4.1")]
+pub(crate) fn crc64_vpclmul(buf: &[u8], crc: u64) -> u64 {
+    if buf.len() < WIDE_BLOCK {
+        return crc64_clmul(buf, crc);
+    }
+    crc64_reduce(fold_all_wide(buf, !crc, &CRC64))
+}
+
+/// CRC32 and CRC64 function pointers, as returned by the test hooks below.
+#[cfg(test)]
+type CrcFns = (fn(&[u8], u32) -> u32, fn(&[u8], u64) -> u64);
+
+/// Test hook: the PCLMULQDQ functions as safe calls, or `None` if the CPU
+/// lacks the features.
+#[cfg(test)]
+pub(crate) fn clmul_fns() -> Option<CrcFns> {
+    if !crate::cpu::has_clmul() {
+        return None;
+    }
+    // SAFETY: the closures are only returned after the required CPU
+    // features were detected above.
+    Some((
+        |b, c| unsafe { crc32_clmul(b, c) },
+        |b, c| unsafe { crc64_clmul(b, c) },
+    ))
+}
+
+/// Test hook: the VPCLMULQDQ functions (any length, not only from
+/// [`VPCLMUL_MIN_LEN`]), or `None` if the CPU lacks the features.
+#[cfg(test)]
+pub(crate) fn vpclmul_fns() -> Option<CrcFns> {
+    if !crate::cpu::has_vpclmul() {
+        return None;
+    }
+    // SAFETY: the closures are only returned after the required CPU
+    // features were detected above.
+    Some((
+        |b, c| unsafe { crc32_vpclmul(b, c) },
+        |b, c| unsafe { crc64_vpclmul(b, c) },
+    ))
 }
 
 /// SHA-256 compression of whole 64-byte blocks with the x86 SHA extensions.

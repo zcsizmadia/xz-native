@@ -165,6 +165,137 @@ mod tests {
         }
     }
 
+    /// Compares the CRC32/CRC64 functions `f32_`/`f64_` with the portable
+    /// code for every length up to 2100 at several offsets with
+    /// pseudo-random starting CRCs, and for inputs split in two at many
+    /// points (incremental use).
+    fn compare_with_generic(f32_: impl Fn(&[u8], u32) -> u32, f64_: impl Fn(&[u8], u64) -> u64) {
+        let d = data(2200);
+        let (max_len, offs): (usize, &[usize]) = if cfg!(miri) {
+            (100, &[0, 5])
+        } else {
+            (2100, &[0, 1, 3, 8, 15, 32, 63])
+        };
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        for &off in offs {
+            for len in 0..max_len.min(d.len() - off) {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                let s = &d[off..off + len];
+                // Start from zero too: the common case.
+                let (c32, c64) = if len % 5 == 0 {
+                    (0, 0)
+                } else {
+                    (seed as u32, seed.rotate_left(29))
+                };
+                assert_eq!(
+                    f32_(s, c32),
+                    crc32::crc32_generic(s, c32),
+                    "crc32 off={off} len={len} crc={c32:#x}"
+                );
+                assert_eq!(
+                    f64_(s, c64),
+                    crc64::crc64_generic(s, c64),
+                    "crc64 off={off} len={len} crc={c64:#x}"
+                );
+            }
+        }
+        let d = &d[1..2101];
+        let want32 = crc32::crc32_generic(d, 0);
+        let want64 = crc64::crc64_generic(d, 0);
+        for split in [
+            0, 1, 15, 16, 127, 128, 129, 255, 256, 257, 300, 1024, 1500, 2099,
+        ] {
+            let (a, b) = d.split_at(split.min(d.len()));
+            assert_eq!(f32_(b, f32_(a, 0)), want32, "crc32 split={split}");
+            assert_eq!(f64_(b, f64_(a, 0)), want64, "crc64 split={split}");
+        }
+    }
+
+    #[test]
+    fn dispatch_matches_generic_long() {
+        compare_with_generic(crc32, crc64);
+    }
+
+    #[test]
+    #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+    fn clmul_matches_generic() {
+        match x86::clmul_fns() {
+            Some((a, b)) => compare_with_generic(a, b),
+            None => require_absent("XZ_NATIVE_REQUIRE_CLMUL", "PCLMULQDQ"),
+        }
+    }
+
+    #[test]
+    #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+    fn vpclmul_matches_generic() {
+        match x86::vpclmul_fns() {
+            Some((a, b)) => compare_with_generic(a, b),
+            None => require_absent("XZ_NATIVE_REQUIRE_VPCLMUL", "VPCLMULQDQ"),
+        }
+    }
+
+    /// A SIMD test was skipped because the CPU lacks the feature: fail if
+    /// the environment variable `var` says the path must be tested.
+    #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+    fn require_absent(var: &str, what: &str) {
+        #[cfg(feature = "std")]
+        assert!(
+            std::env::var_os(var).is_none(),
+            "{var} is set but the CPU lacks {what}"
+        );
+        let _ = (var, what);
+    }
+
+    /// The CLMUL constants derived at compile time: the 128-bit ones match
+    /// liblzma's crc_clmul_consts_gen.c output, and every fold constant
+    /// matches `x^(bits + 63) mod P` computed independently in the normal
+    /// (non-reflected) bit order.
+    #[test]
+    #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+    fn clmul_constants() {
+        use x86::{CRC32, CRC64};
+        assert_eq!(CRC32.fold512, [0x1d95_13d7, 0x8f35_2d95]);
+        assert_eq!(CRC32.fold128, [0xccaa_009e, 0xae68_9191]);
+        assert_eq!(CRC32.mu_p, [0xb4e5_b025_f701_1641, 0x1_db71_0640]);
+        assert_eq!(
+            CRC64.fold512,
+            [0x081f_6054_a784_2df4, 0x6ae3_efbb_9dd4_41f3]
+        );
+        assert_eq!(
+            CRC64.fold128,
+            [0xdabe_95af_c787_5f40, 0xe05d_d497_ca39_3ae4]
+        );
+        assert_eq!(CRC64.mu_p, [0x9c3e_466c_1729_63d5, 0x92d8_af2b_af0e_1e84]);
+
+        // x^n mod (x^64 + reverse(p)), bit-reversed back. For CRC32 this is
+        // modulo x^32 * P(x), the modulus scaling the CLMUL code uses.
+        fn xpow_mod_reflected(p: u64, n: u32) -> u64 {
+            let q = p.reverse_bits();
+            let mut r = 1u64;
+            for _ in 0..n {
+                let carry = r >> 63;
+                r = (r << 1) ^ if carry != 0 { q } else { 0 };
+            }
+            r.reverse_bits()
+        }
+        for (c, p) in [(CRC32, 0xEDB8_8320), (CRC64, 0xC96C_5795_D787_0F42)] {
+            for (k, bits) in [
+                (c.fold128, 128),
+                (c.fold256, 256),
+                (c.fold512, 512),
+                (c.fold1024, 1024),
+            ] {
+                let want = [
+                    xpow_mod_reflected(p, bits - 64 + 63),
+                    xpow_mod_reflected(p, bits + 63),
+                ];
+                assert_eq!(k, want, "p={p:#x} bits={bits}");
+            }
+        }
+    }
+
     #[test]
     fn incremental() {
         let d = data(5000);

@@ -57,6 +57,12 @@ pub(crate) fn crc64_generic(data: &[u8], crc: u64) -> u64 {
 #[inline]
 pub fn crc64(data: &[u8], crc: u64) -> u64 {
     #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+    if data.len() >= super::x86::VPCLMUL_MIN_LEN && crate::cpu::has_vpclmul() {
+        // SAFETY: the required CPU features were detected above.
+        #[allow(unsafe_code)]
+        return unsafe { super::x86::crc64_vpclmul(data, crc) };
+    }
+    #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
     if crate::cpu::has_clmul() {
         // SAFETY: the required CPU features were detected above.
         #[allow(unsafe_code)]
