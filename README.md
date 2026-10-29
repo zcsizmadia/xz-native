@@ -36,6 +36,19 @@ let mut out = Vec::new();
 reader.read_to_end(&mut out)?;
 ```
 
+Random access to multi-Block files (`xz -T` or `xz --block-size`), decoding
+only the Block that holds the position:
+
+```rust
+use std::io::{Read, Seek, SeekFrom};
+
+let file = std::fs::File::open("archive.tar.xz")?;
+let mut reader = xz_native::XzSeekableReader::new(file)?;
+reader.seek(SeekFrom::Start(1 << 20))?;
+let mut buf = [0u8; 4096];
+reader.read_exact(&mut buf)?;
+```
+
 The push-style [`XzDecoder`](crates/xz-native/src/xz/stream.rs) works
 without `std`, like `lzma_code` in liblzma.
 
@@ -44,6 +57,7 @@ without `std`, like `lzma_code` in liblzma.
 | Feature | Decode | Encode |
 |---|---|---|
 | `.xz` (multi-block, concatenated streams, padding) | yes | planned |
+| Seekable `.xz` reading through the Index (`XzSeekableReader`) | yes | - |
 | `.lzma` (LZMA_Alone) | yes | planned |
 | Raw LZMA1 / LZMA2 | internal | planned |
 | `.lz` (lzip, versions 0 and 1, concatenated members, trailing data) | yes | - |
