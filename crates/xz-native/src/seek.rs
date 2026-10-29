@@ -20,14 +20,14 @@ const HEADER: u64 = STREAM_HEADER_SIZE as u64;
 
 /// One Block from the Index.
 #[derive(Debug, Clone, Copy)]
-struct BlockEntry {
+pub(crate) struct BlockEntry {
     /// Offset of the Block's data in the uncompressed output.
-    uncompressed_offset: u64,
-    uncompressed_size: u64,
+    pub(crate) uncompressed_offset: u64,
+    pub(crate) uncompressed_size: u64,
     /// File offset of the Block Header.
-    compressed_offset: u64,
-    unpadded_size: u64,
-    check: Check,
+    pub(crate) compressed_offset: u64,
+    pub(crate) unpadded_size: u64,
+    pub(crate) check: Check,
 }
 
 impl BlockEntry {
@@ -99,7 +99,7 @@ fn read_at<R: Read + Seek>(inner: &mut R, pos: u64, buf: &mut [u8]) -> io::Resul
 /// Parses the Streams from the end of the file to its start
 /// (`file_info_decode`). Returns the Blocks and the check of every Stream,
 /// both in file order.
-fn parse<R: Read + Seek>(
+pub(crate) fn parse<R: Read + Seek>(
     inner: &mut R,
     opts: &DecoderOptions,
     buf: &mut [u8],
@@ -460,4 +460,17 @@ impl<R: Read + Seek> Seek for XzSeekableReader<R> {
         self.pos = new;
         Ok(new)
     }
+}
+
+/// Parses complete .xz data held in memory into its Block table.
+pub(crate) fn parse_slice(input: &[u8], opts: &DecoderOptions) -> crate::Result<Vec<BlockEntry>> {
+    let mut buf = vec![0u8; BUF_SIZE];
+    parse(&mut io::Cursor::new(input), opts, &mut buf)
+        .map(|(blocks, _)| blocks)
+        .map_err(|e| {
+            e.get_ref()
+                .and_then(|e| e.downcast_ref::<Error>())
+                .copied()
+                .unwrap_or(Error::Data)
+        })
 }

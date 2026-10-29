@@ -74,6 +74,12 @@ fn xz_cli_interop() {
             };
             let out = decompress(&packed).unwrap_or_else(|e| panic!("{opts:?} {name}: {e:?}"));
             assert!(out == *data, "{opts:?} {name}: one-shot output differs");
+            let threads = xz_native::DecoderOptions {
+                threads: 4,
+                ..Default::default()
+            };
+            let out = xz_native::decompress_with_options(&packed, threads).unwrap();
+            assert!(out == *data, "{opts:?} {name}: threaded output differs");
             // Streaming through tiny buffers is slow; do it for smaller inputs.
             if data.len() <= 600_000 {
                 let mut dec = XzDecoder::new();
