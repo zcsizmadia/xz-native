@@ -31,6 +31,15 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans licenses sources
+
   test:
     name: test ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
