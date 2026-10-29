@@ -5,6 +5,7 @@ library [Lzma.Net](https://github.com/zcsizmadia/Lzma.Net).
 
 [![CI](https://github.com/zcsizmadia/xz-native/actions/workflows/ci.yml/badge.svg)](https://github.com/zcsizmadia/xz-native/actions/workflows/ci.yml)
 [![Fuzz](https://github.com/zcsizmadia/xz-native/actions/workflows/fuzz.yml/badge.svg)](https://github.com/zcsizmadia/xz-native/actions/workflows/fuzz.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/zcsizmadia/xz-native/badge)](https://scorecard.dev/viewer/?uri=github.com/zcsizmadia/xz-native)
 
 - **Pure Rust:** no C code and no C toolchain. `no_std` + `alloc` capable.
 - **Fast:** performance is the main goal. CPU features are detected at run
