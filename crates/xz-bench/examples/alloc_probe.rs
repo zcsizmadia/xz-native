@@ -10,18 +10,19 @@ use std::time::Instant;
     reason = "measures touching fresh pages"
 )]
 fn main() {
+    // Not repeated: repeats compress into LZMA matches, while the point is
+    // stored chunks (copy plus check), as in the decode benchmark.
     let data = xz_bench::datasets()
         .into_iter()
         .find(|(n, _)| n == "random")
         .unwrap()
-        .1
-        .repeat(8);
+        .1;
     let mut packed = Vec::new();
     liblzma::read::XzEncoder::new(&data[..], 6)
         .read_to_end(&mut packed)
         .unwrap();
     let n = data.len();
-    let iters = 20;
+    let iters = 200;
     let rate = |t: std::time::Duration| (n * iters) as f64 / t.as_secs_f64() / 1073741824.0;
 
     let t = Instant::now();

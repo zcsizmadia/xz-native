@@ -753,6 +753,7 @@ impl LzmaDecoder {
             dict.limit = dict.pos + rem as usize;
             might_finish = true;
         }
+        dict.init_to_limit();
         let r = self.run(dict, inp, &mut ip, might_finish);
         dict.limit = saved_limit;
 
