@@ -32,9 +32,7 @@ jobs:
       - name: Run benchmarks
         shell: bash
         run: |
-          # --benches: the criterion options would also reach the library's
-          # libtest harness, which rejects them.
-          cargo bench -p xz-bench --benches -- --warm-up-time 1 --measurement-time 5 2>&1 | tee bench.txt
+          cargo bench -p xz-bench -- --warm-up-time 1 --measurement-time 5 2>&1 | tee bench.txt
           # The same tables as BENCHMARK.md (mean throughput).
           {
             echo "## ${{ matrix.name }}"

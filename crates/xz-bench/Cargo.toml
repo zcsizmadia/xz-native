@@ -7,6 +7,11 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+# The library only holds the datasets. Without this, `cargo bench -p xz-bench
+# -- <criterion options>` also runs its libtest harness, which rejects them.
+[lib]
+bench = false
+
 [dependencies]
 xz-native = { path = "../xz-native" }
 
