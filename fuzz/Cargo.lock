@@ -109,7 +109,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "xz-native"
-version = "5.8.400-alpha.1"
+version = "0.1.0+xz.5.8.4"
 
 [[package]]
 name = "xz-native-fuzz"
