@@ -10,6 +10,13 @@ authors.workspace = true
 readme = "../../README.md"
 keywords = ["xz", "lzma", "lzma2", "compression", "decompression"]
 categories = ["compression", "no-std"]
+# The tests read xz's test files from third_party, which the package doesn't ship;
+# they run in the repository and in CI.
+exclude = ["tests/"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["std"]

@@ -7,6 +7,8 @@ build scripts or the memory-safety risk. Sibling of the C# library
 
 [![CI](https://github.com/zcsizmadia/xz-native/actions/workflows/ci.yml/badge.svg)](https://github.com/zcsizmadia/xz-native/actions/workflows/ci.yml)
 [![Fuzz](https://github.com/zcsizmadia/xz-native/actions/workflows/fuzz.yml/badge.svg)](https://github.com/zcsizmadia/xz-native/actions/workflows/fuzz.yml)
+[![crates.io](https://img.shields.io/crates/v/xz-native)](https://crates.io/crates/xz-native)
+[![docs.rs](https://img.shields.io/docsrs/xz-native)](https://docs.rs/xz-native)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/zcsizmadia/xz-native/badge)](https://scorecard.dev/viewer/?uri=github.com/zcsizmadia/xz-native)
 
 > **Status:** early development, not yet 1.0. Decoding of `.xz`, `.lzma` and
@@ -54,6 +56,14 @@ build scripts or the memory-safety risk. Sibling of the C# library
   `.lz` support.
 
 ## Usage
+
+```toml
+[dependencies]
+xz-native = "0.1"
+```
+
+The full API reference is on [docs.rs](https://docs.rs/xz-native); changes are in
+[CHANGELOG.md](CHANGELOG.md).
 
 ```rust
 let data = xz_native::decompress(&compressed)?;
