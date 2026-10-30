@@ -27,9 +27,12 @@ and `xz` 5.8.4 is in `/ucrt64/bin`.
 
 ## Rules
 
-- `unsafe` is denied; allowed only in SIMD modules (`check/x86.rs`,
-  `check/aarch64.rs`) with SAFETY comments. New `unsafe` elsewhere needs a
-  benchmark showing the gain.
+- `unsafe` is denied by default. It is allowed in the SIMD modules
+  (`check/x86.rs`, `check/aarch64.rs`), the x86-64 decoder assembly
+  (`lzma/x86_asm.rs`, a port of liblzma's range decoder asm) and a few
+  hot-path reads in `lzma/decoder.rs`, each with a SAFETY comment and debug
+  assertions. New `unsafe` needs a benchmark showing the gain and must keep
+  a safe Rust fallback that the `portable` feature selects.
 - CPU-specific code goes behind runtime detection in `cpu.rs`, with a
   portable fallback tested via the `portable` feature.
 - Versioning: `5.8.4NN` crate versions, `v5.8.4.N` tags (see PROPOSAL.md).

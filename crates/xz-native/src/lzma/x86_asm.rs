@@ -134,8 +134,9 @@ macro_rules! bittree_fn {
     ($name:ident, $bits:literal, $($step:expr),+ $(,)?) => {
         /// # Safety
         ///
-        /// `probs[base..base + 2^BITS]` must be in bounds, and at least
-        /// `BITS` input bytes must be readable at `*pos`.
+        /// `probs[base..base + 2^BITS]` must be in bounds, and the input must
+        /// have at least as many bytes left as the decoding can read (the fast
+        /// path guarantees one symbol's worth).
         #[inline(always)]
         pub(super) unsafe fn $name(
             range: &mut u32,
@@ -144,7 +145,6 @@ macro_rules! bittree_fn {
             pos: &mut usize,
             probs: *mut u16,
         ) -> u32 {
-            debug_assert!(*pos + $bits <= input.len());
             // SAFETY: the caller guarantees the input bytes and the tree.
             unsafe {
                 let mut in_ptr = input.as_ptr().add(*pos);
@@ -165,6 +165,9 @@ macro_rules! bittree_fn {
                     last_sbb = const (1 << $bits) - 1,
                     options(att_syntax, nostack),
                 );
+                // A symbol reads at most 20 bytes and the fast path keeps FAST_MIN
+                // available, so the end of the input is never passed.
+                debug_assert!(in_ptr <= input.as_ptr_range().end);
                 *pos = in_ptr.offset_from(input.as_ptr()) as usize;
                 sym as u32
             }
@@ -257,8 +260,8 @@ macro_rules! matched {
 ///
 /// # Safety
 ///
-/// `probs[..0x300]` must be in bounds, and at least 8 input bytes must be
-/// readable at `*pos`.
+/// `probs[..0x300]` must be in bounds, and the input must have enough bytes
+/// left (the fast path guarantees one symbol's worth).
 #[inline(always)]
 pub(super) unsafe fn matched_literal(
     range: &mut u32,
@@ -268,7 +271,6 @@ pub(super) unsafe fn matched_literal(
     probs: *mut u16,
     match_byte: u32,
 ) -> u32 {
-    debug_assert!(*pos + 8 <= input.len());
     // SAFETY: the caller guarantees the input bytes and the coder.
     unsafe {
         let mut in_ptr = input.as_ptr().add(*pos);
@@ -301,6 +303,9 @@ pub(super) unsafe fn matched_literal(
             options(att_syntax, nostack),
         );
         let _ = (match_bit, match_byte, offset);
+        // A symbol reads at most 20 bytes and the fast path keeps FAST_MIN
+        // available, so the end of the input is never passed.
+        debug_assert!(in_ptr <= input.as_ptr_range().end);
         *pos = in_ptr.offset_from(input.as_ptr()) as usize;
         sym as u32 - 0x100
     }
@@ -310,7 +315,8 @@ pub(super) unsafe fn matched_literal(
 ///
 /// # Safety
 ///
-/// At least `count` input bytes must be readable at `*pos`.
+/// The input must have enough bytes left (the fast path guarantees one
+/// symbol's worth; 26 direct bits read at most 4 bytes).
 #[inline(always)]
 pub(super) unsafe fn direct_bits(
     range: &mut u32,
@@ -319,7 +325,7 @@ pub(super) unsafe fn direct_bits(
     pos: &mut usize,
     count: u32,
 ) -> u32 {
-    debug_assert!(count >= 1 && *pos + count as usize <= input.len());
+    debug_assert!(count >= 1);
     // SAFETY: the caller guarantees the input bytes.
     unsafe {
         let mut in_ptr = input.as_ptr().add(*pos);
@@ -348,6 +354,9 @@ pub(super) unsafe fn direct_bits(
             options(att_syntax, nostack),
         );
         let _ = count;
+        // A symbol reads at most 20 bytes and the fast path keeps FAST_MIN
+        // available, so the end of the input is never passed.
+        debug_assert!(in_ptr <= input.as_ptr_range().end);
         *pos = in_ptr.offset_from(input.as_ptr()) as usize;
         dest
     }
