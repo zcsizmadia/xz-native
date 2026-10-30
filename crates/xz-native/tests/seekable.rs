@@ -647,3 +647,72 @@ fn metadata_matches_xz_list() {
         .collect();
     assert!(head == want);
 }
+
+/// Seeking to the end of a partly read Block opens the next Block directly
+/// instead of decoding the rest of the current one.
+#[test]
+fn seek_to_next_block_skips_the_rest() {
+    struct Counting<'a>(Cursor<&'a [u8]>, u64);
+    impl Read for Counting<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let n = self.0.read(buf)?;
+            self.1 += n as u64;
+            Ok(n)
+        }
+    }
+    impl Seek for Counting<'_> {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.0.seek(pos)
+        }
+    }
+    let mut rng = Rng(77);
+    let data: Vec<u8> = (0..2 << 20).map(|_| rng.next() as u8).collect();
+    let opts = xz_native::EncoderOptions::preset(0)
+        .unwrap()
+        .block_size(1 << 20);
+    let c = xz_native::compress_with_options(&data, &opts).unwrap();
+    let mut r = XzSeekableReader::new(Counting(Cursor::new(&c), 0)).unwrap();
+    assert!(read_n(&mut r, 10) == data[..10]);
+    let before = r.get_ref().1;
+    let next = r.blocks()[1].uncompressed_offset;
+    r.seek(SeekFrom::Start(next)).unwrap();
+    assert!(read_n(&mut r, 10) == data[next as usize..][..10]);
+    // About one input buffer for Block 1, not the rest of Block 0 (1 MiB).
+    assert!(
+        r.get_ref().1 - before < 200_000,
+        "{}",
+        r.get_ref().1 - before
+    );
+    // Seeking to the end is EOF without decoding the rest.
+    r.seek(SeekFrom::End(0)).unwrap();
+    assert!(read_n(&mut r, 10).is_empty());
+
+    // A far seek inside a Block followed by tiny reads.
+    let mut r = open(&c).unwrap();
+    r.seek(SeekFrom::Start((1 << 20) - 3)).unwrap();
+    let mut b = [0u8; 1];
+    for i in 0..6 {
+        r.read_exact(&mut b).unwrap();
+        assert_eq!(b[0], data[(1 << 20) - 3 + i]);
+    }
+}
+
+/// A Block Header size byte that claims more than the Block (and the rest
+/// of the file) is corrupt data, not a file that changed after opening.
+#[test]
+fn oversized_block_header_is_data_error() {
+    let data = text(300_000, 9);
+    let opts = xz_native::EncoderOptions::preset(1)
+        .unwrap()
+        .block_size(299_900);
+    let mut c = xz_native::compress_with_options(&data, &opts).unwrap();
+    let last = find_block(&c, 1);
+    c[last] = 0xFF;
+    let mut r = open(&c).unwrap();
+    assert_eq!(
+        r.block_details(1).map_err(xz_error).err(),
+        Some(Error::Data)
+    );
+    r.seek(SeekFrom::Start(299_950)).unwrap();
+    assert_eq!(read_all(&mut r).err(), Some(Error::Data));
+}

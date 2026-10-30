@@ -28,7 +28,7 @@ fn decode_all(
         out.truncate(len + w);
         if s == Status::StreamEnd {
             // Like `xz`, trailing data after the end is an error, except
-            // in .lz, which allows it.
+            // in .lz and after a single .xz Stream (`xz --single-stream`).
             if ip != input.len() && !allow_trailing {
                 return Err(crate::Error::Data);
             }
@@ -55,8 +55,9 @@ pub fn decompress_with_options(input: &[u8], opts: DecoderOptions) -> Result<Vec
 /// that both paths agree.
 #[doc(hidden)]
 pub fn decompress_streaming(input: &[u8], opts: DecoderOptions) -> Result<Vec<u8>> {
+    let single = !opts.concatenated;
     let mut d = XzDecoder::with_options(opts);
-    decode_all(input, false, |i, o, f| d.decode(i, o, f))
+    decode_all(input, single, |i, o, f| d.decode(i, o, f))
 }
 
 /// Decompresses legacy .lzma data in one call.

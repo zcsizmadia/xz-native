@@ -63,6 +63,9 @@ minor version may change the API.
 - `compat::{read, bufread}::XzDecoder::new_multi_decoder` also decodes
   .lzma and .lz, detected from the first byte, like `xz2`'s auto decoder
   (#72).
+- One-shot decoding with `concatenated(false)` ignores the input after the
+  first Stream, like `xz --single-stream` and the readers; it was an error
+  (#73).
 
 ### Fixed
 - One-shot decoding (`decompress`, `decompress_into`, the threaded
@@ -85,6 +88,15 @@ minor version may change the API.
   the input again (#72).
 - `compat::bufread::XzEncoder` no longer spins when its source has more
   data after reporting the end (#72).
+- Errors match liblzma in two more cases: a reserved Filter ID (2^62 and
+  up) is `Error::Data`, not `Error::Options`; and an Index whose records
+  don't match the Blocks, or whose CRC32 has a wrong byte, is
+  `Error::Data` even when the input ends before the end of the Index
+  (records are checked before the CRC32, the CRC32 byte by byte) (#73).
+- `XzSeekableReader`: a corrupt Block Header size byte is `Error::Data`
+  instead of `Error::Truncated`; seeking to the end of a partly read Block
+  opens the next one instead of decoding the rest, and skipping uses a
+  64 KiB buffer instead of the caller's (#73).
 - Dictionary sizes that don't fit in memory (on 32-bit targets, from
   2 GiB) give `Error::MemLimit` instead of a panic or a wrapped size; large
   dictionaries are allocated fallibly (#70).

@@ -140,6 +140,8 @@ pub struct XzSeekableReader<R> {
     pos: u64,
     cur: Option<Current>,
     buf: Box<[u8]>,
+    /// Output for data skipped over, allocated on first use.
+    scratch: Vec<u8>,
 }
 
 /// Reads exactly `buf.len()` bytes; the file ending early means it changed
@@ -385,6 +387,7 @@ impl<R: Read + Seek> XzSeekableReader<R> {
             pos: 0,
             cur: None,
             buf,
+            scratch: Vec::new(),
         })
     }
 
@@ -485,14 +488,16 @@ impl<R: Read + Seek> XzSeekableReader<R> {
             return Err(Error::Data.into());
         }
         let header_size = (hdr[0] as usize + 1) * 4;
-        read_full(&mut self.inner, &mut hdr[1..header_size])?;
-        let h = decode_block_header(&hdr[..header_size], b.check)?;
-
         // The header and the Index must agree (`lzma_block_compressed_size`).
+        // Checked before reading the header, so a corrupt size byte is a
+        // data error, not a read past the end of the file.
         let container = header_size as u64 + b.check.size() as u64;
         if b.unpadded_size <= container {
             return Err(Error::Data.into());
         }
+        read_full(&mut self.inner, &mut hdr[1..header_size])?;
+        let h = decode_block_header(&hdr[..header_size], b.check)?;
+
         let compressed = b.unpadded_size - container;
         if h.compressed_size.is_some_and(|c| c != compressed)
             || h.uncompressed_size
@@ -528,11 +533,13 @@ impl<R: Read + Seek> XzSeekableReader<R> {
     fn read_inner(&mut self, out: &mut [u8]) -> io::Result<usize> {
         let pos = self.pos;
         loop {
-            // Keep the current decoder if it hasn't passed `pos` yet.
+            // Keep the current decoder if it hasn't passed `pos` yet. At the
+            // end of a partly read Block, the next Block is opened instead
+            // of decoding the rest of this one.
             if !self
                 .cur
                 .as_ref()
-                .is_some_and(|c| c.pos <= pos && pos <= c.end)
+                .is_some_and(|c| c.pos <= pos && (pos < c.end || c.pos == c.end))
             {
                 let i = self.locate(pos);
                 if i == self.blocks.len() {
@@ -542,10 +549,13 @@ impl<R: Read + Seek> XzSeekableReader<R> {
             }
             let c = self.cur.as_mut().unwrap();
             if pos < c.end {
-                // Skip to `pos`, using `out` as scratch space.
+                // Skip to `pos`.
+                if c.pos < pos && self.scratch.is_empty() {
+                    self.scratch = vec![0; BUF_SIZE];
+                }
                 while c.pos < pos {
-                    let n = (pos - c.pos).min(out.len() as u64) as usize;
-                    step(&mut self.inner, &mut self.buf, c, &mut out[..n])?;
+                    let n = (pos - c.pos).min(BUF_SIZE as u64) as usize;
+                    step(&mut self.inner, &mut self.buf, c, &mut self.scratch[..n])?;
                 }
                 let n = (c.end - pos).min(out.len() as u64) as usize;
                 let written = step(&mut self.inner, &mut self.buf, c, &mut out[..n])?;
