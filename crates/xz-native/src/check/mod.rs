@@ -236,6 +236,74 @@ mod tests {
         }
     }
 
+    #[test]
+    #[cfg(all(
+        target_arch = "aarch64",
+        target_endian = "little",
+        not(feature = "portable")
+    ))]
+    fn arm_crc_matches_generic() {
+        if let Some((a, b)) = aarch64::crc_fns() {
+            compare_with_generic(a, b);
+        }
+    }
+
+    /// The SHA-256 instructions against the portable block function, called
+    /// directly (runtime dispatch could silently pick the generic code).
+    #[test]
+    #[cfg(all(
+        any(target_arch = "x86_64", target_arch = "aarch64"),
+        not(feature = "portable")
+    ))]
+    fn sha256_blocks_match_generic() {
+        #[cfg(target_arch = "x86_64")]
+        let f = x86::sha256_fn();
+        #[cfg(target_arch = "aarch64")]
+        let f = aarch64::sha256_fn();
+        let Some(f) = f else { return };
+        let d = data(64 * 40);
+        for n in [1, 2, 3, 7, 40] {
+            let mut a = [
+                0x6a09_e667u32,
+                0xbb67_ae85,
+                0x3c6e_f372,
+                0xa54f_f53a,
+                0x510e_527f,
+                0x9b05_688c,
+                0x1f83_d9ab,
+                0x5be0_cd19,
+            ];
+            let mut b = a;
+            f(&mut a, &d[..64 * n]);
+            sha256::blocks_generic(&mut b, &d[..64 * n]);
+            assert_eq!(a, b, "{n} blocks");
+        }
+    }
+
+    /// CI names the SIMD paths each runner has in `XZ_NATIVE_REQUIRE_SIMD`
+    /// (comma-separated: clmul, vpclmul, sha, crc). If detection fails for
+    /// one, the tests above would compare the generic code with itself
+    /// and pass; this fails instead.
+    #[test]
+    #[cfg(all(feature = "std", not(feature = "portable")))]
+    fn required_simd_is_detected() {
+        let Ok(req) = std::env::var("XZ_NATIVE_REQUIRE_SIMD") else {
+            return;
+        };
+        for f in req.split(',').map(str::trim).filter(|f| !f.is_empty()) {
+            let found = match f {
+                "clmul" => crate::cpu::has_clmul(),
+                "sha" => crate::cpu::has_sha256(),
+                #[cfg(target_arch = "x86_64")]
+                "vpclmul" => crate::cpu::has_vpclmul(),
+                #[cfg(target_arch = "aarch64")]
+                "crc" => crate::cpu::has_arm_crc32(),
+                _ => panic!("XZ_NATIVE_REQUIRE_SIMD: unknown feature {f}"),
+            };
+            assert!(found, "XZ_NATIVE_REQUIRE_SIMD: {f} not detected");
+        }
+    }
+
     /// A SIMD test was skipped because the CPU lacks the feature: fail if
     /// the environment variable `var` says the path must be tested.
     #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]

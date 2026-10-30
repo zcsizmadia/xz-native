@@ -59,11 +59,6 @@ pub(crate) struct Dict {
 }
 
 impl Dict {
-    /// Memory used by a dictionary of `dict_size` bytes.
-    pub(crate) fn mem_usage(dict_size: u32) -> u64 {
-        Self::rounded(dict_size) + (2 * REPEAT_MAX + EXTRA) as u64
-    }
-
     fn rounded(dict_size: u32) -> u64 {
         (dict_size.max(4096) as u64).next_multiple_of(16)
     }

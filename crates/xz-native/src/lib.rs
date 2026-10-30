@@ -76,7 +76,9 @@
 //! - `std` (default): the `std::io` types, threads, and run-time CPU
 //!   feature detection. Without it the crate is `no_std` + `alloc`.
 //! - `portable`: disables all SIMD and assembly paths (CLMUL and ARMv8 CRC,
-//!   SHA extensions, the x86-64 range decoder), for testing the fallbacks.
+//!   SHA extensions, the x86-64 range decoder) and checks the indexes of
+//!   the decoder's hot-path reads, so no `unsafe` code runs; for testing
+//!   the fallbacks.
 //! - `tokio`: async readers and writers for tokio in the `tokio` module.
 //! - `futures-io`: async readers and writers for the futures-io traits
 //!   (async-std, smol, `futures`) in the `futures` module.
@@ -124,7 +126,6 @@ pub use filter::{BcjKind, Filter};
 #[cfg(feature = "std")]
 pub use io::{LzipReader, LzmaReader, LzmaWriter, XzReader, XzWriter};
 pub use lzip::LzipDecoder;
-pub use lzma::LzmaProps;
 pub use oneshot::{
     compress, compress_lzma, compress_lzma_with_options, compress_raw, compress_with_options,
     decompress, decompress_into, decompress_lzip, decompress_lzip_with_options, decompress_lzma,

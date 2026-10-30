@@ -146,13 +146,7 @@ impl<const SAFE: bool> Input<'_, SAFE> {
             let b = if SAFE {
                 *self.buf.get(self.pos).ok_or(Stop::NeedInput)?
             } else {
-                debug_assert!(self.pos < self.buf.len());
-                // SAFETY: the fast path starts a symbol only with at least
-                // FAST_MIN bytes left, more than one symbol can read.
-                #[allow(unsafe_code)]
-                unsafe {
-                    *self.buf.get_unchecked(self.pos)
-                }
+                fast_byte(self.buf, self.pos)
             };
             self.pos += 1;
             rc.range <<= 8;
@@ -162,9 +156,32 @@ impl<const SAFE: bool> Input<'_, SAFE> {
     }
 }
 
+/// Reads an input byte on the fast path. The `portable` feature checks the
+/// index instead.
+#[cfg(not(feature = "portable"))]
+#[inline(always)]
+fn fast_byte(buf: &[u8], pos: usize) -> u8 {
+    debug_assert!(pos < buf.len());
+    // SAFETY: the fast path starts a symbol only with at least FAST_MIN
+    // bytes left, more than one symbol can read.
+    #[allow(unsafe_code)]
+    unsafe {
+        *buf.get_unchecked(pos)
+    }
+}
+
+#[cfg(feature = "portable")]
+#[inline(always)]
+fn fast_byte(buf: &[u8], pos: usize) -> u8 {
+    buf[pos]
+}
+
 /// Reads a probability. Every index is a constant offset plus a bit-tree
-/// symbol or context bounded by its tree, so it is always within `Probs`
-/// (`PROBS_SIZE` covers the largest literal coder, lc + lp = 4).
+/// symbol or context bounded by its tree, so it is always within `Probs`:
+/// `PROBS_SIZE` covers the largest literal coder (lc + lp = 4), and the
+/// state and pos_state tables hold pos_state < 16 (pb <= 4). `reset`
+/// asserts both bounds. The `portable` feature checks the index instead.
+#[cfg(not(feature = "portable"))]
 #[inline(always)]
 fn prob(probs: &Probs, i: usize) -> u32 {
     debug_assert!(i < PROBS_SIZE);
@@ -175,6 +192,7 @@ fn prob(probs: &Probs, i: usize) -> u32 {
     }
 }
 
+#[cfg(not(feature = "portable"))]
 #[inline(always)]
 fn set_prob(probs: &mut Probs, i: usize, p: u32) {
     debug_assert!(i < PROBS_SIZE);
@@ -183,6 +201,18 @@ fn set_prob(probs: &mut Probs, i: usize, p: u32) {
     unsafe {
         *probs.get_unchecked_mut(i) = p as u16;
     }
+}
+
+#[cfg(feature = "portable")]
+#[inline(always)]
+fn prob(probs: &Probs, i: usize) -> u32 {
+    probs[i] as u32
+}
+
+#[cfg(feature = "portable")]
+#[inline(always)]
+fn set_prob(probs: &mut Probs, i: usize, p: u32) {
+    probs[i] = p as u16;
 }
 
 /// Decodes one bit with the probability at `probs[i]`.
@@ -666,6 +696,11 @@ impl LzmaDecoder {
     pub(crate) fn reset(&mut self, props: LzmaProps) {
         let lc = props.lc as u32;
         let lp = props.lp as u32;
+        // The unchecked probability reads depend on these bounds: the
+        // literal coders end within `Probs` for lc + lp <= 4, and pos_state
+        // stays below 16 for pb <= 4. Every caller validates them; this
+        // keeps the invariant local to the code that relies on it.
+        assert!(lc + lp <= 4 && props.pb <= 4, "invalid LZMA properties");
         self.params = Params {
             lc,
             literal_mask: (0x100 << lp) - (0x100 >> lc),

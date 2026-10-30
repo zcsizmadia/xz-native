@@ -12,11 +12,16 @@ use xz_native::{
     decompress_streaming, decompress_with_options,
 };
 
-/// Memory the decoders count for a dictionary: the size rounded up to 16
-/// (at least 4 KiB), the 2 x 288 + 32 bytes around it, and 32 KiB for the
-/// rest of the LZMA decoder.
+/// Memory the LZMA1 decoders (.lzma, .lz) count for a dictionary, as
+/// liblzma (64-bit) does: the dictionary plus the decoder state and
+/// `LZMA_MEMUSAGE_BASE`.
 fn dict_mem(dict: u32) -> u64 {
-    (dict.max(4096) as u64).next_multiple_of(16) + 2 * 288 + 32 + 32 * 1024
+    dict as u64 + 65_984
+}
+
+/// [`dict_mem`] for an .xz Block with only LZMA2.
+fn lzma2_mem(dict: u32) -> u64 {
+    dict as u64 + 66_168
 }
 
 fn test_file(name: &str) -> Vec<u8> {
@@ -80,7 +85,7 @@ fn xz_memlimit_is_exact() {
     let Some(packed) = xz(&["-zc", "--lzma2=preset=1,dict=1MiB"], &data) else {
         return;
     };
-    let need = dict_mem(1 << 20);
+    let need = lzma2_mem(1 << 20);
     for (limit, ok) in [(need, true), (need - 1, false)] {
         let opts = DecoderOptions::default().memlimit(limit);
         let r = decompress_with_options(&packed, opts);

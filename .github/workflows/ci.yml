@@ -59,13 +59,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: linux-x64, os: ubuntu-26.04, require_xz: "1" }
-          - { name: linux-arm64, os: ubuntu-26.04-arm, require_xz: "1" }
-          - { name: windows-x64, os: windows-latest, require_xz: "" }
-          - { name: windows-arm64, os: windows-11-arm, require_xz: "" }
-          - { name: macos-arm64, os: macos-latest, require_xz: "1" }
+          # simd: the SIMD paths the runner has, which the tests must
+          # detect (otherwise they would compare the generic code with
+          # itself).
+          - { name: linux-x64, os: ubuntu-26.04, require_xz: "1", simd: "clmul" }
+          - { name: linux-arm64, os: ubuntu-26.04-arm, require_xz: "1", simd: "clmul,crc,sha" }
+          - { name: windows-x64, os: windows-latest, require_xz: "", simd: "clmul" }
+          - { name: windows-arm64, os: windows-11-arm, require_xz: "", simd: "clmul,crc" }
+          - { name: macos-arm64, os: macos-latest, require_xz: "1", simd: "clmul,crc,sha" }
     env:
       XZ_NATIVE_REQUIRE_XZ: ${{ matrix.require_xz }}
+      XZ_NATIVE_REQUIRE_SIMD: ${{ matrix.simd }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
