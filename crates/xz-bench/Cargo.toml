@@ -29,3 +29,6 @@ harness = false
 [[bench]]
 name = "encode"
 harness = false
+
+[lints]
+workspace = true
