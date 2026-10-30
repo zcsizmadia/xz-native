@@ -119,3 +119,86 @@ pub fn xz(args: &[&str], input: &[u8]) -> Option<Vec<u8>> {
     assert!(out.status.success(), "xz {args:?} failed");
     Some(out.stdout)
 }
+
+/// `xz` option sets for interop tests.
+pub const XZ_OPTIONS: &[&[&str]] = &[
+    &["-0"],
+    &["-1"],
+    &["-6"],
+    &["-9e"],
+    &["--check=none"],
+    &["--check=crc32"],
+    &["--check=sha256"],
+    &["--lzma2=preset=6,lc=4,lp=0,pb=0"],
+    &["--lzma2=preset=1,lc=0,lp=4,pb=4"],
+    &["--lzma2=preset=6,lc=1,lp=3,pb=1,mf=hc4"],
+    &["--block-size=50000"],
+    &["-T4", "--block-size=300000"],
+    &["--x86", "--lzma2"],
+    &["--powerpc", "--lzma2"],
+    &["--ia64", "--lzma2"],
+    &["--arm", "--lzma2"],
+    &["--armthumb", "--lzma2"],
+    &["--arm64", "--lzma2"],
+    &["--sparc", "--lzma2"],
+    &["--riscv", "--lzma2"],
+    &["--x86=start=4096", "--lzma2"],
+    &["--delta=dist=1", "--lzma2"],
+    &["--delta=dist=4", "--x86", "--lzma2"],
+    &["-T1", "--block-size=100000"],
+    &["-T4", "--block-size=65536", "--check=sha256"],
+    &["-T4", "--block-size=40000", "--check=none", "-1"],
+    &[
+        "-T4",
+        "--block-size=100000",
+        "--check=crc32",
+        "--x86",
+        "--lzma2",
+    ],
+    &[
+        "-T4",
+        "--block-size=30000",
+        "--delta=dist=2",
+        "--lzma2=preset=0",
+    ],
+    &["-T4", "--block-size=200000", "--arm64", "--lzma2"],
+];
+
+/// Reads .xz data with [`xz_native::XzReader`] through a `BufReader` of
+/// `capacity`, with read sizes from `seed`. Returns the data read before an
+/// error, and the error.
+pub fn read_xz(
+    input: &[u8],
+    opts: xz_native::DecoderOptions,
+    capacity: usize,
+    seed: u64,
+) -> (Vec<u8>, Option<xz_native::Error>) {
+    use std::io::Read;
+    let inner = std::io::BufReader::with_capacity(capacity, input);
+    let mut reader = xz_native::XzReader::with_options(inner, opts);
+    let mut r = Rng(seed | 1);
+    let sizes = [1usize, 7, 100, 4096, 65536, 1 << 20];
+    let mut buf = vec![0u8; 1 << 20];
+    let mut out = Vec::new();
+    loop {
+        let n = sizes[r.below(sizes.len() as u64) as usize];
+        match reader.read(&mut buf[..n]) {
+            Ok(0) => return (out, None),
+            Ok(k) => out.extend_from_slice(&buf[..k]),
+            Err(e) => {
+                let e = e
+                    .get_ref()
+                    .and_then(|e| e.downcast_ref::<xz_native::Error>());
+                return (out, Some(*e.expect("not an xz_native::Error")));
+            }
+        }
+    }
+}
+
+/// [`xz_native::DecoderOptions`] with `threads`.
+pub fn threads(threads: usize) -> xz_native::DecoderOptions {
+    xz_native::DecoderOptions {
+        threads,
+        ..Default::default()
+    }
+}

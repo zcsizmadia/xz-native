@@ -64,7 +64,47 @@ fn ours(input: &[u8], format: Format) -> Option<Vec<u8>> {
                 threaded == flat,
                 "threaded and single-threaded decoders disagree"
             );
+            // XzReader with threads: the same error as without, after at
+            // least the same data.
+            let (single, single_err) = read(input, opts);
+            let (mt, mt_err) = read(input, threads);
+            assert_eq!(
+                mt_err, single_err,
+                "threaded and streaming readers disagree"
+            );
+            assert!(
+                mt.starts_with(&single),
+                "threaded reader returned {} bytes before the error, streaming {}",
+                mt.len(),
+                single.len()
+            );
+            assert!(
+                mt_err.is_none() == flat.is_some() && (mt_err.is_some() || flat == Some(mt)),
+                "threaded reader and one-shot decoder disagree"
+            );
             flat
+        }
+    }
+}
+
+/// Decodes with [`xz_native::XzReader`]; returns the data read and the error.
+fn read(input: &[u8], opts: xz_native::DecoderOptions) -> (Vec<u8>, Option<xz_native::Error>) {
+    // Small reads through a small buffer, so that the threaded reader's
+    // read-ahead and the streaming decoder's chunking both matter.
+    let inner = std::io::BufReader::with_capacity(97, input);
+    let mut r = xz_native::XzReader::with_options(inner, opts);
+    let mut buf = [0u8; 1000];
+    let mut out = Vec::new();
+    loop {
+        match r.read(&mut buf) {
+            Ok(0) => return (out, None),
+            Ok(n) => out.extend_from_slice(&buf[..n]),
+            Err(e) => {
+                let e = e
+                    .get_ref()
+                    .and_then(|e| e.downcast_ref::<xz_native::Error>());
+                return (out, Some(*e.expect("not an xz_native::Error")));
+            }
         }
     }
 }
