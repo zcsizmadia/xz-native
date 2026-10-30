@@ -536,3 +536,74 @@ fn threaded_errors_match_single_threaded() {
         assert_eq!(a.is_ok(), r1.is_ok(), "case {i}: one-shot vs reader");
     }
 }
+
+#[test]
+fn check_type_after_stream_header() {
+    let packed = xz(&["-zc", "--check=sha256"], b"check").unwrap_or_else(|| {
+        // Without xz: the header bytes from our own encoder are the same.
+        let opts = xz_native::EncoderOptions {
+            check: xz_native::Check::Sha256,
+            ..Default::default()
+        };
+        xz_native::compress_with_options(b"check", &opts).unwrap()
+    });
+    let mut d = XzDecoder::new();
+    assert_eq!(d.check(), None);
+    let mut out = [0u8; 16];
+    d.decode(&packed[..11], &mut out, false).unwrap();
+    assert_eq!(d.check(), None);
+    d.decode(&packed[11..12], &mut out, false).unwrap();
+    assert_eq!(d.check(), Some(xz_native::Check::Sha256));
+}
+
+/// Reads the VLI at `v[*p..]`.
+fn read_vli(v: &[u8], p: &mut usize) -> u64 {
+    let mut x = 0u64;
+    for i in 0.. {
+        let b = v[*p];
+        *p += 1;
+        x |= ((b & 0x7F) as u64) << (7 * i);
+        if b < 0x80 {
+            break;
+        }
+    }
+    x
+}
+
+#[test]
+fn compressed_size_shorter_than_data() {
+    // Running out of the declared Compressed Size is a data error even
+    // though the input itself is complete.
+    let data = code_like(100_000);
+    let opts = xz_native::EncoderOptions {
+        threads: 2,
+        block_size: 40_000,
+        ..Default::default()
+    };
+    let packed = xz_native::compress_with_options(&data, &opts).unwrap();
+    let size = (packed[12] as usize + 1) * 4;
+    assert_eq!(packed[13] & 0x40, 0x40, "Compressed Size present");
+    let mut p = 14;
+    let comp = read_vli(&packed, &mut p);
+    let len = p - 14;
+    let mut v = packed.clone();
+    let mut x = comp - 8;
+    for i in 0..len {
+        v[14 + i] = (x & 0x7F) as u8 | if i + 1 < len { 0x80 } else { 0 };
+        x >>= 7;
+    }
+    assert_eq!(x, 0);
+    let crc = xz_native::crc32(&v[12..12 + size - 4], 0);
+    v[12 + size - 4..12 + size].copy_from_slice(&crc.to_le_bytes());
+
+    assert_eq!(decompress(&v), Err(Error::Data));
+    assert_eq!(
+        decompress_streaming(&v, DecoderOptions::default()),
+        Err(Error::Data)
+    );
+    let threaded = DecoderOptions {
+        threads: 4,
+        ..Default::default()
+    };
+    assert_eq!(decompress_with_options(&v, threaded), Err(Error::Data));
+}
