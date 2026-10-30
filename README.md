@@ -31,7 +31,7 @@ build scripts or the memory-safety risk. Sibling of the C# library
 
   | | xz-native speed / C liblzma 5.8.4 (1.25x = 25% faster) |
   |---|---|
-  | Compression, single thread, Linux (liblzma built with GCC) | 1.38-1.65x at presets 0-1, 1.01-1.27x at 6-9e |
+  | Compression, single thread, Linux (liblzma built with GCC) | 1.21-1.65x at presets 0-1, 0.94-1.27x at 6-9e |
   | Compression, multithreaded, Linux | 1.30-1.48x at preset 1, 1.04-1.13x at 6 |
   | Decompression, single thread, Linux (liblzma built with GCC and its assembly) | 1.00-1.06x |
   | Decompression, single thread, Windows (MSVC build, as `xz2`/`liblzma` give Rust users there) | 1.3-1.4x |

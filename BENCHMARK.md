@@ -18,6 +18,7 @@ releases and adding more platforms and the Silesia corpus.
 |---|---|---|---|
 | **Linux** | AMD EPYC 7543 (Zen 3), one core pinned with `taskset` on an idle NUMA node | Ubuntu 22.04 | GCC, with liblzma's x86-64 assembly decoder |
 | **Windows** | Intel i7-12800H (Alder Lake) | Windows 11 | MSVC, without assembly (what `xz2`/`liblzma` build on Windows) |
+| **Linux, small** | AMD Ryzen 5 3500U (Zen+, 4 MB L3), one core pinned | Ubuntu 26.04 (glibc 2.43, THP `madvise`) | GCC (`liblzma-sys`); also Ubuntu's `xz` 5.8.3 |
 
 The Rust code is built with the stable toolchain and the workspace `bench`
 profile (fat LTO, one codegen unit). C liblzma comes from `liblzma-sys`
@@ -70,6 +71,23 @@ new output buffer cost most of the time: a plain copy into a fresh `Vec` runs
 at about 3.8 GiB/s on the i7-12800H, which is where `decompress` is.
 Decoding into a reused buffer with `decompress_into` avoids that and runs at
 about 18 GiB/s there ([#34]).
+
+Linux has the same cost for large outputs. glibc reuses freed memory for
+allocations below its mmap threshold, which grows up to 32 MiB; from 32 MiB
+on, every new `Vec` gets fresh pages, faulted in 4 KiB at a time unless
+transparent huge pages are on for the heap. `examples/alloc_probe` with
+`XZ_PROBE_MIB` on the Ryzen 5 3500U (Ubuntu 26.04), GiB/s:
+
+| Output | `decompress` | `decompress_into` (reused) | copy into a fresh `Vec` | copy into a reused buffer |
+|---|---|---|---|---|
+| 4 MiB | 3.97 | 4.02 | 15.0 | 15.5 |
+| 16 MiB | 3.87 | 4.03 | 9.6 | 10.3 |
+| 32 MiB | 1.24 | 3.75 | 1.41 | 8.6 |
+| 64 MiB | 1.23 | 3.48 | 1.41 | 7.4 |
+
+So for outputs of 32 MiB and more, decode into a reused buffer
+(`decompress_into`) or stream (`XzReader`). Below that size the Ryzen's
+ceiling is its CRC64 (9.2 GiB/s, 128-bit PCLMULQDQ only), not memory.
 
 [#49]: https://github.com/zcsizmadia/xz-native/pull/49
 
@@ -221,6 +239,22 @@ distribution's liblzma is faster than this column suggests.
 
 On the EPYC 7543 (Zen 3, no VPCLMULQDQ) CRC32 and CRC64 reach 27.0-27.5 GiB/s, against 2.1 and 1.2 GiB/s for `liblzma-sys`, and SHA-256 1.4-1.5 GiB/s.
 
+## Small Linux machine
+
+Ryzen 5 3500U (Zen+, 4 MB L3, Ubuntu 26.04), one pinned core, at bddff8f
+(the library as at da40bf3). Speed ratios, xz-native over C liblzma
+(`liblzma-sys`, GCC), single thread:
+
+| Decompression | Incompressible | Compression -0/-1 | Compression -6 to -9e | CRC32 | CRC64 |
+|---|---|---|---|---|---|
+| 0.98-1.07x | 4.8-5.2x | 1.21-1.55x | 0.94-1.25x | 5.4x | 9.2x |
+
+With only 4 MB of L3, the binary tree match finder waits on memory even
+more, and text at -6 to -9e is the one place where xz-native is slightly
+behind (0.94-0.99x). The CRCs run at 10.5 GiB/s with 128-bit PCLMULQDQ.
+Every test, including the interop tests against Ubuntu's `xz` 5.8.3,
+passes there.
+
 ## GitHub-hosted runners
 
 The Benchmarks workflow at bddff8f (the library as at da40bf3), on shared
@@ -259,6 +293,19 @@ and the numbers are high.
 
 The CLI also pays for process start-up and pipe output, roughly 10-15% at
 these sizes.
+
+Ryzen 5 3500U, **Ubuntu 26.04's own `xz` 5.8.3** (Ubuntu's GCC build),
+same method, at bddff8f:
+
+| Input | xz-native one-shot | xz-native XzReader (file) | `xz -dc -T1` | XzReader / xz |
+|---|---|---|---|---|
+| text | 262.9 | 317.6 | **329.0** | 0.97x |
+| binary | 355.9 | **456.5** | 432.1 | 1.06x |
+| random | 1035.3 | **2708.7** | 1745.5 | 1.55x |
+
+`XzReader` is the like-for-like comparison: like `xz -dc` it reuses a small
+output buffer. One-shot `decompress` builds a fresh 32 MiB `Vec` per call
+and pays for fresh pages (see above), so it trails both here.
 
 ## Reproducing
 
