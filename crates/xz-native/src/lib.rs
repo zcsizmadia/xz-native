@@ -40,6 +40,8 @@ extern crate std;
 
 mod alone;
 mod check;
+#[cfg(feature = "std")]
+pub mod compat;
 mod cpu;
 mod error;
 mod filter;

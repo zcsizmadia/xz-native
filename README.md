@@ -113,6 +113,22 @@ The push-style [`XzDecoder`](crates/xz-native/src/xz/stream.rs) and
 [`XzEncoder`](crates/xz-native/src/xz/encoder.rs) work without `std`, like
 `lzma_code` in liblzma.
 
+### Migrating from `xz2` or `liblzma`
+
+`xz_native::compat` mirrors those crates' `read`, `bufread` and `write`
+modules (`XzDecoder`, `XzEncoder`, `new_multi_decoder`, `total_in`/`total_out`,
+`finish`/`try_finish`), so switching is usually a change of import:
+
+```rust
+// use xz2::read::XzDecoder;
+// use xz2::write::XzEncoder;
+use xz_native::compat::read::XzDecoder;
+use xz_native::compat::write::XzEncoder;
+```
+
+liblzma's low-level `stream::Stream` and `MtStreamBuilder` have no direct
+equivalent; use `DecoderOptions` and `EncoderOptions` instead.
+
 ## Supported
 
 | Feature | Decode | Encode |
