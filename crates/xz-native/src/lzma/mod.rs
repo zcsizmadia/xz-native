@@ -7,7 +7,7 @@ pub(crate) mod lz_encoder;
 pub(crate) mod lzma2;
 pub(crate) mod lzma2_encoder;
 pub(crate) mod range_encoder;
-#[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+#[cfg(all(target_arch = "x86_64", not(feature = "portable"), not(miri)))]
 mod x86_asm;
 
 use crate::error::{Error, Result};

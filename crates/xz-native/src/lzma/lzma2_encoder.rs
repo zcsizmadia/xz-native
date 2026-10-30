@@ -408,7 +408,7 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            let input = data(400_000, i as u32 + 1);
+            let input = data(if cfg!(miri) { 4_000 } else { 400_000 }, i as u32 + 1);
             let o = opts(mode, mf, nice);
             let mut lz = Lzma2Encoder::new_lz(&o, &[]).unwrap();
             let packed = encode(&mut lz, &input);
@@ -429,7 +429,7 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            let input = data(300_000, 9 + i as u32);
+            let input = data(if cfg!(miri) { 4_000 } else { 300_000 }, 9 + i as u32);
             let o = opts(mode, mf, 64);
             let mut lz = Lzma1Encoder::new_lz(&o, &[]).unwrap();
             let packed = encode(&mut lz, &input);
@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn incompressible_chunks_are_stored() {
         let mut x = 7u32;
-        let input: Vec<u8> = (0..200_000)
+        let input: Vec<u8> = (0..if cfg!(miri) { 4_000 } else { 200_000 })
             .map(|_| {
                 x = x.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
                 (x >> 24) as u8

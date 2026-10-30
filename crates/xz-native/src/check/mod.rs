@@ -334,7 +334,8 @@ mod tests {
     #[test]
     fn sha256_simd_matches_generic() {
         let d = data(4000);
-        for len in [0, 1, 55, 56, 63, 64, 65, 127, 128, 129, 1000, 4000] {
+        let lens = [0, 1, 55, 56, 63, 64, 65, 127, 128, 129, 1000, 4000];
+        for len in lens.into_iter().filter(|&l| !cfg!(miri) || l <= 1000) {
             for split in [0, 1, 33, 64] {
                 let split = split.min(len);
                 let mut a = Sha256::new();
