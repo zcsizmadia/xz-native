@@ -248,26 +248,33 @@ impl EncoderOptions {
         if !matches!(
             self.check,
             Check::None | Check::Crc32 | Check::Crc64 | Check::Sha256
-        ) || self.filters.len() > 3
-        {
+        ) {
             return Err(Error::InvalidOptions);
         }
-        for f in &self.filters {
-            match *f {
-                Filter::Lzma2 { .. } => return Err(Error::InvalidOptions),
-                Filter::Delta { distance } if !(1..=256).contains(&distance) => {
-                    return Err(Error::InvalidOptions);
-                }
-                Filter::Bcj { kind, start_offset }
-                    if !start_offset.is_multiple_of(kind.alignment()) =>
-                {
-                    return Err(Error::InvalidOptions);
-                }
-                _ => {}
-            }
-        }
-        Ok(())
+        validate_filters(&self.filters)
     }
+}
+
+/// Validates the filters before LZMA: at most three Delta and BCJ filters.
+pub(crate) fn validate_filters(filters: &[Filter]) -> Result<()> {
+    if filters.len() > 3 {
+        return Err(Error::InvalidOptions);
+    }
+    for f in filters {
+        match *f {
+            Filter::Lzma2 { .. } => return Err(Error::InvalidOptions),
+            Filter::Delta { distance } if !(1..=256).contains(&distance) => {
+                return Err(Error::InvalidOptions);
+            }
+            Filter::Bcj { kind, start_offset }
+                if !start_offset.is_multiple_of(kind.alignment()) =>
+            {
+                return Err(Error::InvalidOptions);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

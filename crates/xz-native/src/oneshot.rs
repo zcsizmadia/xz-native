@@ -4,6 +4,7 @@ use crate::alone::{LzmaDecoderAlone, LzmaEncoderAlone};
 use crate::error::Result;
 use crate::lzip::LzipDecoder;
 use crate::options::{EncoderOptions, LzmaOptions};
+use crate::raw::{RawDecoder, RawEncoder, RawOptions};
 use crate::xz::encoder::{Action, XzEncoder};
 use crate::xz::stream::{DecoderOptions, Status, XzDecoder};
 use alloc::vec::Vec;
@@ -159,4 +160,28 @@ pub fn compress_lzma(data: &[u8], preset: u32) -> Result<Vec<u8>> {
 pub fn compress_lzma_with_options(data: &[u8], opts: &LzmaOptions) -> Result<Vec<u8>> {
     let mut enc = LzmaEncoderAlone::with_options(opts)?;
     encode_all(data, |i, o| enc.encode(i, o, true))
+}
+
+/// Decompresses a raw LZMA1 or LZMA2 stream (`xz --format=raw -d`). The
+/// options must match the encoder's, since a raw stream stores none of
+/// them. Data after the end of the stream is an error.
+pub fn decompress_raw(input: &[u8], opts: &RawOptions) -> Result<Vec<u8>> {
+    let mut d = RawDecoder::new(opts)?;
+    decode_all(input, false, |i, o, f| d.decode(i, o, f))
+}
+
+/// Compresses `data` to a raw LZMA1 or LZMA2 stream (`xz --format=raw`).
+/// The output is byte-identical to liblzma 5.8.4's for the same options.
+///
+/// ```
+/// use xz_native::{RawMethod, RawOptions, compress_raw, decompress_raw};
+///
+/// let opts = RawOptions::preset(RawMethod::Lzma2, 6)?;
+/// let packed = compress_raw(b"hello, hello, hello", &opts)?;
+/// assert_eq!(decompress_raw(&packed, &opts)?, b"hello, hello, hello");
+/// # Ok::<(), xz_native::Error>(())
+/// ```
+pub fn compress_raw(data: &[u8], opts: &RawOptions) -> Result<Vec<u8>> {
+    let mut enc = RawEncoder::new(opts)?;
+    encode_all(data, |i, o| enc.encode(i, o, Action::Finish))
 }

@@ -53,6 +53,7 @@ mod lzip;
 mod lzma;
 mod oneshot;
 mod options;
+mod raw;
 #[cfg(feature = "std")]
 mod seek;
 mod xz;
@@ -66,15 +67,16 @@ pub use io::{LzipReader, LzmaReader, LzmaWriter, XzReader, XzWriter};
 pub use lzip::LzipDecoder;
 pub use lzma::LzmaProps;
 pub use oneshot::{
-    compress, compress_lzma, compress_lzma_with_options, compress_with_options, decompress,
-    decompress_into, decompress_lzip, decompress_lzip_with_memlimit, decompress_lzma,
-    decompress_lzma_with_memlimit, decompress_streaming, decompress_with_options,
+    compress, compress_lzma, compress_lzma_with_options, compress_raw, compress_with_options,
+    decompress, decompress_into, decompress_lzip, decompress_lzip_with_memlimit, decompress_lzma,
+    decompress_lzma_with_memlimit, decompress_raw, decompress_streaming, decompress_with_options,
     decompress_with_options_into,
 };
 pub use options::{
     DICT_SIZE_MAX, DICT_SIZE_MIN, EncoderOptions, LzmaOptions, MatchFinder, Mode, PRESET_DEFAULT,
     PRESET_EXTREME,
 };
+pub use raw::{RawDecoder, RawEncoder, RawMethod, RawOptions};
 #[cfg(feature = "std")]
 pub use seek::XzSeekableReader;
 pub use xz::encoder::{Action, XzEncoder};

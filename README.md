@@ -151,7 +151,7 @@ equivalent; use `DecoderOptions` and `EncoderOptions` instead.
 | `.xz` (multi-block, concatenated streams, padding) | yes | yes (byte-identical to liblzma) |
 | Seekable `.xz` reading through the Index (`XzSeekableReader`) | yes | - |
 | `.lzma` (LZMA_Alone) | yes | yes (byte-identical) |
-| Raw LZMA1 / LZMA2 | internal | internal |
+| Raw LZMA1 / LZMA2 streams with filters (`RawDecoder`, `RawEncoder`, `xz --format=raw`) | yes | yes (byte-identical) |
 | `.lz` (lzip, versions 0 and 1, concatenated members, trailing data) | yes | - |
 | Presets 0-9 and extreme, all LZMA2 options (lc/lp/pb, dict size, fast/normal mode, nice_len, hc3/hc4/bt2/bt3/bt4, depth) | - | yes |
 | Block splitting (`block_size`, sync and full flushes, full barriers) | - | yes |
