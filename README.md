@@ -7,8 +7,11 @@ build scripts or the memory-safety risk. Sibling of the C# library
 
 [![CI](https://github.com/zcsizmadia/xz-native/actions/workflows/ci.yml/badge.svg)](https://github.com/zcsizmadia/xz-native/actions/workflows/ci.yml)
 [![Fuzz](https://github.com/zcsizmadia/xz-native/actions/workflows/fuzz.yml/badge.svg)](https://github.com/zcsizmadia/xz-native/actions/workflows/fuzz.yml)
+[![Miri](https://github.com/zcsizmadia/xz-native/actions/workflows/miri.yml/badge.svg)](https://github.com/zcsizmadia/xz-native/actions/workflows/miri.yml)
 [![crates.io](https://img.shields.io/crates/v/xz-native)](https://crates.io/crates/xz-native)
 [![docs.rs](https://img.shields.io/docsrs/xz-native)](https://docs.rs/xz-native)
+[![MSRV](https://img.shields.io/crates/msrv/xz-native)](https://crates.io/crates/xz-native)
+[![License](https://img.shields.io/crates/l/xz-native)](LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/zcsizmadia/xz-native/badge)](https://scorecard.dev/viewer/?uri=github.com/zcsizmadia/xz-native)
 
 > **Status:** early development, not yet 1.0. Decoding of `.xz`, `.lzma` and
