@@ -80,10 +80,12 @@ third_party/xz/     xz 5.8.4 source (reference only)
 - **CPU features:** detected at run time with `is_x86_feature_detected!` /
   `is_aarch64_feature_detected!` (compile-time `cfg` without `std`). The
   `portable` feature disables all SIMD so CI tests both paths.
-- **`unsafe`:** denied workspace-wide. It is allowed only in the SIMD
-  modules (intrinsics, unaligned loads), each with a SAFETY comment and run
-  under Miri. Hot-path bounds-check removal with `unsafe` is allowed only
-  with a benchmark showing the gain.
+- **`unsafe`:** denied workspace-wide, except the SIMD modules (intrinsics,
+  unaligned loads), the x86-64 range-decoder assembly ported from liblzma
+  (`lzma/x86_asm.rs`, `core::arch::asm!`, baseline x86-64 only) and a few
+  benchmarked hot-path reads. Each has a SAFETY comment and debug assertions
+  and a safe Rust fallback that `portable` selects; tests and fuzzers
+  compare both. New `unsafe` needs a benchmark showing the gain.
 
 ## Benchmarks
 
