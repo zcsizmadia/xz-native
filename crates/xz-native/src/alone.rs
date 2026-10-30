@@ -1,34 +1,41 @@
 //! The legacy .lzma format ("LZMA_Alone"; liblzma `alone_decoder.c`).
 
 use crate::error::{Error, Result};
-use crate::lzma::decoder::LzmaDecoder;
+use crate::lzma::decoder::LzmaDecoder as Lzma1Decoder;
 use crate::lzma::dict::Dict;
 use crate::lzma::{LzDriver, LzmaProps, Progress};
-use crate::xz::stream::Status;
+use crate::xz::encoder::Action;
+use crate::xz::stream::{DecoderOptions, Status};
 
 /// Streaming .lzma decoder.
 #[derive(Debug)]
-pub struct LzmaDecoderAlone {
+pub struct LzmaDecoder {
     header: [u8; 13],
     header_pos: usize,
     memlimit: u64,
-    lz: Option<LzDriver<LzmaDecoder>>,
+    lz: Option<LzDriver<Lzma1Decoder>>,
     done: bool,
 }
 
-impl Default for LzmaDecoderAlone {
+impl Default for LzmaDecoder {
     fn default() -> Self {
-        Self::new(u64::MAX)
+        Self::new()
     }
 }
 
-impl LzmaDecoderAlone {
-    /// Creates a decoder with a memory usage limit in bytes.
-    pub fn new(memlimit: u64) -> Self {
+impl LzmaDecoder {
+    /// Creates a decoder with no memory limit.
+    pub fn new() -> Self {
+        Self::with_options(DecoderOptions::new())
+    }
+
+    /// Creates a decoder with options. Only
+    /// [`memlimit`](DecoderOptions::memlimit) applies to .lzma.
+    pub fn with_options(opts: DecoderOptions) -> Self {
         Self {
             header: [0; 13],
             header_pos: 0,
-            memlimit,
+            memlimit: opts.memlimit,
             lz: None,
             done: false,
         }
@@ -65,7 +72,7 @@ impl LzmaDecoderAlone {
                 return Err(Error::MemLimit);
             }
             let known = (size != u64::MAX).then_some(size);
-            let mut dec = LzmaDecoder::new(props);
+            let mut dec = Lzma1Decoder::new(props);
             dec.set_uncompressed(known, true);
             self.lz = Some(LzDriver::new(
                 dec,
@@ -89,7 +96,7 @@ impl LzmaDecoderAlone {
 /// Streaming .lzma encoder (liblzma `alone_encoder.c`): LZMA1 with an end
 /// of payload marker and an unknown uncompressed size in the header.
 #[derive(Debug)]
-pub struct LzmaEncoderAlone {
+pub struct LzmaEncoder {
     header: [u8; 13],
     header_pos: usize,
     lz: alloc::boxed::Box<
@@ -98,16 +105,16 @@ pub struct LzmaEncoderAlone {
     done: bool,
 }
 
-impl LzmaEncoderAlone {
+impl LzmaEncoder {
     /// Creates an encoder for a preset (0-9, optionally ORed with
     /// [`crate::PRESET_EXTREME`]), like `xz --format=lzma -6`.
     pub fn new(preset: u32) -> Result<Self> {
-        Self::with_options(&crate::LzmaOptions::preset(preset)?)
+        Self::with_options(crate::LzmaOptions::preset(preset)?)
     }
 
     /// Creates an encoder with options.
-    pub fn with_options(opts: &crate::LzmaOptions) -> Result<Self> {
-        let lz = crate::lzma::lzma2_encoder::Lzma1Encoder::new_lz(opts, &[])?;
+    pub fn with_options(opts: crate::LzmaOptions) -> Result<Self> {
+        let lz = crate::lzma::lzma2_encoder::Lzma1Encoder::new_lz(&opts, &[])?;
         let mut header = [0u8; 13];
         header[0] = opts.props_byte();
         // Round the dictionary size up to 2^n or 2^n + 2^(n-1) so that
@@ -129,14 +136,20 @@ impl LzmaEncoderAlone {
         })
     }
 
-    /// Encodes from `input` into `output`; with `finish`, this is the last
-    /// input. Returns `(input used, output written, status)`;
-    /// [`Status::StreamEnd`] means the stream is complete.
+    /// Encodes from `input` into `output`. Returns `(input used, output
+    /// written, status)`.
+    ///
+    /// - [`Action::Run`]: encode as much as possible; more input follows.
+    /// - [`Action::Finish`]: this is the last input. [`Status::StreamEnd`]
+    ///   means the stream is complete.
+    ///
+    /// .lzma has no flushing, so the other actions are
+    /// [`Error::InvalidOptions`], as in liblzma.
     pub fn encode(
         &mut self,
         input: &[u8],
         output: &mut [u8],
-        finish: bool,
+        action: Action,
     ) -> Result<(usize, usize, Status)> {
         if self.done {
             return Ok((0, 0, Status::StreamEnd));
@@ -148,10 +161,10 @@ impl LzmaEncoderAlone {
             return Ok((0, op, Status::Ok));
         }
         let mut ip = 0;
-        let action = if finish {
-            crate::lzma::lz_encoder::MfAction::Finish
-        } else {
-            crate::lzma::lz_encoder::MfAction::Run
+        let action = match action {
+            Action::Run => crate::lzma::lz_encoder::MfAction::Run,
+            Action::Finish => crate::lzma::lz_encoder::MfAction::Finish,
+            _ => return Err(Error::InvalidOptions),
         };
         if self.lz.code(input, &mut ip, output, &mut op, action)? {
             self.done = true;

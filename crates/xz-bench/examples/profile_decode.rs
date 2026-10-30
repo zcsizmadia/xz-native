@@ -95,29 +95,20 @@ fn main() {
             // XzReader with the compressed input staged through an 8 KiB
             // BufReader, as `liblzma::read` does (#50).
             "reader-buf" => {
-                let opts = xz_native::DecoderOptions {
-                    threads: threads as usize,
-                    ..Default::default()
-                };
+                let opts = xz_native::DecoderOptions::default().threads(threads as usize);
                 let input = std::io::BufReader::with_capacity(8192, &packed[..]);
                 xz_native::XzReader::with_options(input, opts)
                     .read_to_end(&mut out)
                     .unwrap();
             }
             "reader" => {
-                let opts = xz_native::DecoderOptions {
-                    threads: threads as usize,
-                    ..Default::default()
-                };
+                let opts = xz_native::DecoderOptions::default().threads(threads as usize);
                 xz_native::XzReader::with_options(&packed[..], opts)
                     .read_to_end(&mut out)
                     .unwrap();
             }
             _ => {
-                let opts = xz_native::DecoderOptions {
-                    threads: threads as usize,
-                    ..Default::default()
-                };
+                let opts = xz_native::DecoderOptions::default().threads(threads as usize);
                 out = xz_native::decompress_with_options(&packed, opts).unwrap();
             }
         }

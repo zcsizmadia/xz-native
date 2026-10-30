@@ -58,24 +58,20 @@ pub struct LzipDecoder {
 
 impl Default for LzipDecoder {
     fn default() -> Self {
-        Self::new(u64::MAX)
+        Self::new()
     }
 }
 
 impl LzipDecoder {
-    /// Creates a decoder for concatenated members with a memory usage limit
-    /// in bytes.
-    pub fn new(memlimit: u64) -> Self {
-        Self::with_options(DecoderOptions {
-            memlimit,
-            ..DecoderOptions::default()
-        })
+    /// Creates a decoder for concatenated members with no memory limit.
+    pub fn new() -> Self {
+        Self::with_options(DecoderOptions::new())
     }
 
-    /// Creates a decoder with options. `concatenated` decodes all members
-    /// (otherwise decoding stops after the first one) and `ignore_check`
-    /// skips the CRC32. `fail_on_unsupported_check` doesn't apply: .lz
-    /// always uses CRC32.
+    /// Creates a decoder with options. `memlimit` applies, `concatenated`
+    /// decodes all members (otherwise decoding stops after the first one)
+    /// and `ignore_check` skips the CRC32. `fail_on_unsupported_check` and
+    /// `threads` don't apply: .lz always uses CRC32.
     pub fn with_options(opts: DecoderOptions) -> Self {
         Self {
             opts,
@@ -312,7 +308,10 @@ mod tests {
         }
         m[5] = 0x1D; // 512 MiB
         assert_eq!(
-            run(&mut LzipDecoder::new(256 << 20), &m),
+            run(
+                &mut LzipDecoder::with_options(DecoderOptions::new().memlimit(256 << 20)),
+                &m
+            ),
             Err(Error::MemLimit)
         );
         m[4] = 2;

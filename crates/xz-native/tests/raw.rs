@@ -5,14 +5,15 @@ mod common;
 
 use common::{Rng, corpus, xz};
 use xz_native::{
-    Action, BcjKind, Error, Filter, LzmaOptions, RawDecoder, RawEncoder, RawMethod, RawOptions,
-    Status, compress_raw, decompress_raw,
+    Action, BcjKind, Error, Filter, RawDecoder, RawEncoder, RawMethod, RawOptions, Status,
+    compress_raw, decompress_raw,
 };
 
 fn method_arg(m: RawMethod) -> &'static str {
     match m {
         RawMethod::Lzma1 => "lzma1",
         RawMethod::Lzma2 => "lzma2",
+        _ => unreachable!(),
     }
 }
 
@@ -33,6 +34,7 @@ fn xz_args(opts: &RawOptions, preset: &str) -> Vec<String> {
                     BcjKind::Sparc => "sparc",
                     BcjKind::Arm64 => "arm64",
                     BcjKind::RiscV => "riscv",
+                    _ => unreachable!(),
                 };
                 format!("--{name}=start={start_offset}")
             }
@@ -107,7 +109,7 @@ fn identical_to_xz() {
 /// Feeds `input` in pieces of the given sizes, with output buffers of the
 /// given sizes, cycling through both.
 fn decode_pieces(opts: &RawOptions, input: &[u8], ins: &[usize], outs: &[usize]) -> Vec<u8> {
-    let mut d = RawDecoder::new(opts).unwrap();
+    let mut d = RawDecoder::with_options(opts).unwrap();
     let mut out = Vec::new();
     let mut ip = 0;
     for i in 0.. {
@@ -137,7 +139,7 @@ fn streaming() {
             }
 
             // Encode in random pieces: same bytes as one-shot.
-            let mut e = RawEncoder::new(opts).unwrap();
+            let mut e = RawEncoder::with_options(opts).unwrap();
             let mut out = Vec::new();
             let mut ip = 0;
             loop {
@@ -171,8 +173,8 @@ fn sync_flush() {
     let data: Vec<u8> = (0..200_000u32)
         .map(|i| (i % 251) as u8 ^ (i >> 9) as u8)
         .collect();
-    let mut e = RawEncoder::new(&opts).unwrap();
-    let mut d = RawDecoder::new(&opts).unwrap();
+    let mut e = RawEncoder::with_options(&opts).unwrap();
+    let mut d = RawDecoder::with_options(&opts).unwrap();
     let mut buf = vec![0u8; 1 << 20];
     let mut dec = vec![0u8; 1 << 20];
     let mut got = Vec::new();
@@ -195,11 +197,11 @@ fn sync_flush() {
 #[test]
 fn unsupported_actions_and_options() {
     let lzma1 = RawOptions::preset(RawMethod::Lzma1, 0).unwrap();
-    let mut e = RawEncoder::new(&lzma1).unwrap();
+    let mut e = RawEncoder::with_options(&lzma1).unwrap();
     for a in [Action::SyncFlush, Action::FullFlush, Action::FullBarrier] {
         assert_eq!(e.encode(b"x", &mut [0; 64], a), Err(Error::InvalidOptions));
     }
-    let mut e = RawEncoder::new(&RawOptions::default()).unwrap();
+    let mut e = RawEncoder::with_options(&RawOptions::default()).unwrap();
     assert_eq!(
         e.encode(b"x", &mut [0; 64], Action::FullFlush),
         Err(Error::InvalidOptions)
@@ -208,14 +210,20 @@ fn unsupported_actions_and_options() {
     let mut bad = lzma1.clone();
     bad.lzma.lc = 4;
     bad.lzma.lp = 1;
-    assert!(RawEncoder::new(&bad).is_err());
-    assert_eq!(RawDecoder::new(&bad).unwrap_err(), Error::InvalidOptions);
+    assert!(RawEncoder::with_options(&bad).is_err());
+    assert_eq!(
+        RawDecoder::with_options(&bad).unwrap_err(),
+        Error::InvalidOptions
+    );
     bad.lzma.lp = 0;
     bad.lzma.pb = 5;
-    assert_eq!(RawDecoder::new(&bad).unwrap_err(), Error::InvalidOptions);
+    assert_eq!(
+        RawDecoder::with_options(&bad).unwrap_err(),
+        Error::InvalidOptions
+    );
     // LZMA2 stores lc/lp/pb in the stream, so its decoder ignores them.
     bad.method = RawMethod::Lzma2;
-    assert!(RawDecoder::new(&bad).is_ok());
+    assert!(RawDecoder::with_options(&bad).is_ok());
 
     for filters in [
         vec![Filter::Lzma2 { dict_size: 1 << 20 }],
@@ -226,12 +234,15 @@ fn unsupported_actions_and_options() {
             start_offset: 2,
         }],
     ] {
-        let o = RawOptions {
-            filters,
-            ..RawOptions::default()
-        };
-        assert_eq!(RawEncoder::new(&o).unwrap_err(), Error::InvalidOptions);
-        assert_eq!(RawDecoder::new(&o).unwrap_err(), Error::InvalidOptions);
+        let o = RawOptions::default().filters(filters);
+        assert_eq!(
+            RawEncoder::with_options(&o).unwrap_err(),
+            Error::InvalidOptions
+        );
+        assert_eq!(
+            RawDecoder::with_options(&o).unwrap_err(),
+            Error::InvalidOptions
+        );
         assert_eq!(compress_raw(b"", &o), Err(Error::InvalidOptions));
         assert_eq!(decompress_raw(b"", &o), Err(Error::InvalidOptions));
     }
@@ -259,6 +270,7 @@ fn corrupt_and_truncated() {
             match method {
                 RawMethod::Lzma1 => RawMethod::Lzma2,
                 RawMethod::Lzma2 => RawMethod::Lzma1,
+                _ => unreachable!(),
             },
             6,
         )
@@ -281,9 +293,6 @@ fn memusage() {
     assert_eq!(base, (8 << 20) + 2 * 288 + 32 + 32 * 1024);
     o.filters.push(Filter::Delta { distance: 2 });
     assert_eq!(o.decoder_memusage(), base + 1024);
-    o.lzma = LzmaOptions {
-        dict_size: 4096,
-        ..o.lzma
-    };
+    o.lzma = o.lzma.dict_size(4096);
     assert_eq!(o.decoder_memusage(), 4096 + 2 * 288 + 32 + 32 * 1024 + 1024);
 }

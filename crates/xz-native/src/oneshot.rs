@@ -1,6 +1,6 @@
 //! One-call convenience functions.
 
-use crate::alone::{LzmaDecoderAlone, LzmaEncoderAlone};
+use crate::alone::{LzmaDecoder, LzmaEncoder};
 use crate::error::Result;
 use crate::lzip::LzipDecoder;
 use crate::options::{EncoderOptions, LzmaOptions};
@@ -61,25 +61,26 @@ pub fn decompress_streaming(input: &[u8], opts: DecoderOptions) -> Result<Vec<u8
 
 /// Decompresses legacy .lzma data in one call.
 pub fn decompress_lzma(input: &[u8]) -> Result<Vec<u8>> {
-    let mut d = LzmaDecoderAlone::default();
-    decode_all(input, false, |i, o, f| d.decode(i, o, f))
+    decompress_lzma_with_options(input, DecoderOptions::new())
 }
 
-/// Decompresses legacy .lzma data with a memory usage limit in bytes.
-pub fn decompress_lzma_with_memlimit(input: &[u8], memlimit: u64) -> Result<Vec<u8>> {
-    let mut d = LzmaDecoderAlone::new(memlimit);
+/// Decompresses legacy .lzma data with options; only
+/// [`memlimit`](DecoderOptions::memlimit) applies to .lzma.
+pub fn decompress_lzma_with_options(input: &[u8], opts: DecoderOptions) -> Result<Vec<u8>> {
+    let mut d = LzmaDecoder::with_options(opts);
     decode_all(input, false, |i, o, f| d.decode(i, o, f))
 }
 
 /// Decompresses .lz (lzip) data in one call. Like `xz`, concatenated
 /// members are decoded and data after the last member is ignored.
 pub fn decompress_lzip(input: &[u8]) -> Result<Vec<u8>> {
-    decompress_lzip_with_memlimit(input, u64::MAX)
+    decompress_lzip_with_options(input, DecoderOptions::new())
 }
 
-/// Decompresses .lz (lzip) data with a memory usage limit in bytes.
-pub fn decompress_lzip_with_memlimit(input: &[u8], memlimit: u64) -> Result<Vec<u8>> {
-    let mut d = LzipDecoder::new(memlimit);
+/// Decompresses .lz (lzip) data with options; see
+/// [`LzipDecoder::with_options`] for the fields that apply.
+pub fn decompress_lzip_with_options(input: &[u8], opts: DecoderOptions) -> Result<Vec<u8>> {
+    let mut d = LzipDecoder::with_options(opts);
     decode_all(input, true, |i, o, f| d.decode(i, o, f))
 }
 
@@ -158,15 +159,15 @@ pub fn compress_lzma(data: &[u8], preset: u32) -> Result<Vec<u8>> {
 
 /// Compresses `data` to legacy .lzma with options.
 pub fn compress_lzma_with_options(data: &[u8], opts: &LzmaOptions) -> Result<Vec<u8>> {
-    let mut enc = LzmaEncoderAlone::with_options(opts)?;
-    encode_all(data, |i, o| enc.encode(i, o, true))
+    let mut enc = LzmaEncoder::with_options(*opts)?;
+    encode_all(data, |i, o| enc.encode(i, o, Action::Finish))
 }
 
 /// Decompresses a raw LZMA1 or LZMA2 stream (`xz --format=raw -d`). The
 /// options must match the encoder's, since a raw stream stores none of
 /// them. Data after the end of the stream is an error.
 pub fn decompress_raw(input: &[u8], opts: &RawOptions) -> Result<Vec<u8>> {
-    let mut d = RawDecoder::new(opts)?;
+    let mut d = RawDecoder::with_options(opts)?;
     decode_all(input, false, |i, o, f| d.decode(i, o, f))
 }
 
@@ -182,6 +183,6 @@ pub fn decompress_raw(input: &[u8], opts: &RawOptions) -> Result<Vec<u8>> {
 /// # Ok::<(), xz_native::Error>(())
 /// ```
 pub fn compress_raw(data: &[u8], opts: &RawOptions) -> Result<Vec<u8>> {
-    let mut enc = RawEncoder::new(opts)?;
+    let mut enc = RawEncoder::with_options(opts)?;
     encode_all(data, |i, o| enc.encode(i, o, Action::Finish))
 }

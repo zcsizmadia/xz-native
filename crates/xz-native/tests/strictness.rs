@@ -116,10 +116,7 @@ fn unsized_block_on_non_seekable_reader_stops_at_stream_end() {
     if let Some(packed) = xz(&["-zc", "-T1"], &data) {
         streams.push(("xz -T1".into(), packed));
     }
-    let opts = DecoderOptions {
-        concatenated: false,
-        ..Default::default()
-    };
+    let opts = DecoderOptions::default().concatenated(false);
     for (name, packed) in &streams {
         let flags = packed[13];
         assert_eq!(flags & 0xC0, 0, "{name}: Block Header stores sizes");

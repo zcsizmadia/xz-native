@@ -5,7 +5,7 @@ mod common;
 
 use common::{Rng, XZ_OPTIONS, corpus, read_xz, xz};
 use xz_native::{
-    LzipDecoder, LzmaDecoderAlone, Status, XzDecoder, decompress, decompress_lzip, decompress_lzma,
+    LzipDecoder, LzmaDecoder, Status, XzDecoder, decompress, decompress_lzip, decompress_lzma,
 };
 
 fn stream_decode(
@@ -48,10 +48,7 @@ fn xz_cli_interop() {
             };
             let out = decompress(&packed).unwrap_or_else(|e| panic!("{opts:?} {name}: {e:?}"));
             assert!(out == *data, "{opts:?} {name}: one-shot output differs");
-            let threads = xz_native::DecoderOptions {
-                threads: 4,
-                ..Default::default()
-            };
+            let threads = xz_native::DecoderOptions::default().threads(4);
             let out = xz_native::decompress_with_options(&packed, threads).unwrap();
             assert!(out == *data, "{opts:?} {name}: threaded output differs");
             // XzReader with and without threads, with small reads.
@@ -92,7 +89,7 @@ fn lzma_cli_interop() {
                 "{opts:?} {name}"
             );
             if data.len() <= 600_000 {
-                let mut dec = LzmaDecoderAlone::default();
+                let mut dec = LzmaDecoder::default();
                 let out = stream_decode(&packed, 7, |i, o, f| dec.decode(i, o, f));
                 assert!(out == *data, "{opts:?} {name}: streamed");
             }

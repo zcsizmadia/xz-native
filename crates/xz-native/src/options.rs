@@ -6,6 +6,25 @@ use crate::error::{Error, Result};
 use crate::filter::Filter;
 use alloc::vec::Vec;
 
+/// Chainable setters for the public fields of a `#[non_exhaustive]`
+/// options struct: `opts.field(value)` sets `field` and returns the options,
+/// so new fields can be added without breaking callers.
+macro_rules! setters {
+    ($ty:ty { $($field:ident: $t:ty),* $(,)? }) => {
+        impl $ty {
+            $(
+                #[doc = concat!("Sets [`", stringify!($field), "`](Self::", stringify!($field), ").")]
+                #[must_use]
+                pub fn $field(mut self, value: $t) -> Self {
+                    self.$field = value;
+                    self
+                }
+            )*
+        }
+    };
+}
+pub(crate) use setters;
+
 /// Flag for [`LzmaOptions::preset`]: slower, slightly better compression
 /// (`LZMA_PRESET_EXTREME`, `xz -e`).
 pub const PRESET_EXTREME: u32 = 1 << 31;
@@ -62,9 +81,20 @@ pub enum Mode {
 
 /// LZMA/LZMA2 compression options (`lzma_options_lzma`).
 ///
-/// Start from [`LzmaOptions::preset`] and adjust fields as needed. The same
-/// options give byte-identical output with liblzma 5.8.4.
+/// Start from [`LzmaOptions::preset`] and adjust fields as needed, with the
+/// setters or by assigning them:
+///
+/// ```
+/// use xz_native::{LzmaOptions, MatchFinder};
+/// let opts = LzmaOptions::preset(6)?.dict_size(1 << 20).mf(MatchFinder::Hc4);
+/// # Ok::<(), xz_native::Error>(())
+/// ```
+///
+/// The same options give byte-identical output with liblzma 5.8.4. The
+/// struct is `#[non_exhaustive]`: it can't be built with a struct literal
+/// outside this crate, so fields can be added in later versions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LzmaOptions {
     /// Dictionary size in bytes ([`DICT_SIZE_MIN`]..=[`DICT_SIZE_MAX`]).
     pub dict_size: u32,
@@ -91,6 +121,17 @@ impl Default for LzmaOptions {
         Self::preset(PRESET_DEFAULT).expect("valid preset")
     }
 }
+
+setters!(LzmaOptions {
+    dict_size: u32,
+    lc: u32,
+    lp: u32,
+    pb: u32,
+    mode: Mode,
+    nice_len: u32,
+    mf: MatchFinder,
+    depth: u32,
+});
 
 impl LzmaOptions {
     /// Options for preset 0-9, optionally ORed with [`PRESET_EXTREME`]
@@ -185,7 +226,19 @@ impl LzmaOptions {
 }
 
 /// Options for the .xz encoder.
+///
+/// Start from [`EncoderOptions::preset`] or [`Default`] (preset 6, CRC64)
+/// and adjust with the setters or by assigning fields:
+///
+/// ```
+/// use xz_native::{Check, EncoderOptions};
+/// let opts = EncoderOptions::preset(9)?.check(Check::Sha256).threads(0);
+/// # Ok::<(), xz_native::Error>(())
+/// ```
+///
+/// `#[non_exhaustive]`, like [`LzmaOptions`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EncoderOptions {
     /// LZMA2 options.
     pub lzma: LzmaOptions,
@@ -231,6 +284,14 @@ impl Default for EncoderOptions {
         }
     }
 }
+
+setters!(EncoderOptions {
+    lzma: LzmaOptions,
+    check: Check,
+    filters: Vec<Filter>,
+    block_size: u64,
+    threads: usize,
+});
 
 impl EncoderOptions {
     /// Options for a preset (see [`LzmaOptions::preset`]) with the default

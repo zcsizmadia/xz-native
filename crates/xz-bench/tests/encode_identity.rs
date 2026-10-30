@@ -145,6 +145,7 @@ fn prefilters_c(filters: &[Filter]) -> Filters {
                     BcjKind::Sparc => f.sparc_properties(props),
                     BcjKind::Arm64 => f.arm64_properties(props),
                     BcjKind::RiscV => f.riscv_properties(props),
+                    _ => unreachable!(),
                 }
                 .unwrap();
             }
@@ -548,7 +549,7 @@ fn raw_matches_liblzma() {
         .collect();
     chunks.push((&[], Action::Finish));
     let theirs = run_c(raw_c(&o), &chunks);
-    let mut enc = RawEncoder::new(&o).unwrap();
+    let mut enc = RawEncoder::with_options(&o).unwrap();
     let mut ours = Vec::new();
     let mut buf = vec![0u8; 1 << 20];
     for &(c, a) in &chunks {
@@ -809,17 +810,11 @@ fn check_mt(what: &str, data: &[u8], o: &EncoderOptions, threads: &[u32]) {
                 &theirs,
             );
         }
-        let mo = EncoderOptions {
-            threads: if t == 1 { 0 } else { t as usize },
-            ..o.clone()
-        };
+        let mo = o.clone().threads(if t == 1 { 0 } else { t as usize });
         let ours = xz_native::compress_with_options(data, &mo).unwrap();
         assert_same(&format!("{what}: {} threads", mo.threads), &ours, &theirs);
     }
-    let mo = EncoderOptions {
-        threads: 3,
-        ..o.clone()
-    };
+    let mo = o.clone().threads(3);
     let chunks = run_chunks(data, data.len() as u64);
     let ours = run_ours(xz_native::XzEncoder::with_options(mo).unwrap(), &chunks);
     assert_same(&format!("{what}: streaming"), &ours, &theirs);
@@ -827,10 +822,7 @@ fn check_mt(what: &str, data: &[u8], o: &EncoderOptions, threads: &[u32]) {
         xz_native::decompress(&theirs).unwrap() == data,
         "{what}: xz-native decode"
     );
-    let dopts = xz_native::DecoderOptions {
-        threads: 4,
-        ..Default::default()
-    };
+    let dopts = xz_native::DecoderOptions::default().threads(4);
     assert!(
         xz_native::decompress_with_options(&theirs, dopts).unwrap() == data,
         "{what}: xz-native threaded decode"
@@ -979,7 +971,7 @@ fn mt_incompressible_blocks_match_liblzma() {
         o.filters = filters;
         let what = format!("random {:?}", o.filters);
         check_mt(&what, &data, &o, &[1, 4]);
-        let mo = EncoderOptions { threads: 4, ..o };
+        let mo = o.threads(4);
         let ours = xz_native::compress_with_options(&data, &mo).unwrap();
         // The first Block is stored: LZMA2 with a 4 KiB dictionary only.
         assert_eq!(&ours[12..14], &[4, 0xC0], "{what}");
@@ -1027,10 +1019,7 @@ fn mt_streaming_and_flushes_match_liblzma() {
             &theirs,
         );
         for threads in [2, 5] {
-            let mo = EncoderOptions {
-                threads,
-                ..o.clone()
-            };
+            let mo = o.clone().threads(threads);
             let ours = run_ours(xz_native::XzEncoder::with_options(mo).unwrap(), &chunks);
             assert_same(
                 &format!("preset {preset}: {threads} threads"),

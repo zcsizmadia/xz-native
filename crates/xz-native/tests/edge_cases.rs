@@ -7,8 +7,8 @@ mod common;
 use common::xz;
 use std::path::PathBuf;
 use xz_native::{
-    DecoderOptions, Error, LzipDecoder, LzmaDecoderAlone, Result, Status, XzDecoder, decompress,
-    decompress_lzip, decompress_lzip_with_memlimit, decompress_lzma, decompress_lzma_with_memlimit,
+    DecoderOptions, Error, LzipDecoder, LzmaDecoder, Result, Status, XzDecoder, decompress,
+    decompress_lzip, decompress_lzip_with_options, decompress_lzma, decompress_lzma_with_options,
     decompress_streaming, decompress_with_options,
 };
 
@@ -82,10 +82,7 @@ fn xz_memlimit_is_exact() {
     };
     let need = dict_mem(1 << 20);
     for (limit, ok) in [(need, true), (need - 1, false)] {
-        let opts = DecoderOptions {
-            memlimit: limit,
-            ..Default::default()
-        };
+        let opts = DecoderOptions::default().memlimit(limit);
         let r = decompress_with_options(&packed, opts);
         assert_eq!(r.is_ok(), ok, "one-shot limit={limit}");
         if !ok {
@@ -109,9 +106,13 @@ fn lzma_memlimit_is_exact() {
         return;
     };
     let need = dict_mem(1 << 20);
-    assert_eq!(decompress_lzma_with_memlimit(&packed, need).unwrap(), data);
     assert_eq!(
-        decompress_lzma_with_memlimit(&packed, need - 1),
+        decompress_lzma_with_options(&packed, xz_native::DecoderOptions::new().memlimit(need))
+            .unwrap(),
+        data
+    );
+    assert_eq!(
+        decompress_lzma_with_options(&packed, xz_native::DecoderOptions::new().memlimit(need - 1)),
         Err(Error::MemLimit)
     );
 }
@@ -127,12 +128,16 @@ fn lzip_memlimit_is_exact() {
         let need = dict_mem(dict);
         let expected = decompress_lzip(&packed).unwrap();
         assert_eq!(
-            decompress_lzip_with_memlimit(&packed, need).unwrap(),
+            decompress_lzip_with_options(&packed, xz_native::DecoderOptions::new().memlimit(need))
+                .unwrap(),
             expected,
             "{name}"
         );
         assert_eq!(
-            decompress_lzip_with_memlimit(&packed, need - 1),
+            decompress_lzip_with_options(
+                &packed,
+                xz_native::DecoderOptions::new().memlimit(need - 1)
+            ),
             Err(Error::MemLimit),
             "{name}"
         );
@@ -154,13 +159,13 @@ fn lzma_streaming_edges() {
             (&[packed.len()][..], &[1][..], true),
             (&[2][..], &[1][..], false),
         ] {
-            let mut d = LzmaDecoderAlone::new(u64::MAX);
+            let mut d = LzmaDecoder::new();
             let out = stream(&packed, ins, outs, always, |i, o, f| d.decode(i, o, f)).unwrap();
             assert_eq!(out, expected, "{name} {ins:?} {outs:?} {always}");
         }
         // Truncated input with `finish` is an error, whatever the buffers.
         for cut in [1, 12, 13, 14, packed.len() - 1] {
-            let mut d = LzmaDecoderAlone::new(u64::MAX);
+            let mut d = LzmaDecoder::new();
             let r = stream(&packed[..cut], &[3], &[64], false, |i, o, f| {
                 d.decode(i, o, f)
             });
@@ -184,12 +189,12 @@ fn lzip_streaming_edges() {
             (&[3, 17][..], &[1, 9][..], false),
             (&[packed.len()][..], &[1][..], true),
         ] {
-            let mut d = LzipDecoder::new(u64::MAX);
+            let mut d = LzipDecoder::new();
             let out = stream(&packed, ins, outs, always, |i, o, f| d.decode(i, o, f)).unwrap();
             assert_eq!(out, expected, "{name} {ins:?} {outs:?} {always}");
         }
         for cut in [3, 6, packed.len() - 21, packed.len() - 1] {
-            let mut d = LzipDecoder::new(u64::MAX);
+            let mut d = LzipDecoder::new();
             let r = stream(&packed[..cut], &[1], &[64], false, |i, o, f| {
                 d.decode(i, o, f)
             });
@@ -242,10 +247,7 @@ fn bcj_in_later_blocks_one_shot() {
             return;
         };
         assert!(decompress(&packed).unwrap() == data, "{f:?}");
-        let opts = DecoderOptions {
-            threads: 4,
-            ..Default::default()
-        };
+        let opts = DecoderOptions::default().threads(4);
         assert!(
             decompress_with_options(&packed, opts).unwrap() == data,
             "{f:?} threaded"
@@ -478,20 +480,9 @@ fn threaded_errors_match_single_threaded() {
         return;
     };
     let single = |v: &[u8]| decompress(v);
-    let threaded = |v: &[u8]| {
-        decompress_with_options(
-            v,
-            DecoderOptions {
-                threads: 4,
-                ..Default::default()
-            },
-        )
-    };
+    let threaded = |v: &[u8]| decompress_with_options(v, DecoderOptions::default().threads(4));
     let reader = |v: &[u8], threads| {
-        let opts = DecoderOptions {
-            threads,
-            ..Default::default()
-        };
+        let opts = DecoderOptions::default().threads(threads);
         let mut out = Vec::new();
         let r = xz_native::XzReader::with_options(std::io::BufReader::with_capacity(4096, v), opts)
             .read_to_end(&mut out);
@@ -541,10 +532,7 @@ fn threaded_errors_match_single_threaded() {
 fn check_type_after_stream_header() {
     let packed = xz(&["-zc", "--check=sha256"], b"check").unwrap_or_else(|| {
         // Without xz: the header bytes from our own encoder are the same.
-        let opts = xz_native::EncoderOptions {
-            check: xz_native::Check::Sha256,
-            ..Default::default()
-        };
+        let opts = xz_native::EncoderOptions::default().check(xz_native::Check::Sha256);
         xz_native::compress_with_options(b"check", &opts).unwrap()
     });
     let mut d = XzDecoder::new();
@@ -575,11 +563,9 @@ fn compressed_size_shorter_than_data() {
     // Running out of the declared Compressed Size is a data error even
     // though the input itself is complete.
     let data = code_like(100_000);
-    let opts = xz_native::EncoderOptions {
-        threads: 2,
-        block_size: 40_000,
-        ..Default::default()
-    };
+    let opts = xz_native::EncoderOptions::default()
+        .threads(2)
+        .block_size(40_000);
     let packed = xz_native::compress_with_options(&data, &opts).unwrap();
     let size = (packed[12] as usize + 1) * 4;
     assert_eq!(packed[13] & 0x40, 0x40, "Compressed Size present");
@@ -601,9 +587,6 @@ fn compressed_size_shorter_than_data() {
         decompress_streaming(&v, DecoderOptions::default()),
         Err(Error::Data)
     );
-    let threaded = DecoderOptions {
-        threads: 4,
-        ..Default::default()
-    };
+    let threaded = DecoderOptions::default().threads(4);
     assert_eq!(decompress_with_options(&v, threaded), Err(Error::Data));
 }

@@ -53,10 +53,9 @@ fn main() {
             } else {
                 0
             };
-        let opts = xz_native::EncoderOptions {
-            threads: threads.unwrap_or(1) as usize,
-            ..xz_native::EncoderOptions::preset(preset).unwrap()
-        };
+        let opts = xz_native::EncoderOptions::preset(preset)
+            .unwrap()
+            .threads(threads.unwrap_or(1) as usize);
         run("xz-native", &|| {
             xz_native::compress_with_options(&data, &opts).unwrap()
         });

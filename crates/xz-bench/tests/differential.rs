@@ -44,21 +44,26 @@ fn reference(input: &[u8], format: Format) -> Option<Vec<u8>> {
 
 fn ours(input: &[u8], format: Format) -> Option<Vec<u8>> {
     match format {
-        Format::Lzma => xz_native::decompress_lzma_with_memlimit(input, MEMLIMIT).ok(),
+        Format::Lzma => xz_native::decompress_lzma_with_options(
+            input,
+            xz_native::DecoderOptions::new().memlimit(MEMLIMIT),
+        )
+        .ok(),
         // Like liblzma, data after the last member is ignored.
-        Format::Lzip => xz_native::decompress_lzip_with_memlimit(input, MEMLIMIT).ok(),
+        Format::Lzip => xz_native::decompress_lzip_with_options(
+            input,
+            xz_native::DecoderOptions::new().memlimit(MEMLIMIT),
+        )
+        .ok(),
         Format::Xz => {
-            let opts = xz_native::DecoderOptions {
-                memlimit: MEMLIMIT,
-                ..Default::default()
-            };
+            let opts = xz_native::DecoderOptions::default().memlimit(MEMLIMIT);
             let flat = xz_native::decompress_with_options(input, opts).ok();
             let streaming = xz_native::decompress_streaming(input, opts).ok();
             assert!(
                 flat == streaming,
                 "one-shot and streaming decoders disagree"
             );
-            let threads = xz_native::DecoderOptions { threads: 4, ..opts };
+            let threads = opts.threads(4);
             let threaded = xz_native::decompress_with_options(input, threads).ok();
             assert!(
                 threaded == flat,

@@ -186,11 +186,7 @@ fn not_concatenated_leaves_the_rest() {
     let mut cat = a.clone();
     cat.extend_from_slice(b"\0\0\0\0trailing");
     for t in [1, 4] {
-        let opts = DecoderOptions {
-            concatenated: false,
-            threads: t,
-            ..Default::default()
-        };
+        let opts = DecoderOptions::default().concatenated(false).threads(t);
         let mut r = XzReader::with_options(BufReader::with_capacity(100, &cat[..]), opts);
         let mut out = Vec::new();
         r.read_to_end(&mut out).unwrap();
@@ -213,11 +209,7 @@ fn memory_limits() {
     // Blocks larger than the memory limit are decoded on the reading thread.
     for memlimit in [2 << 20, 3 << 20, 64 << 20] {
         for t in [2, 0] {
-            let opts = DecoderOptions {
-                memlimit,
-                threads: t,
-                ..Default::default()
-            };
+            let opts = DecoderOptions::default().memlimit(memlimit).threads(t);
             let (out, err) = read_xz(&c, opts, 8192, 5);
             assert_eq!(err, None, "memlimit {memlimit}");
             assert!(out == data, "memlimit {memlimit}");
@@ -225,11 +217,7 @@ fn memory_limits() {
     }
     // A dictionary over the limit fails like without threads.
     for t in [1, 4] {
-        let opts = DecoderOptions {
-            memlimit: 1 << 20,
-            threads: t,
-            ..Default::default()
-        };
+        let opts = DecoderOptions::default().memlimit(1 << 20).threads(t);
         let (out, err) = read_xz(&c, opts, 8192, 5);
         assert_eq!((out.len(), err), (0, Some(Error::MemLimit)), "threads {t}");
     }
@@ -246,11 +234,7 @@ fn checks_and_options() {
     let mut bad = c.clone();
     bad[off + total - 1] ^= 1;
     for t in [1, 2, 4] {
-        let opts = DecoderOptions {
-            ignore_check: true,
-            threads: t,
-            ..Default::default()
-        };
+        let opts = DecoderOptions::default().ignore_check(true).threads(t);
         let (out, err) = read_xz(&bad, opts, 8192, 6);
         assert_eq!(err, None, "ignore_check, threads {t}");
         assert!(out == data);

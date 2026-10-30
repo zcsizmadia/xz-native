@@ -1,6 +1,6 @@
 //! Helpers shared by the fuzz targets.
 
-use xz_native::{DecoderOptions, LzmaDecoderAlone, Result, Status, XzDecoder};
+use xz_native::{DecoderOptions, LzmaDecoder, Result, Status, XzDecoder};
 
 /// Memory limit for decoders, so random headers can't request gigabytes.
 pub const MEMLIMIT: u64 = 64 << 20;
@@ -8,7 +8,7 @@ pub const MEMLIMIT: u64 = 64 << 20;
 pub const MAX_OUT: usize = 32 << 20;
 
 pub fn xz_options() -> DecoderOptions {
-    DecoderOptions { memlimit: MEMLIMIT, ..DecoderOptions::default() }
+    DecoderOptions::default().memlimit(MEMLIMIT)
 }
 
 /// Outcome of a capped decode.
@@ -72,6 +72,6 @@ pub fn xz_oneshot(input: &[u8]) -> Outcome {
 }
 
 pub fn lzma_stream(input: &[u8], seed: u8) -> Outcome {
-    let mut d = LzmaDecoderAlone::new(MEMLIMIT);
+    let mut d = LzmaDecoder::with_options(xz_options());
     stream(input, seed, |i, o, f| d.decode(i, o, f))
 }

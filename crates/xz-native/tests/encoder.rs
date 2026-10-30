@@ -108,13 +108,12 @@ fn sync_and_full_flush() {
 
 #[test]
 fn sync_flush_with_bcj_is_rejected() {
-    let opts = EncoderOptions {
-        filters: vec![Filter::Bcj {
+    let opts = EncoderOptions::preset(0)
+        .unwrap()
+        .filters(vec![Filter::Bcj {
             kind: BcjKind::X86,
             start_offset: 0,
-        }],
-        ..EncoderOptions::preset(0).unwrap()
-    };
+        }]);
     let mut enc = XzEncoder::with_options(opts).unwrap();
     let mut buf = vec![0u8; 4096];
     let r = (0..10).try_for_each(|_| {
@@ -213,22 +212,20 @@ fn xz_cli_decodes_our_output() {
             v.push(o);
         }
         for check in [Check::None, Check::Crc32, Check::Sha256] {
-            v.push(EncoderOptions {
-                check,
-                ..EncoderOptions::preset(1).unwrap()
-            });
+            v.push(EncoderOptions::preset(1).unwrap().check(check));
         }
-        v.push(EncoderOptions {
-            filters: vec![
-                Filter::Delta { distance: 4 },
-                Filter::Bcj {
-                    kind: BcjKind::X86,
-                    start_offset: 0,
-                },
-            ],
-            block_size: 100_000,
-            ..EncoderOptions::preset(2).unwrap()
-        });
+        v.push(
+            EncoderOptions::preset(2)
+                .unwrap()
+                .filters(vec![
+                    Filter::Delta { distance: 4 },
+                    Filter::Bcj {
+                        kind: BcjKind::X86,
+                        start_offset: 0,
+                    },
+                ])
+                .block_size(100_000),
+        );
         v
     };
     for o in &opt_sets {
@@ -283,11 +280,7 @@ fn matches_xz_cli_single_threaded() {
 /// Feeds `data` like xz's coder.c: reads of at most `io` bytes (and at
 /// most the rest of the Block), `Run` until EOF, then `Finish`.
 fn encode_like_xz(data: &[u8], o: &EncoderOptions, io: usize) -> Vec<u8> {
-    let mut enc = XzEncoder::with_options(EncoderOptions {
-        block_size: 0,
-        ..o.clone()
-    })
-    .unwrap();
+    let mut enc = XzEncoder::with_options(o.clone().block_size(0)).unwrap();
     let mut out = Vec::new();
     let mut buf = vec![0u8; io];
     let mut pos = 0;
@@ -330,11 +323,10 @@ fn encode_like_xz(data: &[u8], o: &EncoderOptions, io: usize) -> Vec<u8> {
 }
 
 fn threaded(preset: u32, threads: usize, block_size: u64) -> EncoderOptions {
-    EncoderOptions {
-        threads,
-        block_size,
-        ..EncoderOptions::preset(preset).unwrap()
-    }
+    EncoderOptions::preset(preset)
+        .unwrap()
+        .threads(threads)
+        .block_size(block_size)
 }
 
 /// Multithreaded output depends only on the options and the flushes: every
@@ -475,10 +467,7 @@ fn matches_xz_cli_multithreaded() {
         (&["-T4", "-6"], threaded(6, 4, 0)),
         (&["-T0", "-1"], threaded(1, 0, 0)),
         (&["-T4", "-3", "--block-size=50000"], threaded(3, 4, 50_000)),
-        (
-            &["-T2", "--lzma2=preset=9e,dict=1MiB"],
-            EncoderOptions { threads: 2, ..p9e },
-        ),
+        (&["-T2", "--lzma2=preset=9e,dict=1MiB"], p9e.threads(2)),
         (
             &[
                 "-T4",
@@ -487,11 +476,7 @@ fn matches_xz_cli_multithreaded() {
                 "--x86",
                 "--lzma2=preset=1",
             ],
-            EncoderOptions {
-                check: Check::Sha256,
-                filters: x86(),
-                ..threaded(1, 4, 100_000)
-            },
+            threaded(1, 4, 100_000).check(Check::Sha256).filters(x86()),
         ),
     ];
     for (args, o) in &cases {

@@ -9,8 +9,9 @@ use crate::lzma::Progress;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-/// Status returned by streaming decoders.
+/// Status returned by streaming decoders and encoders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Status {
     /// Call again with more input and/or output space.
     Ok,
@@ -18,8 +19,19 @@ pub enum Status {
     StreamEnd,
 }
 
-/// Options for [`XzDecoder`].
+/// Options for the decoders ([`XzDecoder`], `XzReader`, the one-shot
+/// functions, and the `.lzma` and `.lz` decoders, which use the fields that
+/// apply to their format).
+///
+/// ```
+/// use xz_native::DecoderOptions;
+/// let opts = DecoderOptions::new().memlimit(256 << 20).threads(0);
+/// ```
+///
+/// `#[non_exhaustive]`: it can't be built with a struct literal outside
+/// this crate, so fields can be added in later versions.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct DecoderOptions {
     /// Memory usage limit in bytes (default: unlimited).
     pub memlimit: u64,
@@ -38,8 +50,10 @@ pub struct DecoderOptions {
     pub threads: usize,
 }
 
-impl Default for DecoderOptions {
-    fn default() -> Self {
+impl DecoderOptions {
+    /// The defaults: no memory limit, concatenated streams, checks
+    /// verified, one thread.
+    pub const fn new() -> Self {
         Self {
             memlimit: u64::MAX,
             concatenated: true,
@@ -49,6 +63,20 @@ impl Default for DecoderOptions {
         }
     }
 }
+
+impl Default for DecoderOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+crate::options::setters!(DecoderOptions {
+    memlimit: u64,
+    concatenated: bool,
+    ignore_check: bool,
+    fail_on_unsupported_check: bool,
+    threads: usize,
+});
 
 /// Running summary of Block or Index records, compared at the Index.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

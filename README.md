@@ -94,7 +94,7 @@ Multi-Block files (`xz -T`) decode in parallel with `threads` (0 = one per
 CPU), one-shot and streaming, with the same output and errors:
 
 ```rust
-let opts = xz_native::DecoderOptions { threads: 0, ..Default::default() };
+let opts = xz_native::DecoderOptions::new().threads(0);
 let data = xz_native::decompress_with_options(&compressed, opts)?;
 let reader = xz_native::XzReader::with_options(BufReader::new(file), opts);
 ```
@@ -107,7 +107,7 @@ byte-identical to liblzma's multithreaded encoder (and `xz -T2` and up)
 whatever the thread count and write sizes:
 
 ```rust
-let opts = xz_native::EncoderOptions { threads: 0, ..xz_native::EncoderOptions::preset(6)? };
+let opts = xz_native::EncoderOptions::preset(6)?.threads(0);
 let compressed = xz_native::compress_with_options(&data, &opts)?;
 let writer = xz_native::XzWriter::with_options(std::fs::File::create("out.xz")?, opts)?;
 ```

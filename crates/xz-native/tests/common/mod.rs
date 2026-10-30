@@ -197,8 +197,5 @@ pub fn read_xz(
 
 /// [`xz_native::DecoderOptions`] with `threads`.
 pub fn threads(threads: usize) -> xz_native::DecoderOptions {
-    xz_native::DecoderOptions {
-        threads,
-        ..Default::default()
-    }
+    xz_native::DecoderOptions::default().threads(threads)
 }
