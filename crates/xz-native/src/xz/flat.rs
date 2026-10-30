@@ -131,14 +131,12 @@ pub(crate) fn decode_block(
     let mut checked = start;
     loop {
         let lim = (dict.pos + STEP).min(target);
-        if dict.buf.len() < lim {
-            // Grow by doubling, zero-filling only the next step.
-            let cap = dict.buf.capacity();
-            if cap < lim {
-                dict.buf
-                    .reserve(lim.max(cap.saturating_mul(2).min(target)) - dict.buf.len());
-            }
-            dict.buf.resize(lim, 0);
+        // Grow by doubling. Uncompressed chunks are appended, and the LZMA
+        // decoder zero-fills only up to the limit it decodes to.
+        let cap = dict.buf.capacity();
+        if cap < lim {
+            dict.buf
+                .reserve(lim.max(cap.saturating_mul(2).min(target)) - dict.buf.len());
         }
         dict.limit = lim;
         let before = (ip, dict.pos);

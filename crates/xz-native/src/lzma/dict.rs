@@ -31,7 +31,9 @@ pub(crate) struct Dict {
     pub(crate) need_reset: bool,
     /// Position of the oldest byte after the last reset.
     base: usize,
-    /// Flat mode: `buf` is the output itself and never wraps.
+    /// Flat mode: `buf` is the output itself and never wraps. Its length
+    /// can be anything from `pos` up: [`Dict::write`] appends and
+    /// [`Dict::init_to_limit`] zero-fills for the LZMA decoder.
     flat: bool,
 }
 
@@ -181,9 +183,22 @@ impl Dict {
     /// limit. Returns the number of bytes written.
     pub(crate) fn write(&mut self, data: &[u8]) -> usize {
         let n = data.len().min(self.limit - self.pos);
-        self.buf[self.pos..self.pos + n].copy_from_slice(&data[..n]);
+        // A flat buffer may end before the limit: append the rest instead
+        // of zero-filling it first, so each byte is written once.
+        let init = self.buf.len().clamp(self.pos, self.pos + n) - self.pos;
+        self.buf[self.pos..self.pos + init].copy_from_slice(&data[..init]);
+        self.buf.extend_from_slice(&data[init..n]);
         self.pos += n;
         self.update_full();
         n
+    }
+
+    /// Makes `buf[pos..limit]` writable for the LZMA decoder (only a flat
+    /// buffer can be shorter).
+    #[inline]
+    pub(crate) fn init_to_limit(&mut self) {
+        if self.buf.len() < self.limit {
+            self.buf.resize(self.limit, 0);
+        }
     }
 }
