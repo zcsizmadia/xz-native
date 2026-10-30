@@ -7,7 +7,7 @@ use common::{Rng, corpus, xz};
 use std::fs;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::PathBuf;
-use xz_native::{Check, DecoderOptions, Error, XzSeekableReader, decompress};
+use xz_native::{BcjKind, Check, DecoderOptions, Error, Filter, XzSeekableReader, decompress};
 
 type Reader<'a> = XzSeekableReader<Cursor<&'a [u8]>>;
 
@@ -484,4 +484,166 @@ fn corrupt_blocks() {
             (a, b) => panic!("byte {i}: streaming {:?}, seekable {:?}", a.err(), b.err()),
         }
     }
+}
+
+/// How `xz --list` names a check.
+fn check_name(c: Check) -> String {
+    match c {
+        Check::None => "None".into(),
+        Check::Crc32 => "CRC32".into(),
+        Check::Crc64 => "CRC64".into(),
+        Check::Sha256 => "SHA-256".into(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// How `xz --list -vv` writes a filter chain (only the filters used below).
+fn filter_chain(filters: &[Filter]) -> String {
+    let size = |n: u32| {
+        if n.is_multiple_of(1 << 20) {
+            format!("{}MiB", n >> 20)
+        } else if n.is_multiple_of(1 << 10) {
+            format!("{}KiB", n >> 10)
+        } else {
+            format!("{n}B")
+        }
+    };
+    let names: Vec<String> = filters
+        .iter()
+        .map(|f| match *f {
+            Filter::Lzma2 { dict_size } => format!("--lzma2=dict={}", size(dict_size)),
+            Filter::Delta { distance } => format!("--delta=dist={distance}"),
+            Filter::Bcj {
+                kind: BcjKind::X86,
+                start_offset: 0,
+            } => "--x86".into(),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    names.join(" ")
+}
+
+/// `streams()`, `blocks()` and `block_details()` against the columns of
+/// `xz --robot --list -vv`, on a file with three Streams (several Blocks
+/// with sizes in their headers, BCJ and Delta filters, every check type)
+/// and Stream Padding. Memory usage is xz-native's own figure, so only its
+/// relation to the dictionary size is checked.
+#[test]
+fn metadata_matches_xz_list() {
+    let mut rng = Rng(0x5EED_1157);
+    let mut data: Vec<u8> = (0..150_000).map(|_| rng.next() as u8).collect();
+    data.extend(std::iter::repeat_n(b"metadata ".as_slice(), 30_000).flatten());
+    let parts = [
+        &["-T2", "--block-size=60000", "--check=sha256", "-6"][..],
+        &["--x86", "--lzma2=preset=1", "--check=crc32"],
+        &["--delta=dist=4", "--lzma2=preset=0", "--check=none"],
+        &["-0", "--check=crc64"],
+    ];
+    let mut file = Vec::new();
+    for (k, args) in parts.iter().enumerate() {
+        let mut a = vec!["-c"];
+        a.extend_from_slice(args);
+        let Some(s) = xz(&a, &data[..data.len() / (k + 1)]) else {
+            return;
+        };
+        file.extend_from_slice(&s);
+        file.extend_from_slice(&[0; 4][..4 * (k % 2)]);
+    }
+    let path = std::env::temp_dir().join(format!("xz-native-list-{}.xz", std::process::id()));
+    fs::write(&path, &file).unwrap();
+    let out = std::process::Command::new("xz")
+        .args(["--robot", "--list", "-vv"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    fs::remove_file(&path).unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).unwrap();
+
+    let mut r = open(&file).unwrap();
+    let (mut streams, mut blocks) = (0, 0);
+    for line in text.lines() {
+        let f: Vec<&str> = line.split('\t').collect();
+        match f[0] {
+            "stream" => {
+                let s = r.streams()[streams];
+                streams += 1;
+                let want = [
+                    streams.to_string(),
+                    s.block_count.to_string(),
+                    s.compressed_offset.to_string(),
+                    s.uncompressed_offset.to_string(),
+                    s.compressed_size.to_string(),
+                    s.uncompressed_size.to_string(),
+                ];
+                assert_eq!(f[1..7], want, "{line}");
+                assert_eq!(f[8], check_name(s.check), "{line}");
+                assert_eq!(f[9], s.padding.to_string(), "{line}");
+            }
+            "block" => {
+                let b = r.blocks()[blocks];
+                blocks += 1;
+                let s = r.streams()[b.stream];
+                let d = r.block_details(blocks - 1).unwrap();
+                let flags = format!(
+                    "{}{}",
+                    if d.compressed_size.is_some() {
+                        "c"
+                    } else {
+                        "-"
+                    },
+                    if d.uncompressed_size.is_some() {
+                        "u"
+                    } else {
+                        "-"
+                    },
+                );
+                // xz prints CRC32 and CRC64 as integers; they are stored little-endian.
+                let mut stored = d.check_value.clone();
+                if matches!(b.check, Check::Crc32 | Check::Crc64) {
+                    stored.reverse();
+                }
+                let mut hex: String = stored.iter().map(|b| format!("{b:02x}")).collect();
+                if hex.is_empty() {
+                    hex = "---".into();
+                }
+                let data_size = b.unpadded_size - d.header_size as u64 - b.check.size() as u64;
+                let want = [
+                    (b.stream + 1).to_string(),
+                    (blocks - s.first_block).to_string(),
+                    blocks.to_string(),
+                    b.compressed_offset.to_string(),
+                    b.uncompressed_offset.to_string(),
+                    b.total_size().to_string(),
+                    b.uncompressed_size.to_string(),
+                ];
+                assert_eq!(f[1..8], want, "{line}");
+                assert_eq!(f[9], check_name(b.check), "{line}");
+                assert_eq!(f[10], hex, "{line}");
+                assert_eq!(f[11], d.header_size.to_string(), "{line}");
+                assert_eq!(f[12], flags, "{line}");
+                assert_eq!(f[13], data_size.to_string(), "{line}");
+                assert_eq!(f[15], filter_chain(&d.filters), "{line}");
+                let Some(&Filter::Lzma2 { dict_size }) = d.filters.last() else {
+                    panic!("{line}")
+                };
+                assert!(d.memusage > u64::from(dict_size), "{line}");
+            }
+            _ => {}
+        }
+    }
+    assert_eq!((streams, blocks), (r.streams().len(), r.blocks().len()));
+    assert_eq!(streams, 4);
+    assert!(blocks > 4);
+
+    // block_details doesn't move the read position.
+    let mut head = vec![0; 1000];
+    r.read_exact(&mut head).unwrap();
+    r.block_details(blocks - 1).unwrap();
+    let rest = read_all(&mut r).unwrap();
+    head.extend_from_slice(&rest);
+    let want: Vec<u8> = (0..parts.len())
+        .flat_map(|k| data[..data.len() / (k + 1)].to_vec())
+        .collect();
+    assert!(head == want);
 }
