@@ -1,6 +1,6 @@
 //! Integrity checks: CRC32, CRC64 and SHA-256.
 
-mod crc32;
+pub(crate) mod crc32;
 mod crc64;
 mod sha256;
 

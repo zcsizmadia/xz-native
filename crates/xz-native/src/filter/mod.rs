@@ -126,6 +126,90 @@ impl Delta {
             self.pos = self.pos.wrapping_sub(1);
         }
     }
+
+    /// Encodes in place (liblzma `delta_encoder.c`).
+    fn encode(&mut self, buf: &mut [u8]) {
+        let d = self.distance;
+        for b in buf {
+            let tmp = self.history[(d + self.pos as usize) & 0xFF];
+            self.history[self.pos as usize] = *b;
+            self.pos = self.pos.wrapping_sub(1);
+            *b = b.wrapping_sub(tmp);
+        }
+    }
+}
+
+/// The non-LZMA2 filters of an encoder chain (liblzma's encoder filter
+/// stack): the LZ encoder pulls data through them into its window. The
+/// last stage is next to LZMA2; the first one reads the input.
+#[derive(Debug)]
+pub(crate) struct ChainEncoder {
+    stages: Vec<Stage>,
+    has_bcj: bool,
+}
+
+impl ChainEncoder {
+    /// `filters` are the filters before LZMA2, in chain order.
+    pub(crate) fn new(filters: &[Filter]) -> Self {
+        let stages = filters
+            .iter()
+            .map(|f| match *f {
+                Filter::Delta { distance } => Stage::Delta(Delta::new(distance)),
+                Filter::Bcj { kind, start_offset } => {
+                    Stage::Bcj(BcjStage::new(kind, start_offset, true))
+                }
+                Filter::Lzma2 { .. } => unreachable!("validated chain"),
+            })
+            .collect::<Vec<_>>();
+        let has_bcj = stages.iter().any(|s| matches!(s, Stage::Bcj(_)));
+        Self { stages, has_bcj }
+    }
+
+    /// Filters input into `out`. `finishing` means no more input will come
+    /// (finish or flush). Returns `(input used, output written, end)`,
+    /// where `end` means all input has been filtered and written.
+    pub(crate) fn code(
+        &mut self,
+        inp: &[u8],
+        out: &mut [u8],
+        finishing: bool,
+        sync_flush: bool,
+    ) -> Result<(usize, usize, bool)> {
+        // liblzma's simple filters don't support LZMA_SYNC_FLUSH.
+        if sync_flush && self.has_bcj {
+            return Err(Error::InvalidOptions);
+        }
+        let (u, w, p) = encode_level(&mut self.stages, inp, out, finishing)?;
+        Ok((u, w, p == Progress::End))
+    }
+}
+
+fn encode_level(
+    stages: &mut [Stage],
+    inp: &[u8],
+    out: &mut [u8],
+    finishing: bool,
+) -> Result<(usize, usize, Progress)> {
+    match stages.split_last_mut() {
+        None => {
+            let n = inp.len().min(out.len());
+            out[..n].copy_from_slice(&inp[..n]);
+            let p = if finishing && n == inp.len() {
+                Progress::End
+            } else {
+                Progress::Ok
+            };
+            Ok((n, n, p))
+        }
+        Some((Stage::Delta(d), rest)) => {
+            let r = encode_level(rest, inp, out, finishing)?;
+            d.encode(&mut out[..r.1]);
+            Ok(r)
+        }
+        Some((Stage::Bcj(b), rest)) => {
+            b.decode(&mut |i, o| encode_level(rest, i, o, finishing), inp, out)
+        }
+    }
 }
 
 /// A BCJ filter in a decoder chain, with the buffering of liblzma's
@@ -147,9 +231,9 @@ struct BcjStage {
 }
 
 impl BcjStage {
-    fn new(kind: BcjKind, start_offset: u32) -> Self {
+    fn new(kind: BcjKind, start_offset: u32, encoder: bool) -> Self {
         Self {
-            bcj: Bcj::new(kind, false),
+            bcj: Bcj::new(kind, encoder),
             now_pos: start_offset,
             buf: [0; 32],
             allocated: 2 * kind.unfiltered_max(),
@@ -275,7 +359,9 @@ impl ChainDecoder {
             .iter()
             .map(|f| match *f {
                 Filter::Delta { distance } => Stage::Delta(Delta::new(distance)),
-                Filter::Bcj { kind, start_offset } => Stage::Bcj(BcjStage::new(kind, start_offset)),
+                Filter::Bcj { kind, start_offset } => {
+                    Stage::Bcj(BcjStage::new(kind, start_offset, false))
+                }
                 Filter::Lzma2 { .. } => unreachable!("validated chain"),
             })
             .collect();

@@ -12,6 +12,19 @@
 //! # Ok::<(), xz_native::Error>(())
 //! ```
 //!
+//! Compress, byte-identical to liblzma 5.8.4 (`xz -6`) for the same options:
+//!
+//! ```
+//! let data = b"hello hello hello hello";
+//! let compressed = xz_native::compress(data, 6)?;
+//! assert_eq!(xz_native::decompress(&compressed)?, data);
+//! # Ok::<(), xz_native::Error>(())
+//! ```
+//!
+//! [`EncoderOptions`] selects presets, LZMA2 options, the check, filters and
+//! the Block size; [`XzWriter`] and [`LzmaWriter`] compress through
+//! `std::io::Write`, and [`XzEncoder`] is the push-style encoder.
+//!
 //! Use [`XzReader`] for streaming with `std::io`, [`XzSeekableReader`] for
 //! random access to multi-Block files, or the push-style [`XzDecoder`]
 //! without `std`. `.lzma` and `.lz` (lzip) have their own functions, readers
@@ -35,23 +48,30 @@ mod io;
 mod lzip;
 mod lzma;
 mod oneshot;
+mod options;
 #[cfg(feature = "std")]
 mod seek;
 mod xz;
 
-pub use alone::LzmaDecoderAlone;
+pub use alone::{LzmaDecoderAlone, LzmaEncoderAlone};
 pub use check::{Check, Sha256, crc32, crc64};
 pub use error::{Error, Result};
 pub use filter::{BcjKind, Filter};
 #[cfg(feature = "std")]
-pub use io::{LzipReader, LzmaReader, XzReader};
+pub use io::{LzipReader, LzmaReader, LzmaWriter, XzReader, XzWriter};
 pub use lzip::LzipDecoder;
 pub use lzma::LzmaProps;
 pub use oneshot::{
-    decompress, decompress_into, decompress_lzip, decompress_lzip_with_memlimit, decompress_lzma,
+    compress, compress_lzma, compress_lzma_with_options, compress_with_options, decompress,
+    decompress_into, decompress_lzip, decompress_lzip_with_memlimit, decompress_lzma,
     decompress_lzma_with_memlimit, decompress_streaming, decompress_with_options,
     decompress_with_options_into,
 };
+pub use options::{
+    DICT_SIZE_MAX, DICT_SIZE_MIN, EncoderOptions, LzmaOptions, MatchFinder, Mode, PRESET_DEFAULT,
+    PRESET_EXTREME,
+};
 #[cfg(feature = "std")]
 pub use seek::XzSeekableReader;
+pub use xz::encoder::{Action, XzEncoder};
 pub use xz::stream::{DecoderOptions, Status, XzDecoder};

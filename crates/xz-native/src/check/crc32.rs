@@ -4,7 +4,7 @@
 const POLY: u32 = 0xEDB8_8320;
 
 /// Slicing-by-8 tables, generated at compile time.
-static TABLE: [[u32; 256]; 8] = make_table();
+pub(crate) static TABLE: [[u32; 256]; 8] = make_table();
 
 const fn make_table() -> [[u32; 256]; 8] {
     let mut t = [[0u32; 256]; 8];

@@ -1,5 +1,6 @@
 //! The .xz container format.
 
+pub(crate) mod encoder;
 pub(crate) mod flat;
 pub(crate) mod format;
 #[cfg(feature = "std")]

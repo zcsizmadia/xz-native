@@ -1,8 +1,10 @@
 //! One-call convenience functions.
 
-use crate::alone::LzmaDecoderAlone;
+use crate::alone::{LzmaDecoderAlone, LzmaEncoderAlone};
 use crate::error::Result;
 use crate::lzip::LzipDecoder;
+use crate::options::{EncoderOptions, LzmaOptions};
+use crate::xz::encoder::{Action, XzEncoder};
 use crate::xz::stream::{DecoderOptions, Status, XzDecoder};
 use alloc::vec::Vec;
 
@@ -102,4 +104,52 @@ pub fn decompress_with_options_into(
         return crate::xz::flat::decompress_threads_into(input, &opts, out);
     }
     crate::xz::flat::decompress_into(input, &opts, out)
+}
+
+/// Runs a push encoder over all of `input` in one call per output buffer,
+/// so the output is the same as from liblzma with all input at once.
+fn encode_all(
+    input: &[u8],
+    mut f: impl FnMut(&[u8], &mut [u8]) -> Result<(usize, usize, Status)>,
+) -> Result<Vec<u8>> {
+    let mut out: Vec<u8> = Vec::with_capacity((input.len() / 3).clamp(4096, 1 << 26));
+    let mut ip = 0;
+    loop {
+        if out.capacity() - out.len() < 1024 {
+            out.reserve(out.capacity().max(1 << 16));
+        }
+        let len = out.len();
+        out.resize(out.capacity(), 0);
+        let (u, w, s) = f(&input[ip..], &mut out[len..])?;
+        ip += u;
+        out.truncate(len + w);
+        if s == Status::StreamEnd {
+            return Ok(out);
+        }
+    }
+}
+
+/// Compresses `data` to .xz with a preset (0-9, optionally ORed with
+/// [`crate::PRESET_EXTREME`]) and a CRC64 check, like `xz -6`. The output
+/// is byte-identical to liblzma 5.8.4's for the same options.
+pub fn compress(data: &[u8], preset: u32) -> Result<Vec<u8>> {
+    compress_with_options(data, &EncoderOptions::preset(preset)?)
+}
+
+/// Compresses `data` to .xz with options.
+pub fn compress_with_options(data: &[u8], opts: &EncoderOptions) -> Result<Vec<u8>> {
+    let mut enc = XzEncoder::with_options(opts.clone())?;
+    encode_all(data, |i, o| enc.encode(i, o, Action::Finish))
+}
+
+/// Compresses `data` to legacy .lzma with a preset, like
+/// `xz --format=lzma -6`.
+pub fn compress_lzma(data: &[u8], preset: u32) -> Result<Vec<u8>> {
+    compress_lzma_with_options(data, &LzmaOptions::preset(preset)?)
+}
+
+/// Compresses `data` to legacy .lzma with options.
+pub fn compress_lzma_with_options(data: &[u8], opts: &LzmaOptions) -> Result<Vec<u8>> {
+    let mut enc = LzmaEncoderAlone::with_options(opts)?;
+    encode_all(data, |i, o| enc.encode(i, o, true))
 }

@@ -1,0 +1,296 @@
+//! Encoder options (liblzma `lzma_options_lzma`, presets from
+//! `lzma_encoder_presets.c`).
+
+use crate::check::Check;
+use crate::error::{Error, Result};
+use crate::filter::Filter;
+use alloc::vec::Vec;
+
+/// Flag for [`LzmaOptions::preset`]: slower, slightly better compression
+/// (`LZMA_PRESET_EXTREME`, `xz -e`).
+pub const PRESET_EXTREME: u32 = 1 << 31;
+
+/// The default preset (`xz -6`).
+pub const PRESET_DEFAULT: u32 = 6;
+
+/// Smallest dictionary size the encoder accepts (4 KiB).
+pub const DICT_SIZE_MIN: u32 = 4096;
+/// Largest dictionary size the encoder accepts (1.5 GiB, as in liblzma).
+pub const DICT_SIZE_MAX: u32 = (1 << 30) + (1 << 29);
+
+/// Match finder (`lzma_match_finder`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum MatchFinder {
+    /// Hash chain with 2- and 3-byte hashing.
+    Hc3,
+    /// Hash chain with 2-, 3- and 4-byte hashing.
+    Hc4,
+    /// Binary tree with 2-byte hashing.
+    Bt2,
+    /// Binary tree with 2- and 3-byte hashing.
+    Bt3,
+    /// Binary tree with 2-, 3- and 4-byte hashing.
+    Bt4,
+}
+
+impl MatchFinder {
+    /// Bytes hashed by the match finder; also the smallest effective
+    /// `nice_len` (`mf_get_hash_bytes()`).
+    pub(crate) fn hash_bytes(self) -> u32 {
+        match self {
+            MatchFinder::Bt2 => 2,
+            MatchFinder::Hc3 | MatchFinder::Bt3 => 3,
+            MatchFinder::Hc4 | MatchFinder::Bt4 => 4,
+        }
+    }
+
+    pub(crate) fn is_bt(self) -> bool {
+        matches!(self, MatchFinder::Bt2 | MatchFinder::Bt3 | MatchFinder::Bt4)
+    }
+}
+
+/// Compression mode (`lzma_mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Mode {
+    /// Fast mode (presets 0-3): a simple heuristic picks the symbols.
+    Fast,
+    /// Normal mode (presets 4-9): optimal parsing by price.
+    Normal,
+}
+
+/// LZMA/LZMA2 compression options (`lzma_options_lzma`).
+///
+/// Start from [`LzmaOptions::preset`] and adjust fields as needed. The same
+/// options give byte-identical output with liblzma 5.8.4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LzmaOptions {
+    /// Dictionary size in bytes ([`DICT_SIZE_MIN`]..=[`DICT_SIZE_MAX`]).
+    pub dict_size: u32,
+    /// Literal context bits (0-4; lc + lp <= 4).
+    pub lc: u32,
+    /// Literal position bits (0-4; lc + lp <= 4).
+    pub lp: u32,
+    /// Position bits (0-4).
+    pub pb: u32,
+    /// Compression mode.
+    pub mode: Mode,
+    /// Match length that is good enough to stop searching (2-273; raised to
+    /// the match finder's hash size).
+    pub nice_len: u32,
+    /// Match finder.
+    pub mf: MatchFinder,
+    /// Match finder search depth; 0 picks a default from `nice_len` and the
+    /// match finder.
+    pub depth: u32,
+}
+
+impl Default for LzmaOptions {
+    fn default() -> Self {
+        Self::preset(PRESET_DEFAULT).expect("valid preset")
+    }
+}
+
+impl LzmaOptions {
+    /// Options for preset 0-9, optionally ORed with [`PRESET_EXTREME`]
+    /// (`lzma_lzma_preset()`).
+    pub fn preset(preset: u32) -> Result<Self> {
+        let level = preset & 0x1F;
+        let flags = preset & !0x1F;
+        if level > 9 || flags & !PRESET_EXTREME != 0 {
+            return Err(Error::InvalidOptions);
+        }
+        const DICT_POW2: [u8; 10] = [18, 20, 21, 22, 22, 23, 23, 24, 25, 26];
+        const DEPTHS: [u32; 4] = [4, 8, 24, 48];
+        let mut o = Self {
+            dict_size: 1 << DICT_POW2[level as usize],
+            lc: 3,
+            lp: 0,
+            pb: 2,
+            mode: Mode::Normal,
+            nice_len: 0,
+            mf: MatchFinder::Bt4,
+            depth: 0,
+        };
+        if level <= 3 {
+            o.mode = Mode::Fast;
+            o.mf = if level == 0 {
+                MatchFinder::Hc3
+            } else {
+                MatchFinder::Hc4
+            };
+            o.nice_len = if level <= 1 { 128 } else { 273 };
+            o.depth = DEPTHS[level as usize];
+        } else {
+            o.nice_len = match level {
+                4 => 16,
+                5 => 32,
+                _ => 64,
+            };
+        }
+        if flags & PRESET_EXTREME != 0 {
+            o.mode = Mode::Normal;
+            o.mf = MatchFinder::Bt4;
+            if level == 3 || level == 5 {
+                o.nice_len = 192;
+                o.depth = 0;
+            } else {
+                o.nice_len = 273;
+                o.depth = 512;
+            }
+        }
+        Ok(o)
+    }
+
+    /// Validates the options like liblzma's encoder initialization.
+    pub(crate) fn validate(&self) -> Result<()> {
+        let ok = self.lc <= 4
+            && self.lp <= 4
+            && self.lc + self.lp <= 4
+            && self.pb <= 4
+            && (2..=273).contains(&self.nice_len)
+            && (DICT_SIZE_MIN..=DICT_SIZE_MAX).contains(&self.dict_size);
+        if ok {
+            Ok(())
+        } else {
+            Err(Error::InvalidOptions)
+        }
+    }
+
+    /// The effective `nice_len`: at least the match finder's hash size.
+    pub(crate) fn effective_nice_len(&self) -> u32 {
+        self.nice_len.max(self.mf.hash_bytes())
+    }
+
+    /// The lc/lp/pb properties byte.
+    pub(crate) fn props_byte(&self) -> u8 {
+        ((self.pb * 5 + self.lp) * 9 + self.lc) as u8
+    }
+
+    /// The LZMA2 dictionary size byte (`lzma_lzma2_props_encode()`).
+    pub(crate) fn lzma2_dict_byte(&self) -> u8 {
+        let mut d = self.dict_size.max(DICT_SIZE_MIN) - 1;
+        d |= d >> 2;
+        d |= d >> 3;
+        d |= d >> 4;
+        d |= d >> 8;
+        d |= d >> 16;
+        if d == u32::MAX {
+            40
+        } else {
+            (crate::lzma::range_encoder::dist_slot(d + 1) - 24) as u8
+        }
+    }
+}
+
+/// Options for the .xz encoder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EncoderOptions {
+    /// LZMA2 options.
+    pub lzma: LzmaOptions,
+    /// Integrity check (default CRC64, like `xz`).
+    pub check: Check,
+    /// Filters applied before LZMA2, in order (at most three: Delta and
+    /// BCJ filters; [`Filter::Lzma2`] is not allowed here).
+    pub filters: Vec<Filter>,
+    /// Start a new Block after this many uncompressed bytes (0 = one Block
+    /// per stream unless flushed), like `xz --block-size` in
+    /// single-threaded mode.
+    pub block_size: u64,
+}
+
+impl Default for EncoderOptions {
+    fn default() -> Self {
+        Self {
+            lzma: LzmaOptions::default(),
+            check: Check::Crc64,
+            filters: Vec::new(),
+            block_size: 0,
+        }
+    }
+}
+
+impl EncoderOptions {
+    /// Options for a preset (see [`LzmaOptions::preset`]) with the default
+    /// CRC64 check.
+    pub fn preset(preset: u32) -> Result<Self> {
+        Ok(Self {
+            lzma: LzmaOptions::preset(preset)?,
+            ..Self::default()
+        })
+    }
+
+    /// Validates the options and the filter chain.
+    pub(crate) fn validate(&self) -> Result<()> {
+        self.lzma.validate()?;
+        if !matches!(
+            self.check,
+            Check::None | Check::Crc32 | Check::Crc64 | Check::Sha256
+        ) || self.filters.len() > 3
+        {
+            return Err(Error::InvalidOptions);
+        }
+        for f in &self.filters {
+            match *f {
+                Filter::Lzma2 { .. } => return Err(Error::InvalidOptions),
+                Filter::Delta { distance } if !(1..=256).contains(&distance) => {
+                    return Err(Error::InvalidOptions);
+                }
+                Filter::Bcj { kind, start_offset }
+                    if !start_offset.is_multiple_of(kind.alignment()) =>
+                {
+                    return Err(Error::InvalidOptions);
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn presets() {
+        let p0 = LzmaOptions::preset(0).unwrap();
+        assert_eq!(
+            (p0.dict_size, p0.mode, p0.mf, p0.nice_len, p0.depth),
+            (1 << 18, Mode::Fast, MatchFinder::Hc3, 128, 4)
+        );
+        let p6 = LzmaOptions::preset(6).unwrap();
+        assert_eq!(
+            (p6.dict_size, p6.mode, p6.mf, p6.nice_len, p6.depth),
+            (1 << 23, Mode::Normal, MatchFinder::Bt4, 64, 0)
+        );
+        let p9e = LzmaOptions::preset(9 | PRESET_EXTREME).unwrap();
+        assert_eq!((p9e.nice_len, p9e.depth), (273, 512));
+        let p5e = LzmaOptions::preset(5 | PRESET_EXTREME).unwrap();
+        assert_eq!((p5e.nice_len, p5e.depth), (192, 0));
+        assert!(LzmaOptions::preset(10).is_err());
+        assert!(LzmaOptions::preset(6 | 0x100).is_err());
+    }
+
+    #[test]
+    fn lzma2_dict_byte() {
+        let mut o = LzmaOptions::preset(6).unwrap();
+        for (size, byte) in [
+            (4096, 0),
+            (4097, 1),
+            (6144, 1),
+            (6145, 2),
+            (1 << 23, 22),
+            (3 << 22, 23),
+            (DICT_SIZE_MAX, 37),
+            (u32::MAX, 40),
+        ] {
+            o.dict_size = size;
+            assert_eq!(o.lzma2_dict_byte(), byte, "{size}");
+            if byte < 40 {
+                assert!(crate::lzma::lzma2_dict_size(byte).unwrap() >= size);
+            }
+        }
+    }
+}
