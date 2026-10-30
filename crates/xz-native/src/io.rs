@@ -1,6 +1,6 @@
 //! `std::io` adapters.
 
-use crate::alone::{LzmaDecoderAlone, LzmaEncoderAlone};
+use crate::alone::{LzmaDecoder, LzmaEncoder};
 use crate::error::Result;
 use crate::lzip::LzipDecoder;
 use crate::options::{EncoderOptions, LzmaOptions};
@@ -30,14 +30,14 @@ impl Decode for XzDecoder {
     }
 }
 
-impl Decode for LzmaDecoderAlone {
+impl Decode for LzmaDecoder {
     fn decode(
         &mut self,
         input: &[u8],
         output: &mut [u8],
         finish: bool,
     ) -> Result<(usize, usize, Status)> {
-        LzmaDecoderAlone::decode(self, input, output, finish)
+        LzmaDecoder::decode(self, input, output, finish)
     }
 }
 
@@ -127,6 +127,17 @@ impl<R: BufRead> XzReader<R> {
         }
     }
 
+    /// Returns a reference to the inner reader.
+    pub fn get_ref(&self) -> &R {
+        &self.inner
+    }
+
+    /// Returns a mutable reference to the inner reader. Reading from it
+    /// directly skips compressed data and corrupts the output.
+    pub fn get_mut(&mut self) -> &mut R {
+        &mut self.inner
+    }
+
     /// Returns the inner reader.
     pub fn into_inner(self) -> R {
         self.inner
@@ -146,18 +157,35 @@ impl<R: BufRead> Read for XzReader<R> {
 #[derive(Debug)]
 pub struct LzmaReader<R> {
     inner: R,
-    dec: LzmaDecoderAlone,
+    dec: LzmaDecoder,
     done: bool,
 }
 
 impl<R: BufRead> LzmaReader<R> {
     /// Creates a reader without a memory limit.
     pub fn new(inner: R) -> Self {
+        Self::with_options(inner, DecoderOptions::new())
+    }
+
+    /// Creates a reader with options; only
+    /// [`memlimit`](DecoderOptions::memlimit) applies to .lzma.
+    pub fn with_options(inner: R, opts: DecoderOptions) -> Self {
         Self {
             inner,
-            dec: LzmaDecoderAlone::default(),
+            dec: LzmaDecoder::with_options(opts),
             done: false,
         }
+    }
+
+    /// Returns a reference to the inner reader.
+    pub fn get_ref(&self) -> &R {
+        &self.inner
+    }
+
+    /// Returns a mutable reference to the inner reader. Reading from it
+    /// directly skips compressed data and corrupts the output.
+    pub fn get_mut(&mut self) -> &mut R {
+        &mut self.inner
     }
 
     /// Returns the inner reader.
@@ -199,6 +227,17 @@ impl<R: BufRead> LzipReader<R> {
         }
     }
 
+    /// Returns a reference to the inner reader.
+    pub fn get_ref(&self) -> &R {
+        &self.inner
+    }
+
+    /// Returns a mutable reference to the inner reader. Reading from it
+    /// directly skips compressed data and corrupts the output.
+    pub fn get_mut(&mut self) -> &mut R {
+        &mut self.inner
+    }
+
     /// Returns the inner reader.
     pub fn into_inner(self) -> R {
         self.inner
@@ -233,14 +272,15 @@ impl Encode for XzEncoder {
     }
 }
 
-impl Encode for LzmaEncoderAlone {
+impl Encode for LzmaEncoder {
     fn encode(
         &mut self,
         input: &[u8],
         output: &mut [u8],
         finish: bool,
     ) -> Result<(usize, usize, Status)> {
-        LzmaEncoderAlone::encode(self, input, output, finish)
+        let action = if finish { Action::Finish } else { Action::Run };
+        LzmaEncoder::encode(self, input, output, action)
     }
 }
 
@@ -255,6 +295,9 @@ struct WriterCore<E> {
     pos: usize,
     len: usize,
     finished: bool,
+    /// Uncompressed bytes accepted and compressed bytes written out.
+    total_in: u64,
+    total_out: u64,
 }
 
 impl<E: Encode> WriterCore<E> {
@@ -265,6 +308,8 @@ impl<E: Encode> WriterCore<E> {
             pos: 0,
             len: 0,
             finished: false,
+            total_in: 0,
+            total_out: 0,
         }
     }
 
@@ -275,6 +320,7 @@ impl<E: Encode> WriterCore<E> {
                 return Err(io::ErrorKind::WriteZero.into());
             }
             self.pos += n;
+            self.total_out += n as u64;
         }
         self.pos = 0;
         self.len = 0;
@@ -289,6 +335,7 @@ impl<E: Encode> WriterCore<E> {
             self.dump(w)?;
             let (used, written, _) = self.enc.encode(data, &mut self.buf, false)?;
             self.len = written;
+            self.total_in += used as u64;
             if used > 0 || data.is_empty() {
                 return Ok(used);
             }
@@ -346,9 +393,34 @@ impl<W: Write> XzWriter<W> {
         Ok(inner)
     }
 
+    /// Writes the end of the stream but keeps the writer, so the inner
+    /// writer stays reachable through [`get_mut`](Self::get_mut). Later
+    /// writes fail; calling it again or [`finish`](Self::finish) is a
+    /// no-op apart from flushing.
+    pub fn try_finish(&mut self) -> io::Result<()> {
+        let inner = self.inner.as_mut().expect("inner writer present");
+        self.core.finish(inner)
+    }
+
     /// The inner writer.
     pub fn get_ref(&self) -> &W {
         self.inner.as_ref().expect("inner writer present")
+    }
+
+    /// The inner writer, mutably. Writing to it directly corrupts the
+    /// stream unless [`try_finish`](Self::try_finish) was called.
+    pub fn get_mut(&mut self) -> &mut W {
+        self.inner.as_mut().expect("inner writer present")
+    }
+
+    /// Uncompressed bytes written so far.
+    pub fn total_in(&self) -> u64 {
+        self.core.total_in
+    }
+
+    /// Compressed bytes written to the inner writer so far.
+    pub fn total_out(&self) -> u64 {
+        self.core.total_out
     }
 }
 
@@ -377,24 +449,21 @@ impl<W: Write> Drop for XzWriter<W> {
 #[derive(Debug)]
 pub struct LzmaWriter<W: Write> {
     inner: Option<W>,
-    core: WriterCore<LzmaEncoderAlone>,
+    core: WriterCore<LzmaEncoder>,
 }
 
 impl<W: Write> LzmaWriter<W> {
     /// Creates a writer for a preset.
     pub fn new(inner: W, preset: u32) -> io::Result<Self> {
-        Ok(Self::with_encoder(inner, LzmaEncoderAlone::new(preset)?))
+        Ok(Self::with_encoder(inner, LzmaEncoder::new(preset)?))
     }
 
     /// Creates a writer with options.
-    pub fn with_options(inner: W, opts: &LzmaOptions) -> io::Result<Self> {
-        Ok(Self::with_encoder(
-            inner,
-            LzmaEncoderAlone::with_options(opts)?,
-        ))
+    pub fn with_options(inner: W, opts: LzmaOptions) -> io::Result<Self> {
+        Ok(Self::with_encoder(inner, LzmaEncoder::with_options(opts)?))
     }
 
-    fn with_encoder(inner: W, enc: LzmaEncoderAlone) -> Self {
+    fn with_encoder(inner: W, enc: LzmaEncoder) -> Self {
         Self {
             inner: Some(inner),
             core: WriterCore::new(enc),
@@ -408,9 +477,34 @@ impl<W: Write> LzmaWriter<W> {
         Ok(inner)
     }
 
+    /// Writes the end of the stream but keeps the writer, so the inner
+    /// writer stays reachable through [`get_mut`](Self::get_mut). Later
+    /// writes fail; calling it again or [`finish`](Self::finish) is a
+    /// no-op apart from flushing.
+    pub fn try_finish(&mut self) -> io::Result<()> {
+        let inner = self.inner.as_mut().expect("inner writer present");
+        self.core.finish(inner)
+    }
+
     /// The inner writer.
     pub fn get_ref(&self) -> &W {
         self.inner.as_ref().expect("inner writer present")
+    }
+
+    /// The inner writer, mutably. Writing to it directly corrupts the
+    /// stream unless [`try_finish`](Self::try_finish) was called.
+    pub fn get_mut(&mut self) -> &mut W {
+        self.inner.as_mut().expect("inner writer present")
+    }
+
+    /// Uncompressed bytes written so far.
+    pub fn total_in(&self) -> u64 {
+        self.core.total_in
+    }
+
+    /// Compressed bytes written to the inner writer so far.
+    pub fn total_out(&self) -> u64 {
+        self.core.total_out
     }
 }
 

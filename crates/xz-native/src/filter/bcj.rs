@@ -5,6 +5,7 @@
 
 /// Instruction set of a BCJ filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum BcjKind {
     /// x86 (32-bit and 64-bit).
     X86,

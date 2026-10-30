@@ -22,10 +22,7 @@ fn appends_and_matches_decompress() {
 
             // Reuse the buffer, threaded.
             out.clear();
-            let opts = DecoderOptions {
-                threads: 4,
-                ..Default::default()
-            };
+            let opts = DecoderOptions::default().threads(4);
             decompress_with_options_into(&packed, opts, &mut out).unwrap();
             assert!(out == *data, "{name} {args:?} threaded");
         }
@@ -41,10 +38,7 @@ fn error_restores_length() {
     for cut in [packed.len() / 2, packed.len() - 1] {
         for threads in [1, 4] {
             let mut out = b"keep".to_vec();
-            let opts = DecoderOptions {
-                threads,
-                ..Default::default()
-            };
+            let opts = DecoderOptions::default().threads(threads);
             assert!(decompress_with_options_into(&packed[..cut], opts, &mut out).is_err());
             assert_eq!(out, b"keep", "cut={cut} threads={threads}");
         }

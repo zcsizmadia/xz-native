@@ -12,7 +12,9 @@ fn liblzma(input: &[u8], lzma_alone: bool) -> Outcome {
     } else {
         Stream::new_stream_decoder(MEMLIMIT, CONCATENATED)
     };
-    let Ok(mut s) = stream else { return Outcome::Skip };
+    let Ok(mut s) = stream else {
+        return Outcome::Skip;
+    };
     let mut out: Vec<u8> = Vec::with_capacity(1 << 16);
     loop {
         let before_in = s.total_in() as usize;
@@ -36,9 +38,15 @@ fn liblzma(input: &[u8], lzma_alone: bool) -> Outcome {
 }
 
 fuzz_target!(|data: &[u8]| {
-    let Some((&mode, input)) = data.split_first() else { return };
+    let Some((&mode, input)) = data.split_first() else {
+        return;
+    };
     let lzma_alone = mode & 1 == 1;
-    let ours = if lzma_alone { lzma_stream(input, mode >> 1) } else { xz_stream(input, mode >> 1) };
+    let ours = if lzma_alone {
+        lzma_stream(input, mode >> 1)
+    } else {
+        xz_stream(input, mode >> 1)
+    };
     let theirs = liblzma(input, lzma_alone);
     match (&ours, &theirs) {
         (Outcome::Skip, _) | (_, Outcome::Skip) => {}
@@ -46,8 +54,16 @@ fuzz_target!(|data: &[u8]| {
         (Outcome::Err, Outcome::Err) => {}
         _ => panic!(
             "xz-native {} but liblzma {}",
-            if matches!(ours, Outcome::Ok(_)) { "succeeded" } else { "failed" },
-            if matches!(theirs, Outcome::Ok(_)) { "succeeded" } else { "failed" },
+            if matches!(ours, Outcome::Ok(_)) {
+                "succeeded"
+            } else {
+                "failed"
+            },
+            if matches!(theirs, Outcome::Ok(_)) {
+                "succeeded"
+            } else {
+                "failed"
+            },
         ),
     }
 });

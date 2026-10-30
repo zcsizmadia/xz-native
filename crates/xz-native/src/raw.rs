@@ -17,6 +17,7 @@ use alloc::vec::Vec;
 
 /// The compression method at the end of a raw filter chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum RawMethod {
     /// LZMA1 (`LZMA_FILTER_LZMA1`): the stream ends with an end of payload
     /// marker, as in .lzma files with an unknown size.
@@ -29,7 +30,11 @@ pub enum RawMethod {
 /// Options for raw streams: what `xz --format=raw` takes on its command
 /// line, and what the decoder must be told because nothing is stored in
 /// the stream.
+///
+/// `#[non_exhaustive]`; start from [`RawOptions::preset`] and use the setters
+/// or assign fields.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct RawOptions {
     /// LZMA1 or LZMA2.
     pub method: RawMethod,
@@ -42,6 +47,12 @@ pub struct RawOptions {
     /// the same filters as the encoder.
     pub filters: Vec<Filter>,
 }
+
+crate::options::setters!(RawOptions {
+    method: RawMethod,
+    lzma: LzmaOptions,
+    filters: Vec<Filter>,
+});
 
 impl RawOptions {
     /// Options for a preset (see [`LzmaOptions::preset`]) and a method,
@@ -89,7 +100,7 @@ pub struct RawDecoder {
 impl RawDecoder {
     /// Creates a decoder. The options must match the encoder's; see
     /// [`RawOptions`].
-    pub fn new(opts: &RawOptions) -> Result<Self> {
+    pub fn with_options(opts: &RawOptions) -> Result<Self> {
         validate_filters(&opts.filters)?;
         let dict_size = opts.lzma.dict_size;
         let inner = match opts.method {
@@ -152,7 +163,7 @@ pub struct RawEncoder {
 
 impl RawEncoder {
     /// Creates an encoder.
-    pub fn new(opts: &RawOptions) -> Result<Self> {
+    pub fn with_options(opts: &RawOptions) -> Result<Self> {
         opts.lzma.validate()?;
         validate_filters(&opts.filters)?;
         let inner = match opts.method {

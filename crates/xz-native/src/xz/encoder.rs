@@ -18,6 +18,7 @@ use alloc::vec::Vec;
 
 /// What the encoder should do after the given input (`lzma_action`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Action {
     /// Encode as much as possible; more input follows.
     Run,

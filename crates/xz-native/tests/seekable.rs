@@ -269,17 +269,10 @@ fn memlimit_and_options() {
     };
     let with = |opts: DecoderOptions| XzSeekableReader::with_options(Cursor::new(&c), opts);
     // Too small for the Block table.
-    let e = with(DecoderOptions {
-        memlimit: 100,
-        ..Default::default()
-    });
+    let e = with(DecoderOptions::default().memlimit(100));
     assert_eq!(e.map_err(xz_error).err(), Some(Error::MemLimit));
     // Enough for the table, too small for an 8 MiB dictionary.
-    let mut r = with(DecoderOptions {
-        memlimit: 1 << 20,
-        ..Default::default()
-    })
-    .unwrap();
+    let mut r = with(DecoderOptions::default().memlimit(1 << 20)).unwrap();
     assert_eq!(read_all(&mut r), Err(Error::MemLimit));
 
     // A corrupt check is reported at the end of the Block, unless ignored.
@@ -304,10 +297,7 @@ fn memlimit_and_options() {
 fn with_bad(bad: &[u8]) -> Reader<'_> {
     XzSeekableReader::with_options(
         Cursor::new(bad),
-        DecoderOptions {
-            ignore_check: true,
-            ..Default::default()
-        },
+        DecoderOptions::default().ignore_check(true),
     )
     .unwrap()
 }
@@ -401,10 +391,7 @@ fn fail_on_unsupported_check() {
     let data = fs::read(files_dir().join("unsupported-check.xz")).unwrap();
     let r = XzSeekableReader::with_options(
         Cursor::new(&data),
-        DecoderOptions {
-            fail_on_unsupported_check: true,
-            ..Default::default()
-        },
+        DecoderOptions::default().fail_on_unsupported_check(true),
     );
     assert_eq!(r.map_err(xz_error).err(), Some(Error::Options));
 }

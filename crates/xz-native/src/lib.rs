@@ -58,7 +58,7 @@ mod raw;
 mod seek;
 mod xz;
 
-pub use alone::{LzmaDecoderAlone, LzmaEncoderAlone};
+pub use alone::{LzmaDecoder, LzmaEncoder};
 pub use check::{Check, Sha256, crc32, crc64};
 pub use error::{Error, Result};
 pub use filter::{BcjKind, Filter};
@@ -68,8 +68,8 @@ pub use lzip::LzipDecoder;
 pub use lzma::LzmaProps;
 pub use oneshot::{
     compress, compress_lzma, compress_lzma_with_options, compress_raw, compress_with_options,
-    decompress, decompress_into, decompress_lzip, decompress_lzip_with_memlimit, decompress_lzma,
-    decompress_lzma_with_memlimit, decompress_raw, decompress_streaming, decompress_with_options,
+    decompress, decompress_into, decompress_lzip, decompress_lzip_with_options, decompress_lzma,
+    decompress_lzma_with_options, decompress_raw, decompress_streaming, decompress_with_options,
     decompress_with_options_into,
 };
 pub use options::{

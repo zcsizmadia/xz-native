@@ -125,6 +125,7 @@ fn liblzma(o: &EncoderOptions, alone: bool, data: &[u8]) -> Vec<u8> {
                         BcjKind::Sparc => f.sparc(),
                         BcjKind::Arm64 => f.arm64(),
                         BcjKind::RiscV => f.riscv(),
+                        _ => unreachable!(),
                     };
                 }
                 _ => unreachable!(),

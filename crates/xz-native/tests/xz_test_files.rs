@@ -123,10 +123,7 @@ fn lzip_trailing_data() {
         ("good-1-v1-trailing-2.lz", false, b"LZITrailing garbage\n"),
     ] {
         let data = fs::read(dir.join(name)).unwrap();
-        let opts = DecoderOptions {
-            concatenated,
-            ..DecoderOptions::default()
-        };
+        let opts = DecoderOptions::default().concatenated(concatenated);
         let mut r = LzipReader::with_options(&data[..], opts);
         let mut out = Vec::new();
         r.read_to_end(&mut out).unwrap();

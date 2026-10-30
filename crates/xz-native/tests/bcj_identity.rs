@@ -105,6 +105,7 @@ fn arch_data(kind: BcjKind, n: usize) -> Vec<u8> {
                     }
                 }
             }
+            _ => unreachable!("a BcjKind this test doesn't know"),
         }
     }
     v.truncate(n);
@@ -128,14 +129,12 @@ fn bcj_output_matches_xz() {
         for size in [3usize, 17, 4099, 60_000] {
             let data = arch_data(kind, size);
             for start in [0u32, 4096 + align] {
-                let opts = EncoderOptions {
-                    lzma: LzmaOptions::preset(0).unwrap(),
-                    filters: vec![Filter::Bcj {
+                let opts = EncoderOptions::default()
+                    .lzma(LzmaOptions::preset(0).unwrap())
+                    .filters(vec![Filter::Bcj {
                         kind,
                         start_offset: start,
-                    }],
-                    ..EncoderOptions::default()
-                };
+                    }]);
                 let ours = compress_with_options(&data, &opts).unwrap();
                 assert_eq!(
                     decompress(&ours).unwrap(),
