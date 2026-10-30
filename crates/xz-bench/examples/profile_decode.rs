@@ -9,7 +9,8 @@
 //! given, the input is a multi-Block file (1 MiB Blocks, the dataset
 //! repeated 8 times) and the decoder uses that many threads (0 = one per
 //! CPU). `XZ_PROBE_BLOCK_MIB` changes the Block size; 0 makes the 64 MiB a
-//! single Block.
+//! single Block. `XZ_PROBE_DUMP=file` writes the compressed input and exits;
+//! `XZ_PROBE_LOAD=file` decodes that file instead (no compression first).
 
 use std::io::Read;
 
@@ -27,7 +28,10 @@ fn main() {
         .1;
 
     let mut packed = Vec::new();
-    if threads.is_some() {
+    if let Ok(path) = std::env::var("XZ_PROBE_LOAD") {
+        packed = std::fs::read(&path).unwrap();
+        data = xz_native::decompress(&packed).unwrap();
+    } else if threads.is_some() {
         data = data.repeat(8);
         let block_mib: u64 = std::env::var("XZ_PROBE_BLOCK_MIB").map_or(1, |s| s.parse().unwrap());
         let enc = liblzma::stream::MtStreamBuilder::new()
@@ -47,6 +51,13 @@ fn main() {
         liblzma::read::XzEncoder::new(&data[..], preset)
             .read_to_end(&mut packed)
             .unwrap();
+    }
+    // Save the compressed input once and load it in later runs, so that a
+    // profile of the decode loop doesn't include the compression above.
+    if let Ok(path) = std::env::var("XZ_PROBE_DUMP") {
+        std::fs::write(&path, &packed).unwrap();
+        println!("wrote {} bytes to {path}", packed.len());
+        return;
     }
     let threads = threads.unwrap_or(1);
 
