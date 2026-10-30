@@ -247,11 +247,39 @@ fn bittree<const SAFE: bool, const BITS: u32>(
     undo: &mut Undo,
     base: usize,
 ) -> core::result::Result<u32, Stop> {
-    let mut sym = 1u32;
-    for _ in 0..BITS {
-        sym = (sym << 1) + bit_bl(rc, inp, probs, undo, base + sym as usize)?;
+    // Like liblzma's x86-64 assembly: load both children's probabilities
+    // before the current bit is known and pick one afterwards, so the next
+    // step doesn't wait for a load. The last level has no children.
+    let mut sym = 1usize;
+    let mut p = prob(probs, base + 1);
+    for k in 0..BITS {
+        let (p0, p1) = if k + 1 < BITS {
+            (prob(probs, base + 2 * sym), prob(probs, base + 2 * sym + 1))
+        } else {
+            (0, 0)
+        };
+        inp.normalize(rc)?;
+        let i = base + sym;
+        if SAFE {
+            undo.push(i, p as u16);
+        }
+        let bound = (rc.range >> BIT_MODEL_TOTAL_BITS) * p;
+        let one = rc.code >= bound;
+        rc.range = select_unpredictable(one, rc.range.wrapping_sub(bound), bound);
+        rc.code = select_unpredictable(one, rc.code.wrapping_sub(bound), rc.code);
+        set_prob(
+            probs,
+            i,
+            select_unpredictable(
+                one,
+                p - (p >> MOVE_BITS),
+                p + ((BIT_MODEL_TOTAL - p) >> MOVE_BITS),
+            ),
+        );
+        sym = 2 * sym + one as usize;
+        p = select_unpredictable(one, p1, p0);
     }
-    Ok(sym - (1 << BITS))
+    Ok(sym as u32 - (1 << BITS))
 }
 
 /// Reverse bit tree of `bits` bits rooted at `base + 1`.
