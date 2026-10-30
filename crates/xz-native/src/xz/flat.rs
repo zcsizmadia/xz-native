@@ -10,7 +10,7 @@ use super::format::*;
 use super::stream::{DecoderOptions, IndexDecoder, RecordHash};
 use crate::check::{Check, CheckState};
 use crate::error::{Error, Result};
-use crate::filter::{ChainDecoder, InPlaceFilters};
+use crate::filter::{ChainDecoder, Filter, InPlaceFilters};
 use crate::lzma::dict::{Dict, EXTRA as DICT_EXTRA};
 use crate::lzma::lzma2::Lzma2Decoder;
 use crate::lzma::{LzCodec, Progress};
@@ -63,7 +63,10 @@ fn lzma2_sizes(input: &[u8]) -> Result<(u64, usize)> {
 /// error. Decode the Block again, streaming, to find out which it is.
 #[cold]
 fn truncated_block_error(area: &[u8], hdr: &BlockHeader) -> Error {
-    let mut chain = ChainDecoder::new(&hdr.filters, hdr.uncompressed_size);
+    let mut chain = match ChainDecoder::new(&hdr.filters, hdr.uncompressed_size) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
     let mut buf = vec![0u8; STEP];
     let mut ip = 0;
     let mut total = 0u64;
@@ -122,12 +125,50 @@ pub(crate) fn decode_block(
     // Plus the slack that the LZMA decoder's over-copying needs past the end.
     out.reserve(total.min(comp_len.saturating_mul(MAX_RATIO) as u64) as usize + DICT_EXTRA);
 
-    let mut dict = Dict::new_flat(core::mem::take(out), start);
+    let Some(&Filter::Lzma2 { dict_size }) = hdr.filters.last() else {
+        unreachable!("validated chain")
+    };
+    let mut dict = Dict::new_flat(core::mem::take(out), start, dict_size);
+    let check_kind = if verify { check } else { Check::None };
+    let r = decode_flat(&mut dict, &area[..comp_len], hdr, start, target, check_kind);
+    // The caller's buffer goes back on every path, errors included.
+    *out = dict.into_buf();
+    out.truncate(if r.is_ok() { target } else { start });
+    let cs = r?;
+
+    // Block Padding and Check
+    let mut pos = comp_len;
+    let pad = (4 - comp_len % 4) % 4;
+    if take(input, &mut pos, pad)?.iter().any(|&b| b != 0) {
+        return Err(Error::Data);
+    }
+    let stored = take(input, &mut pos, check.size())?;
+    let mut computed = [0u8; 64];
+    let n = cs.finish(&mut computed);
+    if n > 0 && computed[..n] != *stored {
+        return Err(Error::CheckMismatch);
+    }
+    let unpadded = (hdr.header_size + comp_len + check.size()) as u64;
+    if unpadded > UNPADDED_SIZE_MAX {
+        return Err(Error::Data);
+    }
+    Ok((pos, unpadded, total))
+}
+
+/// The decode loop of [`decode_block`]: decodes `comp` into the flat
+/// dictionary up to `target`. Returns the check state over the output.
+fn decode_flat(
+    dict: &mut Dict,
+    comp: &[u8],
+    hdr: &BlockHeader,
+    start: usize,
+    target: usize,
+    check: Check,
+) -> Result<CheckState> {
     let mut lz = Lzma2Decoder::new();
     let mut filters = InPlaceFilters::new(&hdr.filters, start);
     let has_filters = hdr.filters.len() > 1;
-    let mut cs = CheckState::new(if verify { check } else { Check::None });
-    let comp = &area[..comp_len];
+    let mut cs = CheckState::new(check);
     let mut ip = 0;
     let mut checked = start;
     loop {
@@ -141,7 +182,7 @@ pub(crate) fn decode_block(
         }
         dict.limit = lim;
         let before = (ip, dict.pos);
-        let (used, progress) = lz.code(&mut dict, &comp[ip..])?;
+        let (used, progress) = lz.code(dict, &comp[ip..])?;
         ip += used;
         let reset = dict.need_reset;
         if reset {
@@ -167,29 +208,10 @@ pub(crate) fn decode_block(
             });
         }
     }
-    if dict.pos != target || ip != comp_len {
+    if dict.pos != target || ip != comp.len() {
         return Err(Error::Data);
     }
-    *out = dict.into_buf();
-    out.truncate(target);
-
-    // Block Padding and Check
-    let mut pos = comp_len;
-    let pad = (4 - comp_len % 4) % 4;
-    if take(input, &mut pos, pad)?.iter().any(|&b| b != 0) {
-        return Err(Error::Data);
-    }
-    let stored = take(input, &mut pos, check.size())?;
-    let mut computed = [0u8; 64];
-    let n = cs.finish(&mut computed);
-    if n > 0 && computed[..n] != *stored {
-        return Err(Error::CheckMismatch);
-    }
-    let unpadded = (hdr.header_size + comp_len + check.size()) as u64;
-    if unpadded > UNPADDED_SIZE_MAX {
-        return Err(Error::Data);
-    }
-    Ok((pos, unpadded, total))
+    Ok(cs)
 }
 
 /// Decodes complete .xz data. Equivalent to driving [`super::stream::XzDecoder`]
@@ -345,18 +367,40 @@ pub(crate) fn decompress_threads_into(
         return decompress_into(input, opts, out);
     }
 
-    // The output is allocated once and split into one slice per Block. Each
-    // worker decodes into its own reused buffer and copies into the slice,
-    // so there are no per-Block allocations and no serial concatenation.
+    // The sizes come from the Index, before any Block is verified. Leave
+    // implausible ones to the single-threaded decoder, which allocates as
+    // it decodes, and so does an allocation that fails.
+    let max_ratio = MAX_RATIO as u64;
+    if blocks
+        .iter()
+        .any(|b| b.uncompressed_size > b.unpadded_size.saturating_mul(max_ratio))
+    {
+        return decompress_into(input, opts, out);
+    }
     let total = blocks
         .last()
         .map_or(0, |b| b.uncompressed_offset + b.uncompressed_size);
-    let total = usize::try_from(total).map_err(|_| Error::MemLimit)?;
     let base = out.len();
+    let Some(total) = usize::try_from(total).ok().filter(|t| {
+        base.checked_add(*t)
+            .is_some_and(|n| n <= isize::MAX as usize)
+    }) else {
+        return decompress_into(input, opts, out);
+    };
+
+    // The output is allocated once and split into one slice per Block. Each
+    // worker decodes into its own reused buffer and copies into the slice,
+    // so there are no per-Block allocations and no serial concatenation.
     if base == 0 && out.capacity() < total {
         // Fresh zeroed pages: the workers fault them in in parallel.
-        *out = vec![0u8; total];
+        match crate::lzma::dict::zeroed(total) {
+            Ok(v) => *out = v,
+            Err(_) => return decompress_into(input, opts, out),
+        }
     } else {
+        if out.try_reserve(total).is_err() {
+            return decompress_into(input, opts, out);
+        }
         out.resize(base + total, 0);
     }
     let mut slots = Vec::with_capacity(blocks.len());

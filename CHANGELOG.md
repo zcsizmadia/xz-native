@@ -40,6 +40,21 @@ minor version may change the API.
 - Decoder: no per-byte history bookkeeping and no bounds checks per literal
   (#61): 2% fewer instructions and 4% fewer branches.
 
+### Fixed
+- One-shot decoding (`decompress`, `decompress_into`, the threaded
+  variants and the threaded `XzReader`) rejects matches that reach further
+  back than the LZMA2 dictionary size in the Block Header, like liblzma
+  and the streaming decoder (#70).
+- `decompress_into` keeps the caller's buffer, and its contents, when a
+  Block is corrupt; it was replaced with an empty `Vec` (#70).
+- Threaded one-shot decoding no longer allocates the output size claimed
+  by the Index before any Block is verified: implausible sizes, and
+  allocations that fail, go to the single-threaded decoder. A small
+  crafted file could abort the process (#70).
+- Dictionary sizes that don't fit in memory (on 32-bit targets, from
+  2 GiB) give `Error::MemLimit` instead of a panic or a wrapped size; large
+  dictionaries are allocated fallibly (#70).
+
 ## [0.1.0+xz.5.8.4]
 
 First release. Compatible with xz/liblzma 5.8.4.

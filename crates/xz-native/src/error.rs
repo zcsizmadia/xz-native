@@ -18,7 +18,8 @@ pub enum Error {
     /// liblzma reports this as `LZMA_DATA_ERROR`.
     CheckMismatch,
     /// Decoding would need more memory than the configured limit
-    /// (`LZMA_MEMLIMIT_ERROR`).
+    /// (`LZMA_MEMLIMIT_ERROR`), or more than can be allocated
+    /// (`LZMA_MEM_ERROR`).
     MemLimit,
     /// The input ended before the end of the stream (`LZMA_BUF_ERROR` at
     /// the end of input).

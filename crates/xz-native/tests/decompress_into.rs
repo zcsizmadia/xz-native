@@ -72,3 +72,89 @@ fn mixed_stored_and_lzma_chunks() {
         assert!(out[6..] == data, "preset {preset}: into");
     }
 }
+
+/// Corrupt LZMA data (not a truncation) fails inside the Block decoder,
+/// after the output buffer was handed to it. The buffer still comes back.
+#[test]
+fn corrupt_block_restores_buffer() {
+    let data = b"some data for an xz stream ".repeat(5000);
+    let mut packed = xz_native::compress(&data, 6).unwrap();
+    // Stream Header, Block Header, LZMA2 control byte and two size bytes
+    // each: the next byte starts the range coder and must be 0.
+    let hdr = (packed[12] as usize + 1) * 4;
+    let first = 12 + hdr + 6;
+    assert_eq!(packed[first], 0);
+    packed[first] = 1;
+    for threads in [1, 4] {
+        let mut out = b"prefix".to_vec();
+        out.reserve(1 << 20);
+        let opts = DecoderOptions::default().threads(threads);
+        assert!(decompress_with_options_into(&packed, opts, &mut out).is_err());
+        assert_eq!(out, b"prefix", "threads={threads}");
+        assert!(
+            out.capacity() >= 1 << 20,
+            "threads={threads}: capacity kept"
+        );
+    }
+}
+
+fn push_vli(out: &mut Vec<u8>, mut v: u64) {
+    while v >= 0x80 {
+        out.push(v as u8 | 0x80);
+        v >>= 7;
+    }
+    out.push(v as u8);
+}
+
+/// Replaces the Index and Stream Footer of a single-Stream file, giving
+/// each record the Uncompressed Size `claim(i, real)`.
+fn rewrite_index(packed: &[u8], claim: impl Fn(usize, u64) -> u64) -> Vec<u8> {
+    let r = xz_native::XzSeekableReader::new(std::io::Cursor::new(packed)).unwrap();
+    let blocks = r.blocks().to_vec();
+    let last = blocks.last().unwrap();
+    let index = (last.compressed_offset + last.total_size()) as usize;
+    let mut out = packed[..index].to_vec();
+    out.push(0);
+    push_vli(&mut out, blocks.len() as u64);
+    for (i, b) in blocks.iter().enumerate() {
+        push_vli(&mut out, b.unpadded_size);
+        push_vli(&mut out, claim(i, b.uncompressed_size));
+    }
+    out.resize(index + (out.len() - index).next_multiple_of(4), 0);
+    let crc = xz_native::crc32(&out[index..], 0);
+    out.extend_from_slice(&crc.to_le_bytes());
+    let backward = ((out.len() - index) / 4 - 1) as u32;
+    let mut footer = backward.to_le_bytes().to_vec();
+    footer.extend_from_slice(&packed[packed.len() - 4..packed.len() - 2]);
+    out.extend_from_slice(&xz_native::crc32(&footer, 0).to_le_bytes());
+    out.extend_from_slice(&footer);
+    out.extend_from_slice(b"YZ");
+    out
+}
+
+/// An Index that claims far more output than its Blocks can hold must not
+/// make the threaded decoder allocate that much up front: it gives the
+/// same error as the single-threaded decoder.
+#[test]
+fn lying_index_is_not_allocated() {
+    let data = b"index sizes are checked against the Blocks ".repeat(4000);
+    let opts = xz_native::EncoderOptions::preset(1)
+        .unwrap()
+        .block_size(16 << 10);
+    let packed = xz_native::compress_with_options(&data, &opts).unwrap();
+    // Sanity check: an unchanged rewrite decodes.
+    assert_eq!(decompress(&rewrite_index(&packed, |_, u| u)).unwrap(), data);
+    for claim in [1u64 << 61, 1 << 40, 1 << 33] {
+        let bad = rewrite_index(&packed, |i, u| if i == 1 { claim } else { u });
+        for threads in [1, 4] {
+            let mut out = b"keep".to_vec();
+            let opts = DecoderOptions::default().threads(threads);
+            assert_eq!(
+                decompress_with_options_into(&bad, opts, &mut out),
+                Err(xz_native::Error::Data),
+                "claim={claim} threads={threads}"
+            );
+            assert_eq!(out, b"keep");
+        }
+    }
+}

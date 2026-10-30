@@ -105,7 +105,7 @@ impl LzmaDecoder {
             self.lz = Some(LzDriver::new(
                 dec,
                 crate::filter::cap_dict(dict_size, known),
-            ));
+            )?);
         }
         let lz = self.lz.as_mut().unwrap();
         let (u, w, p) = lz.decode(&input[ip..], output)?;
