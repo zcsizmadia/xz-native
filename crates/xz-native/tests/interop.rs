@@ -3,36 +3,10 @@
 
 mod common;
 
-use common::{Rng, corpus, xz};
+use common::{Rng, XZ_OPTIONS, corpus, read_xz, xz};
 use xz_native::{
     LzipDecoder, LzmaDecoderAlone, Status, XzDecoder, decompress, decompress_lzip, decompress_lzma,
 };
-
-const OPTIONS: &[&[&str]] = &[
-    &["-0"],
-    &["-1"],
-    &["-6"],
-    &["-9e"],
-    &["--check=none"],
-    &["--check=crc32"],
-    &["--check=sha256"],
-    &["--lzma2=preset=6,lc=4,lp=0,pb=0"],
-    &["--lzma2=preset=1,lc=0,lp=4,pb=4"],
-    &["--lzma2=preset=6,lc=1,lp=3,pb=1,mf=hc4"],
-    &["--block-size=50000"],
-    &["-T4", "--block-size=300000"],
-    &["--x86", "--lzma2"],
-    &["--powerpc", "--lzma2"],
-    &["--ia64", "--lzma2"],
-    &["--arm", "--lzma2"],
-    &["--armthumb", "--lzma2"],
-    &["--arm64", "--lzma2"],
-    &["--sparc", "--lzma2"],
-    &["--riscv", "--lzma2"],
-    &["--x86=start=4096", "--lzma2"],
-    &["--delta=dist=1", "--lzma2"],
-    &["--delta=dist=4", "--x86", "--lzma2"],
-];
 
 fn stream_decode(
     data: &[u8],
@@ -60,7 +34,7 @@ fn stream_decode(
 #[test]
 fn xz_cli_interop() {
     let corpus = corpus();
-    for opts in OPTIONS {
+    for opts in XZ_OPTIONS {
         if !common::xz_supports(opts) {
             eprintln!("installed xz doesn't support {opts:?}; skipping");
             continue;
@@ -80,6 +54,15 @@ fn xz_cli_interop() {
             };
             let out = xz_native::decompress_with_options(&packed, threads).unwrap();
             assert!(out == *data, "{opts:?} {name}: threaded output differs");
+            // XzReader with and without threads, with small reads.
+            for (i, t) in [1, 2, 4, 0].into_iter().enumerate() {
+                let (out, err) = read_xz(&packed, common::threads(t), 4096, i as u64);
+                assert_eq!(err, None, "{opts:?} {name}: reader with {t} threads");
+                assert!(
+                    out == *data,
+                    "{opts:?} {name}: reader with {t} threads differs"
+                );
+            }
             // Streaming through tiny buffers is slow; do it for smaller inputs.
             if data.len() <= 600_000 {
                 let mut dec = XzDecoder::new();

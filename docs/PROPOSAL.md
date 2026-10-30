@@ -54,12 +54,13 @@ crates/xz-native/   the library (no_std + alloc; `std` feature for io)
   src/check/        CRC32, CRC64, SHA-256 with x86-64 and AArch64 SIMD
   src/lzma/         range decoder, LZMA, LZMA2, dictionary
   src/filter/       BCJ filters, Delta, filter chains
-  src/xz/           .xz headers, blocks, index, stream decoder
+  src/xz/           .xz headers, blocks, index, stream decoder, one-shot and
+                    multithreaded decoding
   src/alone.rs      .lzma
   src/lzip.rs       .lz (lzip)
   src/io.rs         std::io readers
   src/seek.rs       seekable .xz reader (Index parsed backwards, per-Block decoding)
-  tests/            xz test files, xz CLI interop, seekable reader
+  tests/            xz test files, xz CLI interop, seekable and threaded readers
 crates/xz-bench/    criterion benchmarks and the liblzma differential test
 fuzz/               cargo-fuzz targets (incl. differential vs liblzma)
 third_party/xz/     xz 5.8.4 source (reference only)
@@ -80,6 +81,20 @@ third_party/xz/     xz 5.8.4 source (reference only)
 - **CPU features:** detected at run time with `is_x86_feature_detected!` /
   `is_aarch64_feature_detected!` (compile-time `cfg` without `std`). The
   `portable` feature disables all SIMD so CI tests both paths.
+- **Multithreaded decoding** (`DecoderOptions::threads`, std only). One-shot
+  (`flat.rs`): the Index locates the Blocks, workers decode them with
+  reused scratch buffers into one output allocation, and any failure re-runs
+  the single-threaded decoder for the exact error. Streaming `XzReader`
+  (`mt.rs`, like liblzma's `stream_decoder_mt.c`): the reading thread parses
+  in order and hands Blocks whose headers store both sizes to workers;
+  output comes back in Block order. At most `2 * threads` Blocks are in
+  flight, holding at most `min(memlimit, 2 GiB)` of compressed plus decoded
+  data (liblzma's `memlimit_threading`); Blocks without sizes or too large
+  for that are decoded on the reading thread after the Blocks before them.
+  A Block that fails in a worker is decoded again with the streaming
+  decoder (one byte at a time near the error), so the error and the data
+  before it are the same as without threads. Headers, Index, Footer and
+  Padding errors wait in the queue behind the Blocks before them.
 - **`unsafe`:** denied workspace-wide, except the SIMD modules (intrinsics,
   unaligned loads), the x86-64 range-decoder assembly ported from liblzma
   (`lzma/x86_asm.rs`, `core::arch::asm!`, baseline x86-64 only) and a few
@@ -118,7 +133,7 @@ runs weekly and on demand on all CI platforms.
 | M2 | Range encoder, match finders, presets 0-9/extreme, byte-identical `.xz` output | |
 | M3 | Seekable reader, lzip decoding, raw LZMA1/LZMA2 API, filter encoders | |
 | M4 | Decoder and check tuning (decode into the caller's buffer, VPCLMULQDQ CRC, branchless bits) | |
-| M5 | Multithreaded encode/decode, async adapters, CLI, 1.0 (`5.8.400`) | |
+| M5 | Multithreaded encode/decode (decode done), async adapters, CLI, 1.0 (`5.8.400`) | |
 
 ## Decisions
 

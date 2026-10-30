@@ -58,6 +58,8 @@ pub(crate) struct LzDriver<C> {
     pub(crate) codec: C,
     pub(crate) dict: Dict,
     done: bool,
+    /// An error found after output that was returned first.
+    error: Option<crate::error::Error>,
 }
 
 impl<C: LzCodec> LzDriver<C> {
@@ -66,6 +68,7 @@ impl<C: LzCodec> LzDriver<C> {
             codec,
             dict: Dict::new(dict_size),
             done: false,
+            error: None,
         }
     }
 
@@ -78,6 +81,9 @@ impl<C: LzCodec> LzDriver<C> {
         if self.done {
             return Ok((0, 0, Progress::End));
         }
+        if let Some(e) = self.error {
+            return Err(e);
+        }
         let mut ip = 0;
         let mut op = 0;
         loop {
@@ -88,7 +94,16 @@ impl<C: LzCodec> LzDriver<C> {
             let n = self.dict.pos - start;
             out[op..op + n].copy_from_slice(&self.dict.buf[start..start + n]);
             op += n;
-            let (used, progress) = r?;
+            let (used, progress) = match r {
+                Ok(r) => r,
+                // Like liblzma, return the output decoded before the error
+                // (and the error on the next call).
+                Err(e) if op > 0 => {
+                    self.error = Some(e);
+                    return Ok((ip, op, Progress::Ok));
+                }
+                Err(e) => return Err(e),
+            };
             ip += used;
             if progress == Progress::End {
                 self.done = true;

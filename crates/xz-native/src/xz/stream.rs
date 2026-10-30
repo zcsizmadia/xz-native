@@ -30,10 +30,11 @@ pub struct DecoderOptions {
     /// Fail with [`Error::Options`] on a check type this implementation can't
     /// verify (default: false; the check is skipped, as liblzma does).
     pub fail_on_unsupported_check: bool,
-    /// Threads for one-shot decoding of multi-Block .xz data with
-    /// [`crate::decompress_with_options`] (default: 1; 0 = one per CPU).
-    /// Blocks are decoded in parallel; results and errors are identical to
-    /// single-threaded decoding. Needs the `std` feature, otherwise ignored.
+    /// Threads for decoding multi-Block .xz data with
+    /// [`crate::decompress_with_options`] and `XzReader` (default: 1; 0 =
+    /// one per CPU). Blocks are decoded in parallel; results and errors are
+    /// identical to single-threaded decoding. [`XzDecoder`] ignores it, and
+    /// so does everything without the `std` feature.
     pub threads: usize,
 }
 
@@ -308,8 +309,21 @@ impl BlockDecoder {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<(usize, usize, bool)> {
-        let mut ip = 0;
-        let mut op = 0;
+        let (mut ip, mut op) = (0, 0);
+        let done = self.decode_partial(input, output, &mut ip, &mut op)?;
+        Ok((ip, op, done))
+    }
+
+    /// [`Self::decode`] that keeps its progress in `ip` (input consumed) and
+    /// `op` (output written) also on error, when `output[..op]` is still
+    /// valid data. Returns true when the Block is done.
+    pub(crate) fn decode_partial(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+        ip: &mut usize,
+        op: &mut usize,
+    ) -> Result<bool> {
         loop {
             match self.seq {
                 BlockSeq::Data => {
@@ -319,13 +333,11 @@ impl BlockDecoder {
                         Some(c) => c - self.compressed,
                         None => UNPADDED_SIZE_MAX - self.header_size - check_size - self.compressed,
                     };
-                    let avail = ((input.len() - ip) as u64).min(max_comp) as usize;
+                    let avail = ((input.len() - *ip) as u64).min(max_comp) as usize;
                     let (u, w, p) = self
                         .chain
-                        .decode(&input[ip..ip + avail], &mut output[op..])?;
-                    self.check.update(&output[op..op + w]);
-                    ip += u;
-                    op += w;
+                        .decode(&input[*ip..*ip + avail], &mut output[*op..])?;
+                    *ip += u;
                     self.compressed += u as u64;
                     self.uncompressed += w as u64;
                     if self
@@ -335,6 +347,8 @@ impl BlockDecoder {
                     {
                         return Err(Error::Data);
                     }
+                    self.check.update(&output[*op..*op + w]);
+                    *op += w;
                     if p == Progress::End {
                         if self
                             .declared_compressed
@@ -347,11 +361,11 @@ impl BlockDecoder {
                         }
                         self.seq = BlockSeq::Padding;
                     } else if u == 0 && w == 0 {
-                        if max_comp == 0 && op < output.len() {
+                        if max_comp == 0 && *op < output.len() {
                             // Declared compressed size used up mid-block.
                             return Err(Error::Data);
                         }
-                        return Ok((ip, op, false));
+                        return Ok(false);
                     }
                 }
                 BlockSeq::Padding => {
@@ -359,24 +373,24 @@ impl BlockDecoder {
                         self.seq = BlockSeq::Check;
                         continue;
                     }
-                    let Some(&byte) = input.get(ip) else {
-                        return Ok((ip, op, false));
+                    let Some(&byte) = input.get(*ip) else {
+                        return Ok(false);
                     };
                     if byte != 0 {
                         return Err(Error::Data);
                     }
-                    ip += 1;
+                    *ip += 1;
                     self.padding += 1;
                 }
                 BlockSeq::Check => {
                     let size = self.check_type.size();
-                    let n = (size - self.check_pos).min(input.len() - ip);
+                    let n = (size - self.check_pos).min(input.len() - *ip);
                     self.check_buf[self.check_pos..self.check_pos + n]
-                        .copy_from_slice(&input[ip..ip + n]);
+                        .copy_from_slice(&input[*ip..*ip + n]);
                     self.check_pos += n;
-                    ip += n;
+                    *ip += n;
                     if self.check_pos < size {
-                        return Ok((ip, op, false));
+                        return Ok(false);
                     }
                     let state = core::mem::replace(&mut self.check, CheckState::None);
                     let mut computed = [0u8; 64];
@@ -384,7 +398,7 @@ impl BlockDecoder {
                     if n > 0 && computed[..n] != self.check_buf[..n] {
                         return Err(Error::CheckMismatch);
                     }
-                    return Ok((ip, op, true));
+                    return Ok(true);
                 }
             }
         }

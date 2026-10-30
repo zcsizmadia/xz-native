@@ -86,7 +86,7 @@ fn truncated_block_error(area: &[u8], hdr: &BlockHeader) -> Error {
 /// Decodes one Block (after its header) and appends it to `out`. Returns the
 /// bytes consumed (Compressed Data, Block Padding and Check) and the
 /// Index record.
-fn decode_block(
+pub(crate) fn decode_block(
     input: &[u8],
     out: &mut Vec<u8>,
     hdr: &BlockHeader,
@@ -303,10 +303,7 @@ pub(crate) fn decompress_threads(input: &[u8], opts: &DecoderOptions) -> Result<
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
 
-    let threads = match opts.threads {
-        0 => std::thread::available_parallelism().map_or(1, |n| n.get()),
-        n => n,
-    };
+    let threads = super::mt::thread_count(opts.threads);
     if threads < 2 || !opts.concatenated {
         return decompress(input, opts);
     }

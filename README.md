@@ -37,6 +37,15 @@ let mut out = Vec::new();
 reader.read_to_end(&mut out)?;
 ```
 
+Multi-Block files (`xz -T`) decode in parallel with `threads` (0 = one per
+CPU), one-shot and streaming, with the same output and errors:
+
+```rust
+let opts = xz_native::DecoderOptions { threads: 0, ..Default::default() };
+let data = xz_native::decompress_with_options(&compressed, opts)?;
+let reader = xz_native::XzReader::with_options(BufReader::new(file), opts);
+```
+
 Random access to multi-Block files (`xz -T` or `xz --block-size`), decoding
 only the Block that holds the position:
 
@@ -64,7 +73,7 @@ without `std`, like `lzma_code` in liblzma.
 | `.lz` (lzip, versions 0 and 1, concatenated members, trailing data) | yes | - |
 | Filters: x86, ARM, ARM-Thumb, ARM64, PowerPC, IA-64, SPARC, RISC-V, Delta | yes | planned |
 | Checks: None, CRC32, CRC64, SHA-256 | yes | planned |
-| Multithreading | planned | planned |
+| Multithreading (one-shot and `XzReader`, `DecoderOptions::threads`) | yes | planned |
 
 ## Versioning
 
