@@ -36,6 +36,8 @@ fn main() {
         let block_mib: u64 = std::env::var("XZ_PROBE_BLOCK_MIB").map_or(1, |s| s.parse().unwrap());
         let enc = liblzma::stream::MtStreamBuilder::new()
             .threads(4)
+            // CRC64 like `xz`; the builder defaults to no check.
+            .check(liblzma::stream::Check::Crc64)
             .block_size(if block_mib == 0 {
                 1 << 30
             } else {

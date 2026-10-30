@@ -8,6 +8,10 @@ minor version may change the API.
 
 ## [Unreleased]
 
+### Changed
+- Decoder: no per-byte history bookkeeping and no bounds checks per literal
+  (#61): 2% fewer instructions and 4% fewer branches.
+
 ## [0.1.0+xz.5.8.4]
 
 First release. Compatible with xz/liblzma 5.8.4.

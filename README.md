@@ -37,7 +37,7 @@ build scripts or the memory-safety risk. Sibling of the C# library
   | Compression, multithreaded, Linux | 1.30-1.48x at preset 1, 1.04-1.13x at 6 |
   | Decompression, single thread, Linux (liblzma built with GCC and its assembly) | 1.00-1.06x |
   | Decompression, single thread, Windows (MSVC build, as `xz2`/`liblzma` give Rust users there) | 1.3-1.4x |
-  | Decompression, multithreaded, Linux | 0.92-0.97x at 1-8 threads, 1.00-1.22x at 16-32 |
+  | Decompression, multithreaded, Linux | 1.04-1.06x at 1-8 threads, 1.10-1.50x at 16-32 |
   | Decompression of incompressible data | 4-14x |
   | CRC32 / CRC64 (SIMD detected at run time; this liblzma build has no CLMUL) | 13-45x |
 

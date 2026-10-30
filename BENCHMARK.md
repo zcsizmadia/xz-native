@@ -96,32 +96,33 @@ ceiling is its CRC64 (9.2 GiB/s, 128-bit PCLMULQDQ only), not memory.
 ## Decompression, multithreaded
 
 64 MiB (each dataset repeated 8 times) compressed at `xz -6` with 1 MiB
-Blocks, decoded with the one-shot API and compared with liblzma's
-multithreaded decoder (with `memlimit_threading` raised so that it uses
-every thread). `examples/profile_decode`.
+Blocks and a CRC64 check (as `xz` writes), decoded with the one-shot API
+and compared with liblzma's multithreaded decoder (with
+`memlimit_threading` raised so that it uses every thread).
+`examples/profile_decode`.
 
-**Linux (EPYC 7543)**, at da40bf3, pinned to the 32 cores of one idle NUMA
+**Linux (EPYC 7543)**, at 798d326, pinned to the 32 cores of one idle NUMA
 node (`taskset -c 32-63`):
 
 | Threads | text xz-native | text liblzma | ratio | binary xz-native | binary liblzma | ratio |
 |---|---|---|---|---|---|---|
-| 1 | 93.4 | **100.0** | 0.93x | 86.1 | **93.8** | 0.92x |
-| 4 | 350.7 | **362.7** | 0.97x | 321.7 | **339.4** | 0.95x |
-| 8 | 653.7 | **672.4** | 0.97x | 603.9 | **625.9** | 0.96x |
-| 16 | **1177** | 1173 | 1.00x | **1034** | 988 | 1.05x |
-| 32 | **1815** | 1482 | 1.22x | **1692** | 1474 | 1.15x |
+| 1 | **100.1** | 96.0 | 1.04x | **90.8** | 87.4 | 1.04x |
+| 4 | **375.6** | 356.2 | 1.05x | **331.9** | 314.0 | 1.06x |
+| 8 | **697.2** | 655.2 | 1.06x | **620.2** | 595.1 | 1.04x |
+| 16 | **1246** | 1138 | 1.10x | **1071** | 888 | 1.21x |
+| 32 | **2110** | 1409 | 1.50x | **1766** | 1381 | 1.28x |
 
-With 1 MiB Blocks xz-native is behind at low thread counts although it is
-level on a single Block: a fixed cost per Block ([#50]). It scales better
-and leads from 16 threads.
+The check matters for the comparison: without one, the decode loops alone
+are within 1-3% of each other (liblzma ahead on large outputs), and
+xz-native's lead at low thread counts comes from its faster CRC64 ([#50]).
 
-**Windows (i7-12800H)**, text, at the commit of #29 (before #49):
+**Windows (i7-12800H)**, text, at 798d326 (mean of two runs):
 
 | Threads | xz-native | liblzma | ratio |
 |---|---|---|---|
-| 1 | **114** | 78 | 1.46x |
-| 4 | **362** | 259 | 1.40x |
-| 20 | **818** | 585 | 1.40x |
+| 1 | **106** | 77 | 1.39x |
+| 4 | **381** | 252 | 1.51x |
+| 20 | **842** | 586 | 1.44x |
 
 [#50]: https://github.com/zcsizmadia/xz-native/issues/50
 
