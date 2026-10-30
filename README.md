@@ -1,24 +1,53 @@
 # xz-native
 
-Pure Rust XZ/LZMA compression, compatible with xz 5.8.4. Sibling of the C#
-library [Lzma.Net](https://github.com/zcsizmadia/Lzma.Net).
+**xz/liblzma 5.8.4, rewritten in Rust:** the same file format and the same
+strictness on bad input, at liblzma's speed or faster, without the C, the
+build scripts or the memory-safety risk. Sibling of the C# library
+[Lzma.Net](https://github.com/zcsizmadia/Lzma.Net).
 
 [![CI](https://github.com/zcsizmadia/xz-native/actions/workflows/ci.yml/badge.svg)](https://github.com/zcsizmadia/xz-native/actions/workflows/ci.yml)
 [![Fuzz](https://github.com/zcsizmadia/xz-native/actions/workflows/fuzz.yml/badge.svg)](https://github.com/zcsizmadia/xz-native/actions/workflows/fuzz.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/zcsizmadia/xz-native/badge)](https://scorecard.dev/viewer/?uri=github.com/zcsizmadia/xz-native)
 
-- **Pure Rust:** no C code and no C toolchain. `no_std` + `alloc` capable.
-- **Fast:** performance is the main goal. CPU features are detected at run
-  time: CRC32/CRC64 with PCLMULQDQ (x86-64) or PMULL/CRC32 (AArch64),
-  SHA-256 with SHA-NI or ARMv8 SHA2, with portable fallbacks.
-- **Compatible:** follows liblzma 5.8.4 behavior, including its strictness
-  on corrupt input. Tested against the xz test files, the `xz` CLI and C
-  liblzma (differential tests and CI fuzzing).
-
-> **Status:** early development. Decoding of `.xz`, `.lzma` and `.lz` works
-> and is heavily tested; the encoder is next. See the
+> **Status:** early development, not yet 1.0. Decoding of `.xz`, `.lzma` and
+> `.lz` works and is heavily tested; compression is being ported. See the
 > [roadmap](docs/PROPOSAL.md#milestones) and the
 > [issues](https://github.com/zcsizmadia/xz-native/issues).
+
+## Why xz-native
+
+- **A supply chain you can audit.** The 2024 xz backdoor was hidden in C
+  build scripts and binary test files. xz-native has no C code, no build
+  scripts, no autotools and no binary test blobs in the library: one
+  dependency-free crate, 0BSD, with OpenSSF Scorecard, cargo-deny and
+  SHA-pinned CI.
+- **Memory safety on untrusted input.** Decompressors parse hostile data.
+  `unsafe` is limited to a few SIMD and assembly modules, each with a safe
+  fallback. Every push is fuzzed, and the results are compared with C
+  liblzma on millions of mutated files.
+- **As fast as liblzma, often faster** (decoding, details in
+  [#23](https://github.com/zcsizmadia/xz-native/issues/23)):
+
+  | | xz-native compared with C liblzma 5.8.4 |
+  |---|---|
+  | Single thread, Linux (liblzma built with GCC and its assembly) | 96-103% |
+  | Single thread, Windows (MSVC build, as `xz2`/`liblzma` give Rust users there) | 1.3-1.4x faster |
+  | Multithreaded | 1.3-2x faster |
+  | Incompressible data | 4-11x faster |
+  | CRC32 / CRC64 (SIMD detected at run time) | 10-25x faster |
+
+  About 1.5x faster than [lzma-rust2](https://crates.io/crates/lzma-rust2),
+  the fastest pure-Rust alternative.
+- **Drop-in compatible.** Matches liblzma 5.8.4's behavior, including which
+  corrupt files it rejects and with which error. It's checked against xz's own
+  test files, the `xz` CLI and differential tests with C liblzma. The encoder
+  target is byte-identical output.
+- **Builds anywhere.** `cargo add` and done: no C compiler, simple
+  cross-compilation, wasm, `no_std` + `alloc`, and no performance penalty
+  with MSVC.
+- **A Rust API.** One-shot functions, `std::io` readers, a push-style decoder
+  without `std`, a seekable reader, multithreaded decoding, and `.lzma` and
+  `.lz` support.
 
 ## Usage
 
