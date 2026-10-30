@@ -467,3 +467,72 @@ mod seekable {
         read_all_and_seek(&v, &data);
     }
 }
+
+/// Corruptions of a multi-Block file give the same result with threads as
+/// without, for one-shot decoding and for `XzReader`.
+#[test]
+fn threaded_errors_match_single_threaded() {
+    use std::io::Read;
+    let data = code_like(300_000);
+    let Some(packed) = xz(&["-zc", "-T4", "-1", "--block-size=40000"], &data) else {
+        return;
+    };
+    let single = |v: &[u8]| decompress(v);
+    let threaded = |v: &[u8]| {
+        decompress_with_options(
+            v,
+            DecoderOptions {
+                threads: 4,
+                ..Default::default()
+            },
+        )
+    };
+    let reader = |v: &[u8], threads| {
+        let opts = DecoderOptions {
+            threads,
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        let r = xz_native::XzReader::with_options(std::io::BufReader::with_capacity(4096, v), opts)
+            .read_to_end(&mut out);
+        r.map(|_| out)
+            .map_err(|e| *e.get_ref().unwrap().downcast_ref::<Error>().unwrap())
+    };
+    let mut x = 0x1234_5678_9ABC_DEF1u64;
+    for i in 0..400 {
+        let mut v = packed.clone();
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        match i % 4 {
+            0 => {
+                let p = (x as usize) % v.len();
+                v[p] ^= 1 << ((x >> 40) % 8);
+            }
+            1 => {
+                // Damage near the end: Index, Footer, last Blocks.
+                let p = v.len() - 1 - (x as usize) % 200.min(v.len());
+                v[p] = (x >> 32) as u8;
+            }
+            2 => v.truncate((x as usize) % v.len()),
+            _ => {
+                let p = 12 + (x as usize) % 64;
+                v[p] ^= 0x80;
+            }
+        }
+        let a = single(&v);
+        assert_eq!(threaded(&v), a, "case {i}");
+        let r1 = reader(&v, 1);
+        let r4 = reader(&v, 4);
+        match (&r1, &r4) {
+            (Ok(x), Ok(y)) => assert_eq!(x, y, "case {i}"),
+            (Err(x), Err(y)) => assert_eq!(x, y, "case {i}"),
+            _ => panic!(
+                "case {i}: XzReader single {:?} vs threaded {:?}",
+                r1.is_ok(),
+                r4.is_ok()
+            ),
+        }
+        assert_eq!(a.is_ok(), r1.is_ok(), "case {i}: one-shot vs reader");
+    }
+}
