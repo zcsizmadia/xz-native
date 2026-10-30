@@ -473,3 +473,26 @@ fn io_errors_can_be_retried() {
         assert!(errors > 0);
     }
 }
+
+/// More threads than liblzma's LZMA_THREADS_MAX is an options error, as in
+/// lzma_stream_decoder_mt.
+#[test]
+fn too_many_threads() {
+    let packed = xz_native::compress(b"thread limit", 1).unwrap();
+    let opts = xz_native::DecoderOptions::default().threads(16385);
+    assert_eq!(
+        xz_native::decompress_with_options(&packed, opts).err(),
+        Some(xz_native::Error::Options)
+    );
+    let mut out = Vec::new();
+    let e = xz_native::XzReader::with_options(&packed[..], opts)
+        .read_to_end(&mut out)
+        .unwrap_err();
+    assert_eq!(e.kind(), std::io::ErrorKind::Unsupported);
+    // The limit itself is fine.
+    let opts = xz_native::DecoderOptions::default().threads(16384);
+    assert_eq!(
+        xz_native::decompress_with_options(&packed, opts).unwrap(),
+        b"thread limit"
+    );
+}

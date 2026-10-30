@@ -28,7 +28,9 @@ pub enum Error {
     InvalidOptions,
     /// The API was used in a way it doesn't support, for example an
     /// [`Action`](crate::Action) the encoder doesn't accept
-    /// (`LZMA_PROG_ERROR`).
+    /// (`LZMA_PROG_ERROR`). Also returned by the threaded reader and
+    /// encoder after a worker thread panicked (a bug) and the panic was
+    /// caught.
     Usage,
 }
 

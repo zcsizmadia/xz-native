@@ -56,7 +56,10 @@ fn read_with<D: PushDecoder, R: BufRead>(
 /// they can be retried. At most `2 * threads` Blocks are buffered,
 /// using at most `memlimit` (capped at 2 GiB, 512 MiB on 32-bit platforms)
 /// for their compressed and decompressed data; other Blocks are decoded on
-/// the calling thread. Dropping the reader stops and joins the threads.
+/// the calling thread. Dropping the reader stops and joins the threads:
+/// Blocks not started yet are skipped, but the ones being decoded are
+/// finished first, so it can take as long as decoding a Block. If the OS
+/// refuses to start more threads, the ones already running do the work.
 #[derive(Debug)]
 pub struct XzReader<R> {
     inner: R,
@@ -94,7 +97,9 @@ impl<R: BufRead> XzReader<R> {
 
     /// Memory the decoder needs for the current Block; after an
     /// [`Error::MemLimit`](crate::Error::MemLimit) error, the amount that
-    /// would have been needed (see [`XzDecoder::memusage`]).
+    /// would have been needed (see [`XzDecoder::memusage`]). With threads,
+    /// it is for the last Block read ahead, which can be later than the
+    /// data returned so far.
     pub fn memusage(&self) -> u64 {
         match &self.dec {
             Engine::Single(dec) => dec.memusage(),

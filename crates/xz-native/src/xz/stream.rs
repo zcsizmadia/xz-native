@@ -47,8 +47,9 @@ pub struct DecoderOptions {
     /// Threads for decoding multi-Block .xz data with
     /// [`crate::decompress_with_options`] and `XzReader` (default: 1; 0 =
     /// one per CPU). Blocks are decoded in parallel; results and errors are
-    /// identical to single-threaded decoding. [`XzDecoder`] ignores it, and
-    /// so does everything without the `std` feature.
+    /// identical to single-threaded decoding. More than 16384
+    /// (`LZMA_THREADS_MAX`) is [`Error::Options`]. [`XzDecoder`] ignores it,
+    /// and so does everything without the `std` feature.
     pub threads: usize,
 }
 
