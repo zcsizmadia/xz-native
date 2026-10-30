@@ -64,9 +64,9 @@ impl LzmaDecoderAlone {
             if mem > self.memlimit {
                 return Err(Error::MemLimit);
             }
-            let mut dec = LzmaDecoder::new(props);
-            dec.set_uncompressed((size != u64::MAX).then_some(size), true);
             let known = (size != u64::MAX).then_some(size);
+            let mut dec = LzmaDecoder::new(props);
+            dec.set_uncompressed(known, true);
             self.lz = Some(LzDriver::new(
                 dec,
                 crate::filter::cap_dict(dict_size, known),
