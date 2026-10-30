@@ -194,10 +194,30 @@ pub struct EncoderOptions {
     /// Filters applied before LZMA2, in order (at most three: Delta and
     /// BCJ filters; [`Filter::Lzma2`] is not allowed here).
     pub filters: Vec<Filter>,
-    /// Start a new Block after this many uncompressed bytes (0 = one Block
-    /// per stream unless flushed), like `xz --block-size` in
-    /// single-threaded mode.
+    /// Uncompressed size of each Block.
+    ///
+    /// Single-threaded (`threads == 1`): start a new Block after this many
+    /// bytes (0 = one Block per stream unless flushed), like
+    /// `xz -T1 --block-size`. Block Headers store no sizes, as in liblzma's
+    /// `lzma_stream_encoder()`.
+    ///
+    /// Multithreaded (`threads != 1`): the Block size of liblzma's
+    /// `lzma_stream_encoder_mt()` and `xz -T`; 0 picks its default, three
+    /// times the dictionary size but at least 1 MiB. Every Block starts
+    /// with an empty dictionary, Block Headers store both sizes, and a Block
+    /// that doesn't fit in its output bound is stored uncompressed. The
+    /// output is byte-identical to liblzma's multithreaded encoder for any
+    /// thread count, and differs from single-threaded output even for one
+    /// Block.
     pub block_size: u64,
+    /// Worker threads (default 1; 0 = one per CPU). Anything other than 1
+    /// selects the multithreaded encoder, even if that ends up with one
+    /// thread (like `xz -T0`), so the output doesn't depend on the machine.
+    /// Ignored without the `std` feature.
+    ///
+    /// Memory: up to `threads` LZMA2 encoders, `threads` Blocks of input and
+    /// `2 * threads` Blocks of output, like liblzma.
+    pub threads: usize,
 }
 
 impl Default for EncoderOptions {
@@ -207,6 +227,7 @@ impl Default for EncoderOptions {
             check: Check::Crc64,
             filters: Vec::new(),
             block_size: 0,
+            threads: 1,
         }
     }
 }

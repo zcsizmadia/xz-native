@@ -1,7 +1,9 @@
 //! Streaming .xz encoder (liblzma `stream_encoder.c`, `block_encoder.c`,
 //! `block_header_encoder.c`, `index_encoder.c` and
 //! `stream_flags_encoder.c`), single-threaded: Block Headers store no
-//! sizes, as liblzma's `lzma_stream_encoder()` writes them.
+//! sizes, as liblzma's `lzma_stream_encoder()` writes them. With
+//! [`EncoderOptions::threads`] other than 1, [`XzEncoder`] hands the work to
+//! the multithreaded encoder (`mt_encoder.rs`).
 
 use super::format::HEADER_MAGIC;
 use crate::check::{Check, CheckState, crc32};
@@ -26,6 +28,12 @@ pub enum Action {
     /// Finish the current Block (`LZMA_FULL_FLUSH`); the next input starts
     /// a new Block. [`Status::StreamEnd`] means the flush is complete.
     FullFlush,
+    /// End the current Block like [`Action::FullFlush`], without waiting for
+    /// its output (`LZMA_FULL_BARRIER`). With threads, [`Status::StreamEnd`]
+    /// means the input was taken and the next input starts a new Block; the
+    /// Blocks before it may still be encoding. Single-threaded, it is
+    /// [`Action::FullFlush`].
+    FullBarrier,
     /// Finish the stream after this input. [`Status::StreamEnd`] means the
     /// stream is complete.
     Finish,
@@ -61,26 +69,72 @@ fn write_filter_flags(out: &mut Vec<u8>, f: &Filter, dict_byte: u8) {
     out.extend_from_slice(props);
 }
 
-/// Encodes a Block Header without sizes (`lzma_block_header_encode()`).
-pub(crate) fn encode_block_header(opts: &EncoderOptions) -> Vec<u8> {
-    let mut h = Vec::with_capacity(32);
-    h.extend_from_slice(&[0, opts.filters.len() as u8]);
+/// Number of bytes of a VLI (`lzma_vli_size()`).
+pub(crate) fn vli_len(v: u64) -> usize {
+    (64 - (v | 1).leading_zeros() as usize).div_ceil(7)
+}
+
+/// The Filter Flags of the whole chain: the filters, then LZMA2.
+pub(crate) fn filter_flags(opts: &EncoderOptions) -> Vec<u8> {
+    let mut flags = Vec::with_capacity(32);
     let dict_byte = opts.lzma.lzma2_dict_byte();
     for f in &opts.filters {
-        write_filter_flags(&mut h, f, dict_byte);
+        write_filter_flags(&mut flags, f, dict_byte);
     }
     write_filter_flags(
-        &mut h,
+        &mut flags,
         &Filter::Lzma2 {
             dict_size: opts.lzma.dict_size,
         },
         dict_byte,
     );
-    let size = (h.len() + 4 + 3) & !3;
-    h.resize(size - 4, 0);
-    h[0] = ((size - 4) / 4) as u8;
-    let crc = crc32(&h, 0);
-    h.extend_from_slice(&crc.to_le_bytes());
+    flags
+}
+
+/// Size of a Block Header with `flags_len` bytes of Filter Flags and, if
+/// given, Compressed Size and Uncompressed Size fields holding these values
+/// (`lzma_block_header_size()`).
+pub(crate) fn block_header_size(flags_len: usize, sizes: Option<(u64, u64)>) -> usize {
+    let sizes_len = sizes.map_or(0, |(c, u)| vli_len(c) + vli_len(u));
+    (1 + 1 + sizes_len + flags_len + 4 + 3) & !3
+}
+
+/// Writes a Block Header for `filter_count` filters into all of `out`, whose
+/// length is the header size; what the fields leave free is Header Padding
+/// (`lzma_block_header_encode()`).
+pub(crate) fn write_block_header(
+    out: &mut [u8],
+    filter_count: usize,
+    flags: &[u8],
+    sizes: Option<(u64, u64)>,
+) {
+    let end = out.len() - 4;
+    out[0] = (end / 4) as u8;
+    out[1] = (filter_count - 1) as u8;
+    let mut pos = 2;
+    if let Some((compressed, uncompressed)) = sizes {
+        out[1] |= 0x40 | 0x80;
+        for mut v in [compressed, uncompressed] {
+            while v >= 0x80 {
+                out[pos] = v as u8 | 0x80;
+                pos += 1;
+                v >>= 7;
+            }
+            out[pos] = v as u8;
+            pos += 1;
+        }
+    }
+    out[pos..pos + flags.len()].copy_from_slice(flags);
+    out[pos + flags.len()..end].fill(0);
+    let crc = crc32(&out[..end], 0);
+    out[end..].copy_from_slice(&crc.to_le_bytes());
+}
+
+/// Encodes a Block Header without sizes (`lzma_block_header_encode()`).
+pub(crate) fn encode_block_header(opts: &EncoderOptions) -> Vec<u8> {
+    let flags = filter_flags(opts);
+    let mut h = alloc::vec![0; block_header_size(flags.len(), None)];
+    write_block_header(&mut h, opts.filters.len() + 1, &flags, None);
     h
 }
 
@@ -142,8 +196,66 @@ enum Seq {
 /// output depends on the options and on how the input is split between
 /// calls (the window fills differently); passing all input in one call
 /// gives the same bytes as liblzma does for the same options.
+///
+/// With [`EncoderOptions::threads`] other than 1 (and the `std` feature),
+/// Blocks are encoded in parallel like liblzma's `lzma_stream_encoder_mt()`:
+/// the output is the same as liblzma's multithreaded encoder for any number
+/// of threads and any input split; only the options and the flushes
+/// decide it. [`Action::SyncFlush`] isn't supported then, and calls may
+/// wait for worker threads. See [`EncoderOptions::block_size`].
 #[derive(Debug)]
 pub struct XzEncoder {
+    inner: Inner,
+}
+
+#[derive(Debug)]
+enum Inner {
+    Single(Box<SingleEncoder>),
+    #[cfg(feature = "std")]
+    Multi(Box<super::mt_encoder::MtEncoder>),
+}
+
+impl XzEncoder {
+    /// Creates an encoder for a preset (0-9, optionally ORed with
+    /// [`crate::PRESET_EXTREME`]) with a CRC64 check, like `xz -0`...`-9e`.
+    pub fn new(preset: u32) -> Result<Self> {
+        Self::with_options(EncoderOptions::preset(preset)?)
+    }
+
+    /// Creates an encoder with options.
+    pub fn with_options(opts: EncoderOptions) -> Result<Self> {
+        #[cfg(feature = "std")]
+        if opts.threads != 1 {
+            let mt = super::mt_encoder::MtEncoder::new(opts)?;
+            return Ok(Self {
+                inner: Inner::Multi(Box::new(mt)),
+            });
+        }
+        Ok(Self {
+            inner: Inner::Single(Box::new(SingleEncoder::new(opts)?)),
+        })
+    }
+
+    /// Encodes from `input` into `output`. Returns `(input used, output
+    /// written, status)`; [`Status::StreamEnd`] means that the stream is
+    /// complete ([`Action::Finish`]) or the flush is done.
+    pub fn encode(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+        action: Action,
+    ) -> Result<(usize, usize, Status)> {
+        match &mut self.inner {
+            Inner::Single(e) => e.encode(input, output, action),
+            #[cfg(feature = "std")]
+            Inner::Multi(e) => e.encode(input, output, action),
+        }
+    }
+}
+
+/// The single-threaded encoder.
+#[derive(Debug)]
+struct SingleEncoder {
     opts: EncoderOptions,
     seq: Seq,
     /// Pending header, trailer, Index or footer bytes.
@@ -160,15 +272,8 @@ pub struct XzEncoder {
     records: Vec<(u64, u64)>,
 }
 
-impl XzEncoder {
-    /// Creates an encoder for a preset (0-9, optionally ORed with
-    /// [`crate::PRESET_EXTREME`]) with a CRC64 check, like `xz -0`...`-9e`.
-    pub fn new(preset: u32) -> Result<Self> {
-        Self::with_options(EncoderOptions::preset(preset)?)
-    }
-
-    /// Creates an encoder with options.
-    pub fn with_options(opts: EncoderOptions) -> Result<Self> {
+impl SingleEncoder {
+    fn new(opts: EncoderOptions) -> Result<Self> {
         opts.validate()?;
         let lz = Box::new(Lzma2Encoder::new_lz(&opts.lzma, &opts.filters)?);
         let mut buf = Vec::with_capacity(64);
@@ -204,15 +309,18 @@ impl XzEncoder {
         }
     }
 
-    /// Encodes from `input` into `output`. Returns `(input used, output
-    /// written, status)`; [`Status::StreamEnd`] means that the stream is
-    /// complete ([`Action::Finish`]) or the flush is done.
-    pub fn encode(
+    fn encode(
         &mut self,
         input: &[u8],
         output: &mut [u8],
         action: Action,
     ) -> Result<(usize, usize, Status)> {
+        // liblzma's single-threaded encoder takes a full barrier as a full
+        // flush.
+        let action = match action {
+            Action::FullBarrier => Action::FullFlush,
+            a => a,
+        };
         let mut ip = 0;
         let mut op = 0;
         while op < output.len() {
@@ -276,7 +384,9 @@ impl XzEncoder {
                         match action {
                             Action::Run => MfAction::Run,
                             Action::SyncFlush => MfAction::SyncFlush,
-                            Action::FullFlush | Action::Finish => MfAction::Finish,
+                            Action::FullFlush | Action::FullBarrier | Action::Finish => {
+                                MfAction::Finish
+                            }
                         }
                     };
                     let slice = &input[ip..ip + slice_len];

@@ -99,6 +99,19 @@ let data = xz_native::decompress_with_options(&compressed, opts)?;
 let reader = xz_native::XzReader::with_options(BufReader::new(file), opts);
 ```
 
+Compression runs in parallel with `EncoderOptions::threads` other than 1,
+one-shot and through `XzWriter`/`XzEncoder`, like `xz -T`: the input is cut
+into Blocks (`block_size`, by default three times the dictionary size and
+at least 1 MiB) that are compressed independently. The output is
+byte-identical to liblzma's multithreaded encoder (and `xz -T2` and up)
+whatever the thread count and write sizes:
+
+```rust
+let opts = xz_native::EncoderOptions { threads: 0, ..xz_native::EncoderOptions::preset(6)? };
+let compressed = xz_native::compress_with_options(&data, &opts)?;
+let writer = xz_native::XzWriter::with_options(std::fs::File::create("out.xz")?, opts)?;
+```
+
 Random access to multi-Block files (`xz -T` or `xz --block-size`), decoding
 only the Block that holds the position:
 
@@ -142,10 +155,10 @@ equivalent; use `DecoderOptions` and `EncoderOptions` instead.
 | Raw LZMA1 / LZMA2 | internal | internal |
 | `.lz` (lzip, versions 0 and 1, concatenated members, trailing data) | yes | - |
 | Presets 0-9 and extreme, all LZMA2 options (lc/lp/pb, dict size, fast/normal mode, nice_len, hc3/hc4/bt2/bt3/bt4, depth) | - | yes |
-| Block splitting (`block_size`, sync and full flushes) | - | yes |
+| Block splitting (`block_size`, sync and full flushes, full barriers) | - | yes |
 | Filters: x86, ARM, ARM-Thumb, ARM64, PowerPC, IA-64, SPARC, RISC-V, Delta | yes | yes |
 | Checks: None, CRC32, CRC64, SHA-256 | yes | yes |
-| Multithreading (one-shot and `XzReader`, `DecoderOptions::threads`) | yes | planned |
+| Multithreading (one-shot and streaming, `threads` options) | yes | yes (byte-identical to liblzma's multithreaded encoder) |
 
 ## How it's tested
 

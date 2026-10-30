@@ -45,7 +45,8 @@ apply.
   all LZMA options, byte-identical output with xz 5.8.4.
 - **Decoder:** memory limit, concatenated streams, strictness equal to
   liblzma.
-- **Multithreading:** block-parallel encoding and decoding.
+- **Multithreading:** block-parallel encoding (byte-identical to liblzma's
+  multithreaded encoder) and decoding.
 
 ## Layout
 
@@ -57,7 +58,7 @@ crates/xz-native/   the library (no_std + alloc; `std` feature for io)
                     fast/normal, LZMA2 chunking
   src/filter/       BCJ filters, Delta, decoder and encoder filter chains
   src/xz/           .xz headers, blocks, index, stream decoder and encoder,
-                    one-shot and multithreaded decoding
+                    one-shot and multithreaded decoding and encoding
   src/options.rs    encoder options and presets 0-9/extreme
   src/alone.rs      .lzma
   src/lzip.rs       .lz (lzip)
@@ -113,6 +114,31 @@ third_party/xz/     xz 5.8.4 source (reference only)
   between calls (the window fills differently); one-shot encoding equals
   liblzma given all input at once, and feeding it like `xz` does gives
   `xz -T1` output.
+- **Multithreaded encoding** (`EncoderOptions::threads` other than 1, std
+  only; `xz/mt_encoder.rs`, like liblzma's `stream_encoder_mt.c`). The
+  input is cut into Blocks of `block_size` (default `lzma_mt_block_size()`:
+  3 x dictionary, at least 1 MiB); a full flush or barrier also ends a
+  Block, and empty Blocks are never written. Each Block is encoded from a
+  fresh LZMA2 state by a worker that keeps its encoder between Blocks. As
+  in liblzma, the Block Header is sized for the largest values (the output
+  bound of a full Block and `block_size`) and holds the real ones plus
+  Header Padding, and a Block that doesn't fit in that bound (random data in
+  Blocks over about 18 MiB) is stored as LZMA2 uncompressed chunks under an
+  LZMA2-only header. Splitting a Block's input between `Run` calls doesn't
+  change the LZMA2 output, so the result depends only on the options and
+  the flushes: byte-identical to liblzma's multithreaded encoder for any
+  thread count and write sizes. `threads: 0` uses the multithreaded format
+  even with one CPU (like `xz -T0`). One-shot: workers claim Blocks in
+  order, encode them into reused buffers (grown on demand up to the bound)
+  and append them to one output vector in order, at most `2 * threads`
+  Blocks ahead. Streaming (`XzEncoder`, `XzWriter`): the caller's thread
+  copies input into Blocks and hands full ones to workers; at most
+  `threads` Blocks are being filled or encoded and at most `2 * threads`
+  wait for output, so memory is about `threads` Blocks of input,
+  `2 * threads` of output and `threads` encoders (liblzma's bounds).
+  Calls block only when no worker or queue slot is free. Workers check a
+  stop flag every 64 KiB of input, so dropping the encoder joins them
+  promptly; errors and panics in workers reach the caller.
 - **`unsafe`:** denied workspace-wide, except the SIMD modules (intrinsics,
   unaligned loads), the x86-64 range-decoder assembly ported from liblzma
   (`lzma/x86_asm.rs`, `core::arch::asm!`, baseline x86-64 only), a few
@@ -128,7 +154,9 @@ crate) and C liblzma 5.8.4 on text, binary and incompressible data:
 decoding at presets 1 and 6, single-threaded encoding at presets 0, 1, 6,
 9 and 9e (`benches/encode.rs`, the first 4 MiB of each dataset), plus
 CRC32/CRC64/SHA-256 throughput. `examples/profile_encode.rs` and
-`profile_decode.rs` loop one case for profiling and quick A/B runs. Set `XZ_BENCH_FILE`
+`profile_decode.rs` loop one case for profiling and quick A/B runs;
+`profile_encode` also takes a thread count (xz-native multithreaded vs
+liblzma's `lzma_stream_encoder_mt`) and an input size. Set `XZ_BENCH_FILE`
 to add a real file (for example a Silesia tarball). The Benchmarks workflow
 runs weekly and on demand on all CI platforms.
 
@@ -153,7 +181,13 @@ runs weekly and on demand on all CI platforms.
   4 KiB to 64 MiB, all BCJ filters and Delta (and chains), block_size,
   sync/full flushes, LZMA2 chunk-size boundaries, incompressible data,
   .lzma, and random option combinations; an ignored test covers positions
-  wrapping at 4 GiB. `encode_roundtrip` fuzzes the same.
+  wrapping at 4 GiB. `encode_roundtrip` fuzzes the same. Multithreaded
+  output is compared with liblzma's multithreaded encoder (whose output
+  must not depend on its thread count either) at 1-20 threads, one-shot and
+  streaming with random input pieces, full flushes and barriers, across
+  presets, Block sizes from 1 byte to past the LZMA2 chunk limits, checks,
+  filter chains, stored (incompressible) Blocks and random options; the
+  xz-native tests compare it with `xz -T` and check `xz --list`.
 
 ## Milestones
 
@@ -163,7 +197,7 @@ runs weekly and on demand on all CI platforms.
 | M2 | Range encoder, match finders, presets 0-9/extreme, byte-identical `.xz` output | done |
 | M3 | Seekable reader, lzip decoding, raw LZMA1/LZMA2 API, filter encoders | seekable, lzip, filter encoders done |
 | M4 | Decoder and check tuning (decode into the caller's buffer, VPCLMULQDQ CRC, branchless bits, x86-64 asm) | done; incompressible one-shot on Windows (#34) open |
-| M5 | Multithreaded encode/decode, async adapters, CLI, 1.0 (`5.8.400`) | multithreaded decode done |
+| M5 | Multithreaded encode/decode, async adapters, CLI, 1.0 (`5.8.400`) | multithreaded encode and decode done |
 
 ## Decisions
 

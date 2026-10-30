@@ -328,3 +328,203 @@ fn encode_like_xz(data: &[u8], o: &EncoderOptions, io: usize) -> Vec<u8> {
         }
     }
 }
+
+fn threaded(preset: u32, threads: usize, block_size: u64) -> EncoderOptions {
+    EncoderOptions {
+        threads,
+        block_size,
+        ..EncoderOptions::preset(preset).unwrap()
+    }
+}
+
+/// Multithreaded output depends only on the options and the flushes: every
+/// thread count, and any write sizes through `XzWriter` or `XzEncoder`, give
+/// the one-shot bytes.
+#[test]
+fn threaded_output_ignores_threads_and_write_sizes() {
+    let data: Vec<u8> = (0..1_500_000u32)
+        .map(|i| (i % 251) as u8 ^ (i >> 11) as u8 ^ (i.wrapping_mul(2_654_435_761) >> 29) as u8)
+        .collect();
+    let want = compress_with_options(&data, &threaded(1, 2, 100_000)).unwrap();
+    assert!(decompress(&want).unwrap() == data);
+    assert_ne!(
+        want,
+        compress_with_options(&data, &threaded(1, 1, 100_000)).unwrap()
+    );
+    for threads in [0, 3, 8, 64] {
+        let c = compress_with_options(&data, &threaded(1, threads, 100_000)).unwrap();
+        assert!(c == want, "{threads} threads");
+    }
+    for (seed, threads) in [(1, 2), (2, 4), (3, 0)] {
+        let c = encode_streaming(&data, &threaded(1, threads, 100_000), seed);
+        assert!(c == want, "streaming, {threads} threads");
+    }
+    let mut r = Rng(5);
+    for threads in [2, 5] {
+        let mut w = XzWriter::with_options(Vec::new(), threaded(1, threads, 100_000)).unwrap();
+        let mut pos = 0;
+        while pos < data.len() {
+            let n = [1, 3, 777, 4096, 99_999, 300_001][r.below(6) as usize].min(data.len() - pos);
+            w.write_all(&data[pos..pos + n]).unwrap();
+            pos += n;
+            if r.below(10) == 0 {
+                // Writes out what is done; doesn't end the Block.
+                w.flush().unwrap();
+            }
+        }
+        let c = w.finish().unwrap();
+        assert!(c == want, "XzWriter, {threads} threads");
+    }
+}
+
+#[test]
+fn threaded_flushes() {
+    let data: Vec<u8> = (0..400_000u64).map(|i| (i * i % 251) as u8).collect();
+    let opts = threaded(1, 4, 0);
+    let mut enc = XzEncoder::with_options(opts.clone()).unwrap();
+    let mut buf = vec![0u8; 1 << 20];
+    // Not supported by liblzma's multithreaded encoder either.
+    assert!(enc.encode(b"abc", &mut buf, Action::SyncFlush).is_err());
+    let mut out = Vec::new();
+    for (k, part) in data.chunks(30_000).enumerate() {
+        let action = [Action::FullFlush, Action::FullBarrier, Action::Run][k % 3];
+        let mut ip = 0;
+        loop {
+            let (u, w, s) = enc.encode(&part[ip..], &mut buf, action).unwrap();
+            ip += u;
+            out.extend_from_slice(&buf[..w]);
+            if (action == Action::Run && ip == part.len()) || s == Status::StreamEnd {
+                break;
+            }
+        }
+        // A full flush returns once all output is written.
+        if action == Action::FullFlush {
+            assert_eq!(
+                enc.encode(&[], &mut buf, Action::FullFlush).unwrap(),
+                (0, 0, Status::StreamEnd)
+            );
+        }
+    }
+    loop {
+        let (_, w, s) = enc.encode(&[], &mut buf, Action::Finish).unwrap();
+        out.extend_from_slice(&buf[..w]);
+        if s == Status::StreamEnd {
+            break;
+        }
+    }
+    assert!(decompress(&out).unwrap() == data);
+    // A Block ends at each flush or barrier: 14 parts make 10 Blocks.
+    let blocks = xz_native::XzSeekableReader::new(std::io::Cursor::new(&out))
+        .unwrap()
+        .block_count();
+    assert_eq!(blocks, 10);
+
+    // Single-threaded, a full barrier is a full flush.
+    let st = |action| {
+        let mut enc = XzEncoder::new(1).unwrap();
+        let mut out = vec![0u8; 1 << 20];
+        let (_, w1, _) = enc.encode(&data[..1000], &mut out, action).unwrap();
+        let (_, w2, _) = enc
+            .encode(&data[1000..2000], &mut out[w1..], Action::Finish)
+            .unwrap();
+        out.truncate(w1 + w2);
+        out
+    };
+    assert_eq!(st(Action::FullBarrier), st(Action::FullFlush));
+}
+
+/// Dropping a threaded encoder in the middle of slow Blocks stops the
+/// workers within one step of input and joins them. (`XzWriter` finishes
+/// the stream when dropped instead.)
+#[test]
+fn dropping_threaded_encoder_is_prompt() {
+    let mut opts = EncoderOptions::preset(9 | xz_native::PRESET_EXTREME).unwrap();
+    opts.lzma.dict_size = 1 << 20;
+    opts.threads = 3;
+    opts.block_size = 8 << 20;
+    let mut r = Rng(9);
+    let data: Vec<u8> = (0..24 << 20)
+        .map(|_| b"abcdefgh"[r.below(8) as usize])
+        .collect();
+    let mut enc = XzEncoder::with_options(opts).unwrap();
+    let mut buf = vec![0u8; 4096];
+    // Three Blocks that take seconds each at -9e.
+    let (used, _, _) = enc.encode(&data, &mut buf, Action::Run).unwrap();
+    assert_eq!(used, data.len());
+    let t = std::time::Instant::now();
+    drop(enc);
+    let elapsed = t.elapsed();
+    assert!(elapsed.as_secs_f64() < 2.0, "drop took {elapsed:?}");
+}
+
+/// `xz -T` (liblzma's multithreaded encoder) writes the same bytes as ours,
+/// decodes ours, and lists Blocks with both sizes in their headers.
+#[test]
+fn matches_xz_cli_multithreaded() {
+    let corpus = corpus();
+    let x86 = || {
+        vec![Filter::Bcj {
+            kind: BcjKind::X86,
+            start_offset: 0,
+        }]
+    };
+    let mut p9e = EncoderOptions::preset(9 | xz_native::PRESET_EXTREME).unwrap();
+    p9e.lzma.dict_size = 1 << 20;
+    let cases: Vec<(&[&str], EncoderOptions)> = vec![
+        (&["-T4", "-0"], threaded(0, 4, 0)),
+        (&["-T4", "-6"], threaded(6, 4, 0)),
+        (&["-T0", "-1"], threaded(1, 0, 0)),
+        (&["-T4", "-3", "--block-size=50000"], threaded(3, 4, 50_000)),
+        (
+            &["-T2", "--lzma2=preset=9e,dict=1MiB"],
+            EncoderOptions { threads: 2, ..p9e },
+        ),
+        (
+            &[
+                "-T4",
+                "--block-size=100000",
+                "--check=sha256",
+                "--x86",
+                "--lzma2=preset=1",
+            ],
+            EncoderOptions {
+                check: Check::Sha256,
+                filters: x86(),
+                ..threaded(1, 4, 100_000)
+            },
+        ),
+    ];
+    for (args, o) in &cases {
+        for (name, data) in &corpus {
+            let mut a = vec!["-z", "-c"];
+            a.extend_from_slice(args);
+            let Some(theirs) = xz(&a, data) else {
+                eprintln!("xz not available; skipping");
+                return;
+            };
+            let ours = compress_with_options(data, o).unwrap();
+            assert!(ours == theirs, "{args:?} {name}");
+            let out = xz(&["-d", "-c"], &ours).unwrap();
+            assert!(out == *data, "{args:?} {name}: xz -d");
+        }
+    }
+
+    // `xz --list`: every Block Header stores both sizes ("cu").
+    let data = &corpus.iter().find(|(n, _)| n == "text-2M").unwrap().1;
+    let c = compress_with_options(data, &threaded(1, 4, 300_000)).unwrap();
+    let path = std::env::temp_dir().join(format!("xz-native-mt-{}.xz", std::process::id()));
+    std::fs::write(&path, &c).unwrap();
+    let list = std::process::Command::new("xz")
+        .args(["--robot", "--list", "-vv"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(list.status.success());
+    let text = String::from_utf8(list.stdout).unwrap();
+    let blocks: Vec<&str> = text.lines().filter(|l| l.starts_with("block")).collect();
+    assert_eq!(blocks.len(), data.len().div_ceil(300_000));
+    for b in blocks {
+        assert_eq!(b.split('\t').nth(12), Some("cu"), "{b}");
+    }
+}
