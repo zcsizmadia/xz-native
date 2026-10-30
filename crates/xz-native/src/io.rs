@@ -36,8 +36,15 @@ fn read_with<D: PushDecoder, R: BufRead>(
 
 /// Decompressing reader for .xz data.
 ///
-/// Wrap unbuffered sources in [`std::io::BufReader`]. Input after the end of
-/// the data is left unread in the inner reader.
+/// Wrap unbuffered sources in [`std::io::BufReader`]. By default,
+/// concatenated Streams and Stream Padding are decoded and other data after
+/// them is an error, like `xz -d`. With
+/// [`DecoderOptions::concatenated`]`(false)`, decoding stops after the
+/// first Stream and the input after it is left unread in the inner reader.
+///
+/// After an error, every later read returns it again. A reader can't
+/// continue after [`Error::MemLimit`](crate::Error::MemLimit); for that, use
+/// [`XzDecoder`] and [`XzDecoder::set_memlimit`].
 ///
 /// With [`DecoderOptions::threads`] other than 1, Blocks whose headers store
 /// their sizes (as `xz -T` and liblzma's multithreaded encoder write them)
@@ -307,7 +314,8 @@ impl<E: PushEncoder> WriterCore<E> {
 ///
 /// Call [`finish`](Self::finish) to write the end of the stream and get the
 /// inner writer back; dropping the writer finishes the stream too but
-/// ignores errors. [`flush`](Write::flush) writes out the compressed data
+/// ignores errors (not when dropped by a panic, so that an interrupted
+/// stream stays detectably incomplete). [`flush`](Write::flush) writes out the compressed data
 /// produced so far without flushing the encoder (which would cost
 /// compression).
 #[derive(Debug)]
@@ -319,12 +327,12 @@ pub struct XzWriter<W: Write> {
 impl<W: Write> XzWriter<W> {
     /// Creates a writer for a preset (0-9, optionally ORed with
     /// [`crate::PRESET_EXTREME`]) with a CRC64 check.
-    pub fn new(inner: W, preset: u32) -> io::Result<Self> {
+    pub fn new(inner: W, preset: u32) -> crate::Result<Self> {
         Ok(Self::with_encoder(inner, XzEncoder::new(preset)?))
     }
 
     /// Creates a writer with options.
-    pub fn with_options(inner: W, opts: EncoderOptions) -> io::Result<Self> {
+    pub fn with_options(inner: W, opts: EncoderOptions) -> crate::Result<Self> {
         Ok(Self::with_encoder(inner, XzEncoder::with_options(opts)?))
     }
 
@@ -388,7 +396,11 @@ impl<W: Write> Write for XzWriter<W> {
 
 impl<W: Write> Drop for XzWriter<W> {
     fn drop(&mut self) {
-        if let Some(mut inner) = self.inner.take() {
+        // Not while unwinding: a panic in the middle of the data must leave
+        // a stream that is detectably incomplete.
+        if let Some(mut inner) = self.inner.take()
+            && !std::thread::panicking()
+        {
             let _ = self.core.finish(&mut inner);
         }
     }
@@ -403,12 +415,12 @@ pub struct LzmaWriter<W: Write> {
 
 impl<W: Write> LzmaWriter<W> {
     /// Creates a writer for a preset.
-    pub fn new(inner: W, preset: u32) -> io::Result<Self> {
+    pub fn new(inner: W, preset: u32) -> crate::Result<Self> {
         Ok(Self::with_encoder(inner, LzmaEncoder::new(preset)?))
     }
 
     /// Creates a writer with options.
-    pub fn with_options(inner: W, opts: LzmaOptions) -> io::Result<Self> {
+    pub fn with_options(inner: W, opts: LzmaOptions) -> crate::Result<Self> {
         Ok(Self::with_encoder(inner, LzmaEncoder::with_options(opts)?))
     }
 
@@ -472,7 +484,11 @@ impl<W: Write> Write for LzmaWriter<W> {
 
 impl<W: Write> Drop for LzmaWriter<W> {
     fn drop(&mut self) {
-        if let Some(mut inner) = self.inner.take() {
+        // Not while unwinding: a panic in the middle of the data must leave
+        // a stream that is detectably incomplete.
+        if let Some(mut inner) = self.inner.take()
+            && !std::thread::panicking()
+        {
             let _ = self.core.finish(&mut inner);
         }
     }
