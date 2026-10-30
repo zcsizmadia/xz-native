@@ -1,58 +1,16 @@
 //! `std::io` adapters.
 
 use crate::alone::{LzmaDecoder, LzmaEncoder};
-use crate::error::Result;
 use crate::lzip::LzipDecoder;
 use crate::options::{EncoderOptions, LzmaOptions};
+use crate::push::{PushDecoder, PushEncoder};
 use crate::xz::encoder::{Action, XzEncoder};
 use crate::xz::mt::{MtDecoder, thread_count};
 use crate::xz::stream::{DecoderOptions, Status, XzDecoder};
 use alloc::boxed::Box;
 use std::io::{self, BufRead, Read, Write};
 
-trait Decode {
-    fn decode(
-        &mut self,
-        input: &[u8],
-        output: &mut [u8],
-        finish: bool,
-    ) -> Result<(usize, usize, Status)>;
-}
-
-impl Decode for XzDecoder {
-    fn decode(
-        &mut self,
-        input: &[u8],
-        output: &mut [u8],
-        finish: bool,
-    ) -> Result<(usize, usize, Status)> {
-        XzDecoder::decode(self, input, output, finish)
-    }
-}
-
-impl Decode for LzmaDecoder {
-    fn decode(
-        &mut self,
-        input: &[u8],
-        output: &mut [u8],
-        finish: bool,
-    ) -> Result<(usize, usize, Status)> {
-        LzmaDecoder::decode(self, input, output, finish)
-    }
-}
-
-impl Decode for LzipDecoder {
-    fn decode(
-        &mut self,
-        input: &[u8],
-        output: &mut [u8],
-        finish: bool,
-    ) -> Result<(usize, usize, Status)> {
-        LzipDecoder::decode(self, input, output, finish)
-    }
-}
-
-fn read_with<D: Decode, R: BufRead>(
+fn read_with<D: PushDecoder, R: BufRead>(
     dec: &mut D,
     inner: &mut R,
     done: &mut bool,
@@ -275,39 +233,6 @@ impl<R: BufRead> Read for LzipReader<R> {
 }
 
 /// A push encoder driven by the writers.
-trait Encode {
-    fn encode(
-        &mut self,
-        input: &[u8],
-        output: &mut [u8],
-        finish: bool,
-    ) -> Result<(usize, usize, Status)>;
-}
-
-impl Encode for XzEncoder {
-    fn encode(
-        &mut self,
-        input: &[u8],
-        output: &mut [u8],
-        finish: bool,
-    ) -> Result<(usize, usize, Status)> {
-        let action = if finish { Action::Finish } else { Action::Run };
-        XzEncoder::encode(self, input, output, action)
-    }
-}
-
-impl Encode for LzmaEncoder {
-    fn encode(
-        &mut self,
-        input: &[u8],
-        output: &mut [u8],
-        finish: bool,
-    ) -> Result<(usize, usize, Status)> {
-        let action = if finish { Action::Finish } else { Action::Run };
-        LzmaEncoder::encode(self, input, output, action)
-    }
-}
-
 const WRITER_BUF_SIZE: usize = 1 << 16;
 
 /// The state shared by the compressing writers.
@@ -324,7 +249,7 @@ struct WriterCore<E> {
     total_out: u64,
 }
 
-impl<E: Encode> WriterCore<E> {
+impl<E: PushEncoder> WriterCore<E> {
     fn new(enc: E) -> Self {
         Self {
             enc,
@@ -357,7 +282,7 @@ impl<E: Encode> WriterCore<E> {
         }
         loop {
             self.dump(w)?;
-            let (used, written, _) = self.enc.encode(data, &mut self.buf, false)?;
+            let (used, written, _) = self.enc.encode(data, &mut self.buf, Action::Run)?;
             self.len = written;
             self.total_in += used as u64;
             if used > 0 || data.is_empty() {
@@ -369,7 +294,7 @@ impl<E: Encode> WriterCore<E> {
     fn finish<W: Write>(&mut self, w: &mut W) -> io::Result<()> {
         while !self.finished {
             self.dump(w)?;
-            let (_, written, status) = self.enc.encode(&[], &mut self.buf, true)?;
+            let (_, written, status) = self.enc.encode(&[], &mut self.buf, Action::Finish)?;
             self.len = written;
             self.finished = status == Status::StreamEnd;
         }

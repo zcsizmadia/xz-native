@@ -16,6 +16,10 @@ minor version may change the API.
   continues. The readers have `memusage()` for error messages (#57).
 - `Error::Usage` for unsupported uses of the API, liblzma's
   `LZMA_PROG_ERROR` (#57).
+- `PushDecoder` and `PushEncoder`: sealed traits implemented by every
+  push decoder (`XzDecoder`, `LzmaDecoder`, `LzipDecoder`, `RawDecoder`)
+  and encoder (`XzEncoder`, `LzmaEncoder`, `RawEncoder`), for code generic
+  over the format (#56).
 
 ### Changed
 - `Error::MemLimit` from a push decoder now comes from a call that consumed

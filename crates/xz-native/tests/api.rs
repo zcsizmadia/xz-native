@@ -3,9 +3,9 @@
 
 use std::io::{Read, Write};
 use xz_native::{
-    Action, Check, DecoderOptions, EncoderOptions, Error, LzmaDecoder, LzmaEncoder, LzmaOptions,
-    LzmaReader, LzmaWriter, MatchFinder, RawMethod, RawOptions, Status, XzDecoder, XzReader,
-    XzWriter,
+    Action, Check, DecoderOptions, EncoderOptions, Error, LzipDecoder, LzmaDecoder, LzmaEncoder,
+    LzmaOptions, LzmaReader, LzmaWriter, MatchFinder, PushDecoder, PushEncoder, RawDecoder,
+    RawEncoder, RawMethod, RawOptions, Status, XzDecoder, XzEncoder, XzReader, XzWriter,
 };
 
 #[test]
@@ -224,4 +224,61 @@ fn usage_error() {
     let e = std::io::Error::from(Error::Usage);
     assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput);
     assert_eq!(Error::Usage.to_string(), "unsupported use of the API");
+}
+
+/// Encodes with any push encoder, then decodes with any push decoder.
+fn roundtrip(enc: &mut impl PushEncoder, dec: &mut dyn PushDecoder, data: &[u8]) -> Vec<u8> {
+    let mut packed = Vec::new();
+    let mut buf = vec![0u8; 1 << 12];
+    let mut input = data;
+    loop {
+        let action = if input.is_empty() {
+            Action::Finish
+        } else {
+            Action::Run
+        };
+        let (used, written, status) = enc.encode(input, &mut buf, action).unwrap();
+        input = &input[used..];
+        packed.extend_from_slice(&buf[..written]);
+        if action == Action::Finish && status == Status::StreamEnd {
+            break;
+        }
+    }
+    let mut out = Vec::new();
+    let mut input = &packed[..];
+    loop {
+        let (used, written, status) = dec.decode(input, &mut buf, true).unwrap();
+        input = &input[used..];
+        out.extend_from_slice(&buf[..written]);
+        if status == Status::StreamEnd {
+            return out;
+        }
+    }
+}
+
+#[test]
+fn push_traits_are_generic_over_formats() {
+    let data: Vec<u8> = (0..50_000u32).map(|i| (i * 13 % 97) as u8).collect();
+    let xz = roundtrip(
+        &mut XzEncoder::new(1).unwrap(),
+        &mut XzDecoder::new(),
+        &data,
+    );
+    assert!(xz == data);
+    let lzma = roundtrip(
+        &mut LzmaEncoder::new(1).unwrap(),
+        &mut LzmaDecoder::new(),
+        &data,
+    );
+    assert!(lzma == data);
+    let raw = RawOptions::preset(RawMethod::Lzma2, 1).unwrap();
+    let out = roundtrip(
+        &mut RawEncoder::with_options(&raw).unwrap(),
+        &mut RawDecoder::with_options(&raw).unwrap(),
+        &data,
+    );
+    assert!(out == data);
+    // The lzip decoder is a PushDecoder too (there is no lzip encoder).
+    fn is_decoder<D: PushDecoder>() {}
+    is_decoder::<LzipDecoder>();
 }
