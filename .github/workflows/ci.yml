@@ -37,8 +37,9 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy -p xz-native --no-default-features -- -D warnings
       - run: cargo clippy -p xz-native --all-targets --features portable -- -D warnings
+      - run: cargo clippy -p xz-native --all-targets --features tokio,futures-io -- -D warnings
       - run: cargo clippy -p xz-native --all-targets --target aarch64-unknown-linux-gnu -- -D warnings
-      - run: cargo doc -p xz-native --no-deps
+      - run: cargo doc -p xz-native --no-deps --features tokio,futures-io
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -88,6 +89,10 @@ jobs:
         run: cargo test --workspace --profile ci
       - name: Test (portable fallbacks)
         run: cargo test -p xz-native --profile ci --features portable
+      - name: Test (async adapters)
+        run: |
+          cargo test -p xz-native --profile ci --features tokio,futures-io --test async_io
+          cargo test -p xz-native --profile ci --features tokio,futures-io --doc
       - name: Build benchmarks
         run: cargo bench -p xz-bench --no-run
 
@@ -120,6 +125,7 @@ jobs:
           toolchain: "1.89"
       - run: cargo check -p xz-native
       - run: cargo check -p xz-native --no-default-features
+      - run: cargo check -p xz-native --features tokio,futures-io
 
   miri:
     name: miri ${{ matrix.target }}

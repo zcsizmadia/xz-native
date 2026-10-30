@@ -11,6 +11,7 @@
 //! | One-shot | [`decompress`], [`decompress_into`] | [`compress`] | data in memory |
 //! | `std::io` | [`XzReader`], [`XzSeekableReader`] | [`XzWriter`] | files and streams |
 //! | Push | [`XzDecoder`] | [`XzEncoder`] | `no_std`, custom I/O, event loops |
+//! | Async | `tokio::XzReader`, `futures::XzReader` | `tokio::XzWriter`, `futures::XzWriter` | tokio, async-std, smol (features) |
 //! | Raw | [`RawDecoder`] | [`RawEncoder`] | LZMA1/LZMA2 without a container |
 //!
 //! `.lzma` uses [`decompress_lzma`], [`LzmaReader`], [`LzmaDecoder`],
@@ -76,6 +77,13 @@
 //!   feature detection. Without it the crate is `no_std` + `alloc`.
 //! - `portable`: disables all SIMD and assembly paths (CLMUL and ARMv8 CRC,
 //!   SHA extensions, the x86-64 range decoder), for testing the fallbacks.
+//! - `tokio`: async readers and writers for tokio in the `tokio` module.
+//! - `futures-io`: async readers and writers for the futures-io traits
+//!   (async-std, smol, `futures`) in the `futures` module.
+//!
+//! The async features add a dependency on `tokio` (only its I/O traits,
+//! with no default features) or `futures-io`; the default build has no
+//! dependencies.
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
@@ -85,12 +93,16 @@ extern crate alloc;
 extern crate std;
 
 mod alone;
+#[cfg(any(feature = "tokio", feature = "futures-io"))]
+mod async_core;
 mod check;
 #[cfg(feature = "std")]
 pub mod compat;
 mod cpu;
 mod error;
 mod filter;
+#[cfg(feature = "futures-io")]
+pub mod futures;
 #[cfg(feature = "std")]
 mod io;
 mod lzip;
@@ -101,6 +113,8 @@ mod push;
 mod raw;
 #[cfg(feature = "std")]
 mod seek;
+#[cfg(feature = "tokio")]
+pub mod tokio;
 mod xz;
 
 pub use alone::{LzmaDecoder, LzmaEncoder};
