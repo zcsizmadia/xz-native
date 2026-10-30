@@ -198,13 +198,19 @@ fn sync_flush() {
 fn unsupported_actions_and_options() {
     let lzma1 = RawOptions::preset(RawMethod::Lzma1, 0).unwrap();
     let mut e = RawEncoder::with_options(&lzma1).unwrap();
-    for a in [Action::SyncFlush, Action::FullFlush, Action::FullBarrier] {
-        assert_eq!(e.encode(b"x", &mut [0; 64], a), Err(Error::InvalidOptions));
+    // As in liblzma: LZMA1 can't sync-flush (LZMA_OPTIONS_ERROR), and the
+    // raw encoder doesn't take the full flushes (LZMA_PROG_ERROR).
+    assert_eq!(
+        e.encode(b"x", &mut [0; 64], Action::SyncFlush),
+        Err(Error::InvalidOptions)
+    );
+    for a in [Action::FullFlush, Action::FullBarrier] {
+        assert_eq!(e.encode(b"x", &mut [0; 64], a), Err(Error::Usage));
     }
     let mut e = RawEncoder::with_options(&RawOptions::default()).unwrap();
     assert_eq!(
         e.encode(b"x", &mut [0; 64], Action::FullFlush),
-        Err(Error::InvalidOptions)
+        Err(Error::Usage)
     );
 
     let mut bad = lzma1.clone();

@@ -293,11 +293,16 @@ pub(crate) struct BlockDecoder {
 }
 
 impl BlockDecoder {
+    /// Memory the filters of a Block need, the figure compared with the
+    /// memory limit.
+    pub(crate) fn mem_usage(h: &BlockHeader) -> u64 {
+        h.filters.iter().map(|f| f.decoder_mem_usage()).sum()
+    }
+
     /// Creates the decoder for a decoded Block Header, enforcing the memory
     /// limit.
     pub(crate) fn new(h: &BlockHeader, check: Check, opts: &DecoderOptions) -> Result<Self> {
-        let mem: u64 = h.filters.iter().map(|f| f.decoder_mem_usage()).sum();
-        if mem > opts.memlimit {
+        if Self::mem_usage(h) > opts.memlimit {
             return Err(Error::MemLimit);
         }
         Ok(Self {
@@ -459,6 +464,7 @@ pub struct XzDecoder {
     blocks: RecordHash,
     index: Option<IndexDecoder>,
     padding: u64,
+    memusage: u64,
 }
 
 impl Default for XzDecoder {
@@ -487,7 +493,29 @@ impl XzDecoder {
             blocks: RecordHash::default(),
             index: None,
             padding: 0,
+            memusage: 0,
         }
+    }
+
+    /// Memory the current Block needs: the figure compared with the memory
+    /// limit, so after [`Error::MemLimit`] the amount that would have been
+    /// needed. 0 before the first Block Header. Like `lzma_memusage`, without
+    /// liblzma's fixed overhead.
+    pub fn memusage(&self) -> u64 {
+        self.memusage
+    }
+
+    /// The memory limit ([`DecoderOptions::memlimit`]).
+    pub fn memlimit(&self) -> u64 {
+        self.opts.memlimit
+    }
+
+    /// Changes the memory limit (`lzma_memlimit_set`). It applies from the
+    /// next Block Header. After [`Error::MemLimit`], raise it and call
+    /// [`decode`](Self::decode) again with the same remaining input to
+    /// continue.
+    pub fn set_memlimit(&mut self, memlimit: u64) {
+        self.opts.memlimit = memlimit;
     }
 
     /// Check type of the current stream, once its header has been read.
@@ -560,7 +588,16 @@ impl XzDecoder {
                     }
                     let check = self.flags.unwrap().check;
                     let h = decode_block_header(&self.buf[..self.buf_need], check)?;
-                    self.block = Some(BlockDecoder::new(&h, check, &self.opts)?);
+                    self.memusage = BlockDecoder::mem_usage(&h);
+                    match BlockDecoder::new(&h, check, &self.opts) {
+                        // Return the progress first. The next call fails
+                        // without consuming anything (the header stays in
+                        // `buf`), so it can be retried with a higher limit.
+                        Err(Error::MemLimit) if ip > 0 || op > 0 => {
+                            return Ok((ip, op, Status::Ok));
+                        }
+                        r => self.block = Some(r?),
+                    }
                     self.seq = Seq::Block;
                 }
                 Seq::Block => {

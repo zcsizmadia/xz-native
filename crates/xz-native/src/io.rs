@@ -127,6 +127,16 @@ impl<R: BufRead> XzReader<R> {
         }
     }
 
+    /// Memory the decoder needs for the current Block; after an
+    /// [`Error::MemLimit`](crate::Error::MemLimit) error, the amount that
+    /// would have been needed (see [`XzDecoder::memusage`]).
+    pub fn memusage(&self) -> u64 {
+        match &self.dec {
+            Engine::Single(dec) => dec.memusage(),
+            Engine::Threads(dec) => dec.memusage(),
+        }
+    }
+
     /// Returns a reference to the inner reader.
     pub fn get_ref(&self) -> &R {
         &self.inner
@@ -177,6 +187,13 @@ impl<R: BufRead> LzmaReader<R> {
         }
     }
 
+    /// Memory the decoder needs for the current file; after an
+    /// [`Error::MemLimit`](crate::Error::MemLimit) error, the amount that
+    /// would have been needed (see [`LzmaDecoder::memusage`]).
+    pub fn memusage(&self) -> u64 {
+        self.dec.memusage()
+    }
+
     /// Returns a reference to the inner reader.
     pub fn get_ref(&self) -> &R {
         &self.inner
@@ -225,6 +242,13 @@ impl<R: BufRead> LzipReader<R> {
             dec: LzipDecoder::with_options(opts),
             done: false,
         }
+    }
+
+    /// Memory the decoder needs for the current member; after an
+    /// [`Error::MemLimit`](crate::Error::MemLimit) error, the amount that
+    /// would have been needed (see [`LzipDecoder::memusage`]).
+    pub fn memusage(&self) -> u64 {
+        self.dec.memusage()
     }
 
     /// Returns a reference to the inner reader.

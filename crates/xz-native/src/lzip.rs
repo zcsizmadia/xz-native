@@ -54,6 +54,7 @@ pub struct LzipDecoder {
     member_size: u64,
     footer: [u8; V1_FOOTER_SIZE],
     lz: Option<LzDriver<LzmaDecoder>>,
+    memusage: u64,
 }
 
 impl Default for LzipDecoder {
@@ -85,7 +86,29 @@ impl LzipDecoder {
             member_size: 0,
             footer: [0; V1_FOOTER_SIZE],
             lz: None,
+            memusage: 0,
         }
+    }
+
+    /// Memory the decoder needs for the current member: the figure
+    /// compared with the memory limit, so after [`Error::MemLimit`] the
+    /// amount that would have been needed. 0 before that. Like
+    /// `lzma_memusage`.
+    pub fn memusage(&self) -> u64 {
+        self.memusage
+    }
+
+    /// The memory limit ([`DecoderOptions::memlimit`]).
+    pub fn memlimit(&self) -> u64 {
+        self.opts.memlimit
+    }
+
+    /// Changes the memory limit (`lzma_memlimit_set`). It applies from the
+    /// next member. After [`Error::MemLimit`], raise it and call
+    /// [`decode`](Self::decode) again with the same remaining input to
+    /// continue.
+    pub fn set_memlimit(&mut self, memlimit: u64) {
+        self.opts.memlimit = memlimit;
     }
 
     /// Decodes from `input` into `output`; see [`crate::XzDecoder::decode`].
@@ -152,9 +175,15 @@ impl LzipDecoder {
                     self.seq = Seq::CoderInit;
                 }
                 Seq::CoderInit => {
-                    let mem = Dict::mem_usage(self.dict_size) + 32 * 1024;
-                    if mem > self.opts.memlimit.max(1) {
-                        return Err(Error::MemLimit);
+                    self.memusage = Dict::mem_usage(self.dict_size) + 32 * 1024;
+                    if self.memusage > self.opts.memlimit.max(1) {
+                        // Return the progress first; the retry consumes
+                        // nothing (the state stays at CoderInit).
+                        return if ip > 0 || op > 0 {
+                            Ok((ip, op, Status::Ok))
+                        } else {
+                            Err(Error::MemLimit)
+                        };
                     }
                     // Unknown size: the member must end with an EOPM.
                     self.lz = Some(LzDriver::new(LzmaDecoder::new(PROPS), self.dict_size));
@@ -307,13 +336,22 @@ mod tests {
             assert_eq!(r.is_ok(), ok, "{b:#x}");
         }
         m[5] = 0x1D; // 512 MiB
-        assert_eq!(
-            run(
-                &mut LzipDecoder::with_options(DecoderOptions::new().memlimit(256 << 20)),
-                &m
-            ),
-            Err(Error::MemLimit)
-        );
+        let mut d = LzipDecoder::with_options(DecoderOptions::new().memlimit(256 << 20));
+        // The header bytes are returned as progress first; the next call
+        // fails without consuming anything, and memusage says what is needed.
+        assert_eq!(run(&mut d, &m), Ok((6, Status::Ok)));
+        assert_eq!(run(&mut d, &m[6..]), Err(Error::MemLimit));
+        assert_eq!(run(&mut d, &m[6..]), Err(Error::MemLimit));
+        assert_eq!(d.memusage(), Dict::mem_usage(512 << 20) + 32 * 1024);
+        assert_eq!(d.memlimit(), 256 << 20);
+        // Raising the limit resumes (4 KiB dictionary, so nothing big is
+        // allocated).
+        m[5] = 0x0C;
+        let mut d = LzipDecoder::with_options(DecoderOptions::new().memlimit(1000));
+        assert_eq!(run(&mut d, &m), Ok((6, Status::Ok)));
+        assert_eq!(run(&mut d, &m[6..]), Err(Error::MemLimit));
+        d.set_memlimit(d.memusage());
+        assert_eq!(run(&mut d, &m[6..]), Ok((m.len() - 6, Status::StreamEnd)));
         m[4] = 2;
         assert_eq!(run(&mut LzipDecoder::default(), &m), Err(Error::Options));
     }

@@ -13,6 +13,7 @@ pub struct LzmaDecoder {
     header: [u8; 13],
     header_pos: usize,
     memlimit: u64,
+    memusage: u64,
     lz: Option<LzDriver<Lzma1Decoder>>,
     done: bool,
 }
@@ -36,9 +37,31 @@ impl LzmaDecoder {
             header: [0; 13],
             header_pos: 0,
             memlimit: opts.memlimit,
+            memusage: 0,
             lz: None,
             done: false,
         }
+    }
+
+    /// Memory the decoder needs once the header has been read: the figure
+    /// compared with the memory limit, so after [`Error::MemLimit`] the
+    /// amount that would have been needed. 0 before that. Like
+    /// `lzma_memusage`.
+    pub fn memusage(&self) -> u64 {
+        self.memusage
+    }
+
+    /// The memory limit ([`DecoderOptions::memlimit`]).
+    pub fn memlimit(&self) -> u64 {
+        self.memlimit
+    }
+
+    /// Changes the memory limit (`lzma_memlimit_set`). It applies when the
+    /// header is read. After [`Error::MemLimit`], raise it and call
+    /// [`decode`](Self::decode) again with the same remaining input to
+    /// continue.
+    pub fn set_memlimit(&mut self, memlimit: u64) {
+        self.memlimit = memlimit;
     }
 
     /// Decodes from `input` into `output`; see [`crate::XzDecoder::decode`].
@@ -67,9 +90,14 @@ impl LzmaDecoder {
             let props = LzmaProps::from_byte(self.header[0]).ok_or(Error::Format)?;
             let dict_size = u32::from_le_bytes(self.header[1..5].try_into().unwrap());
             let size = u64::from_le_bytes(self.header[5..13].try_into().unwrap());
-            let mem = Dict::mem_usage(dict_size) + 32 * 1024;
-            if mem > self.memlimit {
-                return Err(Error::MemLimit);
+            self.memusage = Dict::mem_usage(dict_size) + 32 * 1024;
+            if self.memusage > self.memlimit {
+                // Return the progress first; the retry consumes nothing.
+                return if ip > 0 {
+                    Ok((ip, 0, Status::Ok))
+                } else {
+                    Err(Error::MemLimit)
+                };
             }
             let known = (size != u64::MAX).then_some(size);
             let mut dec = Lzma1Decoder::new(props);
@@ -144,7 +172,7 @@ impl LzmaEncoder {
     ///   means the stream is complete.
     ///
     /// .lzma has no flushing, so the other actions are
-    /// [`Error::InvalidOptions`], as in liblzma.
+    /// [`Error::Usage`], as in liblzma (`LZMA_PROG_ERROR`).
     pub fn encode(
         &mut self,
         input: &[u8],
@@ -164,7 +192,7 @@ impl LzmaEncoder {
         let action = match action {
             Action::Run => crate::lzma::lz_encoder::MfAction::Run,
             Action::Finish => crate::lzma::lz_encoder::MfAction::Finish,
-            _ => return Err(Error::InvalidOptions),
+            _ => return Err(Error::Usage),
         };
         if self.lz.code(input, &mut ip, output, &mut op, action)? {
             self.done = true;

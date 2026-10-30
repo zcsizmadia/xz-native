@@ -4,7 +4,8 @@
 use std::io::{Read, Write};
 use xz_native::{
     Action, Check, DecoderOptions, EncoderOptions, Error, LzmaDecoder, LzmaEncoder, LzmaOptions,
-    LzmaReader, LzmaWriter, MatchFinder, RawMethod, RawOptions, Status, XzReader, XzWriter,
+    LzmaReader, LzmaWriter, MatchFinder, RawMethod, RawOptions, Status, XzDecoder, XzReader,
+    XzWriter,
 };
 
 #[test]
@@ -122,11 +123,11 @@ fn lzma_encoder_takes_action() {
     // .lzma has no flushing, as in liblzma.
     assert_eq!(
         enc.encode(b"x", &mut out, Action::SyncFlush),
-        Err(Error::InvalidOptions)
+        Err(Error::Usage)
     );
     assert_eq!(
         enc.encode(b"x", &mut out, Action::FullFlush),
-        Err(Error::InvalidOptions)
+        Err(Error::Usage)
     );
 
     let mut enc = LzmaEncoder::new(0).unwrap();
@@ -136,4 +137,91 @@ fn lzma_encoder_takes_action() {
     let mut plain = [0u8; 16];
     let (_, w, status) = dec.decode(&out[..n], &mut plain, true).unwrap();
     assert_eq!((&plain[..w], status), (&b"hello"[..], Status::StreamEnd));
+}
+
+/// Feeds all of `input`, raising the memory limit to what the decoder needs
+/// whenever it reports `Error::MemLimit`. Returns the output and the limits
+/// it needed.
+fn decode_raising<D>(
+    dec: &mut D,
+    input: &[u8],
+    mut decode: impl FnMut(&mut D, &[u8], &mut [u8]) -> Result<(usize, usize, Status), Error>,
+    memusage: impl Fn(&D) -> u64,
+    mut raise: impl FnMut(&mut D, u64),
+) -> (Vec<u8>, Vec<u64>) {
+    let mut out = Vec::new();
+    let mut buf = vec![0u8; 1 << 20];
+    let mut ip = 0;
+    let mut needed = Vec::new();
+    loop {
+        match decode(dec, &input[ip..], &mut buf) {
+            Ok((u, w, status)) => {
+                ip += u;
+                out.extend_from_slice(&buf[..w]);
+                if status == Status::StreamEnd {
+                    return (out, needed);
+                }
+            }
+            Err(Error::MemLimit) => {
+                // Repeating the call fails the same way: nothing was used.
+                assert_eq!(decode(dec, &input[ip..], &mut buf), Err(Error::MemLimit));
+                needed.push(memusage(dec));
+                raise(dec, memusage(dec));
+            }
+            Err(e) => panic!("{e}"),
+        }
+    }
+}
+
+#[test]
+fn memlimit_raise_and_resume() {
+    let data: Vec<u8> = (0..300_000u32).map(|i| (i * 7 % 251) as u8).collect();
+    // Two streams with different dictionaries (1 and 8 MiB in the Block
+    // Headers): the second limit is hit after the first stream's output.
+    let mut xz = xz_native::compress(&data, 1).unwrap();
+    xz.extend_from_slice(&xz_native::compress(&data, 6).unwrap());
+    let mut dec = XzDecoder::with_options(DecoderOptions::new().memlimit(1 << 16));
+    assert_eq!((dec.memusage(), dec.memlimit()), (0, 1 << 16));
+    let (out, needed) = decode_raising(
+        &mut dec,
+        &xz,
+        |d, i, o| d.decode(i, o, true),
+        XzDecoder::memusage,
+        XzDecoder::set_memlimit,
+    );
+    assert_eq!(out.len(), 2 * data.len());
+    assert!(out[..data.len()] == data[..] && out[data.len()..] == data[..]);
+    assert_eq!(needed.len(), 2);
+    assert!(1 << 20 < needed[0] && needed[0] < needed[1], "{needed:?}");
+
+    // The readers report the same figure after the error.
+    for threads in [1, 2] {
+        let opts = DecoderOptions::new().memlimit(1 << 16).threads(threads);
+        let mut r = XzReader::with_options(&xz[..], opts);
+        let err = r.read_to_end(&mut Vec::new()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::OutOfMemory);
+        assert_eq!(r.memusage(), needed[0], "threads {threads}");
+    }
+
+    let lzma = xz_native::compress_lzma(&data, 1).unwrap();
+    let mut dec = LzmaDecoder::with_options(DecoderOptions::new().memlimit(1 << 16));
+    let (out, needed) = decode_raising(
+        &mut dec,
+        &lzma,
+        |d, i, o| d.decode(i, o, true),
+        LzmaDecoder::memusage,
+        LzmaDecoder::set_memlimit,
+    );
+    assert!(out == data);
+    assert_eq!(needed.len(), 1);
+    let mut r = LzmaReader::with_options(&lzma[..], DecoderOptions::new().memlimit(1 << 16));
+    assert!(r.read_to_end(&mut Vec::new()).is_err());
+    assert_eq!(r.memusage(), needed[0]);
+}
+
+#[test]
+fn usage_error() {
+    let e = std::io::Error::from(Error::Usage);
+    assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput);
+    assert_eq!(Error::Usage.to_string(), "unsupported use of the API");
 }

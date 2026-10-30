@@ -545,7 +545,7 @@ impl MtEncoder {
         }
         if action == Action::SyncFlush {
             // liblzma's multithreaded encoder doesn't support it.
-            return Err(Error::InvalidOptions);
+            return Err(Error::Usage);
         }
         let r = self.run(input, output, action);
         if let Err(e) = r {
