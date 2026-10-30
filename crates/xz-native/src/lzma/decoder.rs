@@ -14,7 +14,7 @@
 //!   the probabilities are rolled back and the bytes are kept for the next
 //!   call. Nothing is written to the dictionary until a symbol is complete.
 
-use super::dict::Dict;
+use super::dict::{Dict, EXTRA as DICT_EXTRA};
 use super::{LzmaProps, NUM_STATES};
 use crate::error::{Error, Result};
 use alloc::boxed::Box;
@@ -546,13 +546,13 @@ fn symbol<const SAFE: bool>(
                 Err(Stop::Data)
             };
         }
-        if at_limit || dist as usize >= dict.full {
+        if at_limit || dist as usize >= dict.full() {
             return Err(Stop::Data);
         }
         st.state = if state < 7 { 7 } else { 10 };
         st.reps = [dist, st.reps[0], st.reps[1], st.reps[2]];
     } else {
-        if dict.full == 0 {
+        if dict.full() == 0 {
             return Err(Stop::Data);
         }
         if bit(rc, inp, probs, undo, IS_REP0 + state)? == 0 {
@@ -894,6 +894,9 @@ impl LzmaDecoder {
         let mut st = self.st;
         let params = self.params;
         let fast_end = inp.len() - FAST_MIN;
+        // Always true (`Dict::init_to_limit`, or the ring size); stating it lets
+        // the compiler drop the bounds checks of `put` and `get0` below.
+        assert!(dict.limit <= dict.buf.len().saturating_sub(DICT_EXTRA));
         let mut input = Input::<false> { buf: inp, pos: *ip };
         let mut undo = Undo::new();
         let mut out = None;
