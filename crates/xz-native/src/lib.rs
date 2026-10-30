@@ -22,7 +22,9 @@
 //! ```
 //!
 //! [`EncoderOptions`] selects presets, LZMA2 options, the check, filters and
-//! the Block size; [`XzWriter`] and [`LzmaWriter`] compress through
+//! the Block size, and with `threads` compresses Blocks in parallel like
+//! `xz -T` (byte-identical to liblzma's multithreaded encoder);
+//! [`XzWriter`] and [`LzmaWriter`] compress through
 //! `std::io::Write`, and [`XzEncoder`] is the push-style encoder.
 //!
 //! Use [`XzReader`] for streaming with `std::io`, [`XzSeekableReader`] for

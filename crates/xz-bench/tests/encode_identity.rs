@@ -1,8 +1,11 @@
 //! Byte-identity of the encoder with C liblzma 5.8.4: for the same options
 //! and the same data, xz-native must write exactly the bytes liblzma
-//! writes (.xz, .lzma and block-split .xz), and both must decode it.
+//! writes (.xz, .lzma, block-split .xz, and multithreaded .xz against
+//! liblzma's multithreaded encoder), and both must decode it.
 
-use liblzma::stream::{Action, Check, Filters, LzmaOptions, MatchFinder, Mode, Status, Stream};
+use liblzma::stream::{
+    Action, Check, Filters, LzmaOptions, MatchFinder, Mode, MtStreamBuilder, Status, Stream,
+};
 use xz_native::{BcjKind, EncoderOptions, Filter};
 
 struct Rng(u64);
@@ -548,6 +551,7 @@ fn run_ours(mut enc: xz_native::XzEncoder, chunks: &[(&[u8], Action)]) -> Vec<u8
             Action::Run => xz_native::Action::Run,
             Action::SyncFlush => xz_native::Action::SyncFlush,
             Action::FullFlush => xz_native::Action::FullFlush,
+            Action::FullBarrier => xz_native::Action::FullBarrier,
             _ => xz_native::Action::Finish,
         };
         let mut ip = 0;
@@ -681,5 +685,327 @@ fn random_options_match_liblzma() {
         let len = (r.next() % 150_000) as usize % (pool.len() - start + 1);
         let data = &pool[start..start + len];
         check_xz(&format!("iteration {iter}: {o:?}"), data, &o);
+    }
+}
+
+/// liblzma's multithreaded encoder (`lzma_stream_encoder_mt()`) with
+/// `threads` threads over `chunks`, like [`run_c`].
+fn liblzma_mt(o: &EncoderOptions, threads: u32, chunks: &[(&[u8], Action)]) -> Vec<u8> {
+    let s = MtStreamBuilder::new()
+        .threads(threads)
+        .block_size(o.block_size)
+        .filters(filters_c(o))
+        .check(check_c(o.check))
+        .encoder()
+        .unwrap();
+    run_c(s, chunks)
+}
+
+/// Random input pieces of `data`, all with `Run`, then `Finish`.
+fn run_chunks(data: &[u8], seed: u64) -> Vec<(&[u8], Action)> {
+    let mut r = Rng(seed | 1);
+    let mut chunks = Vec::new();
+    let mut pos = 0;
+    while pos < data.len() {
+        let n = [1usize, 7, 4096, 65_537, 1 << 20][(r.next() % 5) as usize].min(data.len() - pos);
+        chunks.push((&data[pos..pos + n], Action::Run));
+        pos += n;
+    }
+    chunks.push((&[][..], Action::Finish));
+    chunks
+}
+
+/// Multithreaded encoding: liblzma writes the same bytes with 1 thread and
+/// with each of `threads`, and so does xz-native, one-shot (with each of
+/// `threads`; 1 stands for 0, one per CPU, since `threads: 1` is the
+/// single-threaded encoder) and streaming with random input pieces. The
+/// xz-native decoders (single- and multithreaded) and liblzma decode it.
+#[track_caller]
+fn check_mt(what: &str, data: &[u8], o: &EncoderOptions, threads: &[u32]) {
+    let theirs = liblzma_mt(o, 1, &[(data, Action::Finish)]);
+    for &t in threads {
+        if t > 1 {
+            let other = liblzma_mt(o, t, &[(data, Action::Finish)]);
+            assert_same(
+                &format!("{what}: liblzma, {t} threads vs 1"),
+                &other,
+                &theirs,
+            );
+        }
+        let mo = EncoderOptions {
+            threads: if t == 1 { 0 } else { t as usize },
+            ..o.clone()
+        };
+        let ours = xz_native::compress_with_options(data, &mo).unwrap();
+        assert_same(&format!("{what}: {} threads", mo.threads), &ours, &theirs);
+    }
+    let mo = EncoderOptions {
+        threads: 3,
+        ..o.clone()
+    };
+    let chunks = run_chunks(data, data.len() as u64);
+    let ours = run_ours(xz_native::XzEncoder::with_options(mo).unwrap(), &chunks);
+    assert_same(&format!("{what}: streaming"), &ours, &theirs);
+    assert!(
+        xz_native::decompress(&theirs).unwrap() == data,
+        "{what}: xz-native decode"
+    );
+    let dopts = xz_native::DecoderOptions {
+        threads: 4,
+        ..Default::default()
+    };
+    assert!(
+        xz_native::decompress_with_options(&theirs, dopts).unwrap() == data,
+        "{what}: xz-native threaded decode"
+    );
+    assert!(liblzma_decode(&theirs) == data, "{what}: liblzma decode");
+}
+
+#[test]
+fn mt_presets_match_liblzma() {
+    let extreme = xz_native::PRESET_EXTREME;
+    for (name, data) in corpus() {
+        for preset in [0, 1, 6, 9, 9 | extreme] {
+            // The default Block size (three times the dictionary), and
+            // Blocks smaller than the input.
+            for block_size in [0, 1024, 100_000] {
+                let mut o = preset_opts(preset, 1 << 20);
+                o.block_size = block_size;
+                if block_size == 1024 {
+                    // Every Block resets the hash tables.
+                    o.lzma.dict_size = 1 << 16;
+                }
+                let what = format!("{name} preset {preset:#x} block_size {block_size}");
+                check_mt(&what, &data, &o, &[1, 4]);
+            }
+        }
+    }
+    // A full preset 6 dictionary: one 24 MiB Block by default.
+    let data = text(1 << 20, 30);
+    check_mt(
+        "text preset 6",
+        &data,
+        &preset_opts(6, u32::MAX),
+        &[1, 2, 4, 8],
+    );
+}
+
+#[test]
+fn mt_thread_counts_match_liblzma() {
+    // Many Blocks, so that workers finish out of order.
+    let mut data = text(1 << 21, 31);
+    data.extend_from_slice(&random(300_000, 32));
+    data.extend_from_slice(&binary(1 << 20, 33));
+    for preset in [0, 6] {
+        let mut o = preset_opts(preset, 1 << 18);
+        o.block_size = 77_777;
+        check_mt(&format!("preset {preset}"), &data, &o, &[1, 2, 4, 8, 20]);
+    }
+}
+
+#[test]
+fn mt_block_sizes_match_liblzma() {
+    // Inputs not a multiple of the Block size, and Block sizes around the
+    // LZMA2 chunk limits: 64 KiB per uncompressed chunk, 2 MiB per LZMA
+    // chunk.
+    let data = text((5 << 20) + 777, 34);
+    let mut mixed = text(300_000, 35);
+    mixed.extend_from_slice(&random(200_000, 36));
+    mixed.extend_from_slice(&text(100_000, 37));
+    for block_size in [1, 2, 4095, 65_535, 65_536, 65_537] {
+        let mut o = preset_opts(1, 1 << 16);
+        o.block_size = block_size;
+        let (d, m) = if block_size < 100 {
+            (&data[..3000], &mixed[299_000..302_000])
+        } else {
+            (&data[..400_000], &mixed[..])
+        };
+        check_mt(&format!("text block_size {block_size}"), d, &o, &[1, 4]);
+        check_mt(&format!("mixed block_size {block_size}"), m, &o, &[1, 4]);
+    }
+    for block_size in [
+        (1 << 21) - 1,
+        1 << 21,
+        (1 << 21) + 1,
+        3 << 20,
+        data.len() as u64,
+    ] {
+        let mut o = preset_opts(0, 1 << 20);
+        o.block_size = block_size;
+        check_mt(&format!("text block_size {block_size}"), &data, &o, &[1, 4]);
+    }
+}
+
+#[test]
+fn mt_checks_and_filters_match_liblzma() {
+    let data = binary(400_000, 38);
+    for check in [
+        xz_native::Check::None,
+        xz_native::Check::Crc32,
+        xz_native::Check::Crc64,
+        xz_native::Check::Sha256,
+    ] {
+        let mut o = preset_opts(1, 1 << 20);
+        o.check = check;
+        o.block_size = 50_000;
+        check_mt(&format!("{check:?}"), &data, &o, &[1, 4]);
+    }
+    let chains = [
+        vec![Filter::Bcj {
+            kind: BcjKind::X86,
+            start_offset: 0,
+        }],
+        vec![Filter::Bcj {
+            kind: BcjKind::Arm64,
+            start_offset: 1 << 12,
+        }],
+        vec![Filter::Delta { distance: 4 }],
+        vec![
+            Filter::Delta { distance: 2 },
+            Filter::Bcj {
+                kind: BcjKind::X86,
+                start_offset: 0,
+            },
+            Filter::Bcj {
+                kind: BcjKind::RiscV,
+                start_offset: 0,
+            },
+        ],
+    ];
+    for filters in chains {
+        for block_size in [0, 4097, 65_536] {
+            let mut o = preset_opts(6, 1 << 18);
+            o.filters = filters.clone();
+            o.block_size = block_size;
+            o.check = xz_native::Check::Sha256;
+            check_mt(
+                &format!("{filters:?} block_size {block_size}"),
+                &data,
+                &o,
+                &[1, 4],
+            );
+        }
+    }
+}
+
+/// Blocks that don't fit in liblzma's output bound are stored as LZMA2
+/// uncompressed chunks with an LZMA2-only Block Header (random data needs
+/// more chunks than the bound allows for once Blocks pass about 18 MiB).
+#[test]
+fn mt_incompressible_blocks_match_liblzma() {
+    let mut data = random(45 << 20, 39);
+    // A compressible Block between stored ones.
+    data[20 << 20..21 << 20].copy_from_slice(&text(1 << 20, 40));
+    for filters in [vec![], vec![Filter::Delta { distance: 1 }]] {
+        let mut o = preset_opts(0, 1 << 20);
+        o.block_size = 20 << 20;
+        o.filters = filters;
+        let what = format!("random {:?}", o.filters);
+        check_mt(&what, &data, &o, &[1, 4]);
+        let mo = EncoderOptions { threads: 4, ..o };
+        let ours = xz_native::compress_with_options(&data, &mo).unwrap();
+        // The first Block is stored: LZMA2 with a 4 KiB dictionary only.
+        assert_eq!(&ours[12..14], &[4, 0xC0], "{what}");
+        assert_eq!(&ours[22..25], &[0x21, 1, 0], "{what}");
+    }
+    // Small random inputs compress to uncompressed LZMA2 chunks inside
+    // normal Blocks.
+    let data = random(300_000, 41);
+    let mut o = preset_opts(6, 1 << 20);
+    o.block_size = 70_000;
+    check_mt("random small", &data, &o, &[1, 4]);
+}
+
+/// Full flushes end the current Block and wait for all output; full
+/// barriers end it without waiting; neither writes empty Blocks. The same
+/// calls give liblzma's bytes.
+#[test]
+fn mt_streaming_and_flushes_match_liblzma() {
+    let data = text(3_000_000, 42);
+    let mut r = Rng(43);
+    for (i, preset) in [0u32, 1, 6].into_iter().enumerate() {
+        let mut o = preset_opts(preset, 1 << 18);
+        o.block_size = [0, 100_000, 300_001][i];
+        if i == 1 {
+            o.filters = vec![Filter::Delta { distance: 3 }];
+        }
+        let mut chunks: Vec<(&[u8], Action)> = Vec::new();
+        let mut pos = 0;
+        while pos < data.len() {
+            let n = [0usize, 1, 100, 5000, 70_000, 300_000][(r.next() % 6) as usize]
+                .min(data.len() - pos);
+            let action = match r.next() % 8 {
+                0 => Action::FullFlush,
+                1 => Action::FullBarrier,
+                _ => Action::Run,
+            };
+            chunks.push((&data[pos..pos + n], action));
+            pos += n;
+        }
+        chunks.push((&[], Action::Finish));
+        let theirs = liblzma_mt(&o, 2, &chunks);
+        assert_same(
+            &format!("preset {preset}: liblzma 8 threads"),
+            &liblzma_mt(&o, 8, &chunks),
+            &theirs,
+        );
+        for threads in [2, 5] {
+            let mo = EncoderOptions {
+                threads,
+                ..o.clone()
+            };
+            let ours = run_ours(xz_native::XzEncoder::with_options(mo).unwrap(), &chunks);
+            assert_same(
+                &format!("preset {preset}: {threads} threads"),
+                &ours,
+                &theirs,
+            );
+        }
+        assert!(liblzma_decode(&theirs) == data, "preset {preset}");
+    }
+}
+
+/// Random option combinations, multithreaded.
+#[test]
+fn mt_random_options_match_liblzma() {
+    use xz_native::{MatchFinder as M, Mode as Md};
+    let mut r = Rng(0xDEC0_DE5E_ED00_0002);
+    let pool = {
+        let mut p = text(300_000, 44);
+        p.extend_from_slice(&binary(300_000, 45));
+        p.extend_from_slice(&random(100_000, 46));
+        p.extend_from_slice(&periodic(200_000, 77, 47));
+        p
+    };
+    for iter in 0..60 {
+        let preset = (r.next() % 10) as u32;
+        let mut o = EncoderOptions::preset(preset).unwrap();
+        o.lzma.dict_size = 4096 + (r.next() % (1 << 18)) as u32;
+        if r.next().is_multiple_of(2) {
+            o.lzma.mode = [Md::Fast, Md::Normal][(r.next() % 2) as usize];
+            o.lzma.mf = [M::Hc3, M::Hc4, M::Bt2, M::Bt3, M::Bt4][(r.next() % 5) as usize];
+            o.lzma.nice_len = 2 + (r.next() % 272) as u32;
+        }
+        o.check = [
+            xz_native::Check::None,
+            xz_native::Check::Crc32,
+            xz_native::Check::Crc64,
+            xz_native::Check::Sha256,
+        ][(r.next() % 4) as usize];
+        if r.next().is_multiple_of(3) {
+            o.filters.push(Filter::Bcj {
+                kind: BcjKind::X86,
+                start_offset: 0,
+            });
+        }
+        o.block_size = match r.next() % 3 {
+            0 => 0,
+            1 => 1 + r.next() % 5000,
+            _ => 5000 + r.next() % 300_000,
+        };
+        let start = (r.next() % pool.len() as u64) as usize;
+        let len = (r.next() % 600_000) as usize % (pool.len() - start + 1);
+        let data = &pool[start..start + len];
+        check_mt(&format!("iteration {iter}: {o:?}"), data, &o, &[1, 3]);
     }
 }
