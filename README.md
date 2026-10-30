@@ -29,17 +29,18 @@ build scripts or the memory-safety risk. Sibling of the C# library
 - **As fast as liblzma, often faster** (machines, methods and full tables
   in [BENCHMARK.md](BENCHMARK.md)):
 
-  | | xz-native compared with C liblzma 5.8.4 |
+  | | xz-native speed / C liblzma 5.8.4 (1.25x = 25% faster) |
   |---|---|
-  | Compression, Linux (liblzma built with GCC) | +37-62% at presets 0-1, +3-11% at 6-9 (level on one dataset at -9e) |
-  | Decompression, single thread, Linux (liblzma built with GCC and its assembly) | 96-103% |
-  | Decompression, single thread, Windows (MSVC build, as `xz2`/`liblzma` give Rust users there) | 1.3-1.4x faster |
-  | Decompression, multithreaded | 1.3-2x faster |
-  | Decompression of incompressible data | 4-11x faster |
-  | CRC32 / CRC64 (SIMD detected at run time) | 10-25x faster |
+  | Compression, single thread, Linux (liblzma built with GCC) | 1.38-1.65x at presets 0-1, 1.01-1.27x at 6-9e |
+  | Compression, multithreaded, Linux | 1.30-1.48x at preset 1, 1.04-1.13x at 6 |
+  | Decompression, single thread, Linux (liblzma built with GCC and its assembly) | 1.00-1.06x |
+  | Decompression, single thread, Windows (MSVC build, as `xz2`/`liblzma` give Rust users there) | 1.3-1.4x |
+  | Decompression, multithreaded, Linux | 0.92-0.97x at 1-8 threads, 1.00-1.22x at 16-32 |
+  | Decompression of incompressible data | 4-14x |
+  | CRC32 / CRC64 (SIMD detected at run time; this liblzma build has no CLMUL) | 13-45x |
 
   About 1.5x faster than [lzma-rust2](https://crates.io/crates/lzma-rust2),
-  the fastest pure-Rust alternative, at decompression, and 1.1-1.4x at
+  the fastest pure-Rust alternative, at decompression, and 1.1-1.5x at
   compression (presets 0-9; it has no extreme mode).
 - **Drop-in compatible.** Matches liblzma 5.8.4's behavior, including which
   corrupt files it rejects and with which error. It's checked against xz's own

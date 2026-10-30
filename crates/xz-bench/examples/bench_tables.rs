@@ -50,8 +50,10 @@ fn rate(r: f64) -> String {
     let mib = r / (1u64 << 20) as f64;
     if mib >= 1024.0 {
         format!("{:.2} GiB/s", mib / 1024.0)
-    } else {
+    } else if mib >= 10.0 {
         format!("{mib:.1} MiB/s")
+    } else {
+        format!("{mib:.2} MiB/s")
     }
 }
 
