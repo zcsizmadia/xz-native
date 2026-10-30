@@ -33,15 +33,16 @@ jobs:
         shell: bash
         run: |
           cargo bench -p xz-bench -- --warm-up-time 1 --measurement-time 5 2>&1 | tee bench.txt
+          # The same tables as BENCHMARK.md (mean throughput).
           {
             echo "## ${{ matrix.name }}"
             echo
-            echo "| Benchmark | Throughput (low / mid / high) |"
-            echo "|---|---|"
-            grep -E '^(decode|encode|check)/|thrpt' bench.txt | paste - - \
-              | sed -E 's/ +/ /g; s/^([^ \t]+)[ \t]+thrpt: \[(.*)\]$/| \1 | \2 |/'
+            cargo run -q --release -p xz-bench --example bench_tables
           } >> "$GITHUB_STEP_SUMMARY"
+          cargo run -q --release -p xz-bench --example bench_tables > tables.md
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: criterion-${{ matrix.name }}
-          path: target/criterion
+          path: |
+            target/criterion
+            tables.md

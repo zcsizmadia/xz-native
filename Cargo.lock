@@ -567,6 +567,7 @@ dependencies = [
  "liblzma",
  "liblzma-sys",
  "lzma-rust2",
+ "serde_json",
  "xz-native",
 ]
 

@@ -1,5 +1,9 @@
 //! Probe for #34: how much of one-shot decoding of incompressible data is
 //! fresh-memory cost (page commit + zeroing) on this OS?
+//!
+//! `XZ_PROBE_MIB` sets the size (default: the 4 MiB random dataset). Sizes
+//! from 32 MiB up pass glibc's largest mmap threshold, so every allocation
+//! gets fresh pages there.
 
 use std::hint::black_box;
 use std::io::Read;
@@ -12,17 +16,34 @@ use std::time::Instant;
 fn main() {
     // Not repeated: repeats compress into LZMA matches, while the point is
     // stored chunks (copy plus check), as in the decode benchmark.
-    let data = xz_bench::datasets()
-        .into_iter()
-        .find(|(n, _)| n == "random")
-        .unwrap()
-        .1;
+    let data = match std::env::var("XZ_PROBE_MIB") {
+        Ok(mib) => {
+            let mut x = 0x9E37_79B9_7F4A_7C15u64;
+            (0..mib.parse::<usize>().expect("XZ_PROBE_MIB") << 20)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    (x >> 32) as u8
+                })
+                .collect()
+        }
+        Err(_) => {
+            xz_bench::datasets()
+                .into_iter()
+                .find(|(n, _)| n == "random")
+                .unwrap()
+                .1
+        }
+    };
     let mut packed = Vec::new();
     liblzma::read::XzEncoder::new(&data[..], 6)
         .read_to_end(&mut packed)
         .unwrap();
     let n = data.len();
-    let iters = 200;
+    // About 800 MiB per measurement.
+    let iters = (800 << 20) / n.max(1);
+    println!("{} MiB, {iters} iterations", n >> 20);
     let rate = |t: std::time::Duration| (n * iters) as f64 / t.as_secs_f64() / 1073741824.0;
 
     let t = Instant::now();
