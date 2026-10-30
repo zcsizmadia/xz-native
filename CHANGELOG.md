@@ -39,6 +39,17 @@ minor version may change the API.
   the raw encoder (#57).
 - Decoder: no per-byte history bookkeeping and no bounds checks per literal
   (#61): 2% fewer instructions and 4% fewer branches.
+- Push decoders (`XzDecoder`, `LzmaDecoder`, `LzipDecoder`, `RawDecoder`)
+  return the output produced before an error first, as `Ok`, and the error
+  from the next call, like liblzma. With truncated input and `finish`, the
+  data before the cut is returned before `Error::Truncated` (#71).
+- Errors are final: after an error, the push decoders and encoders return
+  it from every later call, except `Error::MemLimit` and
+  `Error::Truncated` (#71).
+- Encoders check the sequence of actions like liblzma: once a flush or
+  `Finish` has started, every call must pass the same action and the rest
+  of the same input until `Status::StreamEnd`, otherwise `Error::Usage`.
+  The `.lzma` encoder rejects flushes before writing anything (#71).
 
 ### Fixed
 - One-shot decoding (`decompress`, `decompress_into`, the threaded
@@ -51,6 +62,10 @@ minor version may change the API.
   by the Index before any Block is verified: implausible sizes, and
   allocations that fail, go to the single-threaded decoder. A small
   crafted file could abort the process (#70).
+- Calling `XzDecoder::decode` (or reading from `XzReader`) again after an
+  error could panic, or accept a Block whose check didn't match. `Run`
+  after `Finish` made the raw LZMA2 encoder write data after its end
+  marker, and the `.xz` encoder drop its input (#71).
 - Dictionary sizes that don't fit in memory (on 32-bit targets, from
   2 GiB) give `Error::MemLimit` instead of a panic or a wrapped size; large
   dictionaries are allocated fallibly (#70).

@@ -207,6 +207,7 @@ enum Seq {
 #[derive(Debug)]
 pub struct XzEncoder {
     inner: Inner,
+    seq: crate::push::EncodeSeq,
 }
 
 #[derive(Debug)]
@@ -230,27 +231,35 @@ impl XzEncoder {
             let mt = super::mt_encoder::MtEncoder::new(opts)?;
             return Ok(Self {
                 inner: Inner::Multi(Box::new(mt)),
+                seq: Default::default(),
             });
         }
         Ok(Self {
             inner: Inner::Single(Box::new(SingleEncoder::new(opts)?)),
+            seq: Default::default(),
         })
     }
 
     /// Encodes from `input` into `output`. Returns `(input used, output
     /// written, status)`; [`Status::StreamEnd`] means that the stream is
     /// complete ([`Action::Finish`]) or the flush is done.
+    ///
+    /// As in liblzma, once a flush or [`Action::Finish`] has started, every
+    /// call must pass the same action and the input that is left until
+    /// [`Status::StreamEnd`]; anything else is [`Error::Usage`]. An error
+    /// is final: later calls return it again.
     pub fn encode(
         &mut self,
         input: &[u8],
         output: &mut [u8],
         action: Action,
     ) -> Result<(usize, usize, Status)> {
-        match &mut self.inner {
+        let inner = &mut self.inner;
+        self.seq.run(input, action, |input| match inner {
             Inner::Single(e) => e.encode(input, output, action),
             #[cfg(feature = "std")]
             Inner::Multi(e) => e.encode(input, output, action),
-        }
+        })
     }
 }
 

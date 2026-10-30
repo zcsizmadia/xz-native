@@ -22,10 +22,16 @@ fn encode_streaming(data: &[u8], opts: &EncoderOptions, seed: u64) -> Vec<u8> {
     let mut out = Vec::new();
     let mut ip = 0;
     let mut buf = vec![0u8; 1 << 20];
+    let mut finish = false;
     loop {
-        let n_in = sizes[r.below(sizes.len() as u64) as usize].min(data.len() - ip);
+        // Once finishing, every call passes the rest of the input.
+        let n_in = if finish {
+            data.len() - ip
+        } else {
+            sizes[r.below(sizes.len() as u64) as usize].min(data.len() - ip)
+        };
         let n_out = sizes[r.below(sizes.len() as u64) as usize];
-        let finish = ip + n_in == data.len();
+        finish = ip + n_in == data.len();
         let action = if finish { Action::Finish } else { Action::Run };
         let (u, w, s) = enc
             .encode(&data[ip..ip + n_in], &mut buf[..n_out], action)

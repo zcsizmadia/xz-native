@@ -465,6 +465,8 @@ pub struct XzDecoder {
     index: Option<IndexDecoder>,
     padding: u64,
     memusage: u64,
+    /// The error that ended decoding; later calls return it.
+    error: Option<Error>,
 }
 
 impl Default for XzDecoder {
@@ -494,6 +496,7 @@ impl XzDecoder {
             index: None,
             padding: 0,
             memusage: 0,
+            error: None,
         }
     }
 
@@ -541,18 +544,38 @@ impl XzDecoder {
     /// Decodes from `input` into `output`. Set `finish` when `input` holds
     /// the end of the data. Returns `(input consumed, output written,
     /// status)`.
+    ///
+    /// Errors work like liblzma's: the progress made before an error is
+    /// returned first, as `Ok`, and the next call returns the error. After
+    /// that, every call returns it again, except for [`Error::MemLimit`]
+    /// (raise the limit with [`set_memlimit`](Self::set_memlimit) and call
+    /// again) and [`Error::Truncated`] (more input can still be passed).
     pub fn decode(
         &mut self,
         input: &[u8],
         output: &mut [u8],
         finish: bool,
     ) -> Result<(usize, usize, Status)> {
-        let mut ip = 0;
-        let mut op = 0;
+        if let Some(e) = self.error {
+            return Err(e);
+        }
+        let (mut ip, mut op) = (0, 0);
+        let r = self.run(input, output, finish, &mut ip, &mut op);
+        crate::push::settle(&mut self.error, ip, op, r)
+    }
+
+    fn run(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+        ip: &mut usize,
+        op: &mut usize,
+    ) -> Result<Status> {
         loop {
             match self.seq {
                 Seq::StreamHeader => {
-                    if !self.fill(input, &mut ip) {
+                    if !self.fill(input, ip) {
                         break;
                     }
                     let h: &[u8; 12] = self.buf[..12].try_into().unwrap();
@@ -570,41 +593,36 @@ impl XzDecoder {
                     self.expect(Seq::BlockHeaderFirst, 1);
                 }
                 Seq::BlockHeaderFirst => {
-                    let Some(&b) = input.get(ip) else { break };
+                    let Some(&b) = input.get(*ip) else { break };
                     if b == 0 {
                         self.index = Some(IndexDecoder::new());
                         self.seq = Seq::Index;
                     } else {
                         self.buf[0] = b;
-                        ip += 1;
+                        *ip += 1;
                         self.buf_pos = 1;
                         self.buf_need = (b as usize + 1) * 4;
                         self.seq = Seq::BlockHeader;
                     }
                 }
                 Seq::BlockHeader => {
-                    if !self.fill(input, &mut ip) {
+                    if !self.fill(input, ip) {
                         break;
                     }
                     let check = self.flags.unwrap().check;
                     let h = decode_block_header(&self.buf[..self.buf_need], check)?;
                     self.memusage = BlockDecoder::mem_usage(&h);
-                    match BlockDecoder::new(&h, check, &self.opts) {
-                        // Return the progress first. The next call fails
-                        // without consuming anything (the header stays in
-                        // `buf`), so it can be retried with a higher limit.
-                        Err(Error::MemLimit) if ip > 0 || op > 0 => {
-                            return Ok((ip, op, Status::Ok));
-                        }
-                        r => self.block = Some(r?),
-                    }
+                    // On Error::MemLimit the header stays in `buf`, so the
+                    // next call fails without consuming anything and can be
+                    // retried with a higher limit.
+                    self.block = Some(BlockDecoder::new(&h, check, &self.opts)?);
                     self.seq = Seq::Block;
                 }
                 Seq::Block => {
                     let b = self.block.as_mut().unwrap();
-                    let (u, w, done) = b.decode(&input[ip..], &mut output[op..])?;
-                    ip += u;
-                    op += w;
+                    let (u, w, done) = b.decode(&input[*ip..], &mut output[*op..])?;
+                    *ip += u;
+                    *op += w;
                     if !done {
                         break;
                     }
@@ -614,15 +632,15 @@ impl XzDecoder {
                 }
                 Seq::Index => {
                     let idx = self.index.as_mut().unwrap();
-                    let (n, done) = idx.feed(&input[ip..], Some(&self.blocks))?;
-                    ip += n;
+                    let (n, done) = idx.feed(&input[*ip..], Some(&self.blocks))?;
+                    *ip += n;
                     if !done {
                         break;
                     }
                     self.expect(Seq::StreamFooter, STREAM_HEADER_SIZE);
                 }
                 Seq::StreamFooter => {
-                    if !self.fill(input, &mut ip) {
+                    if !self.fill(input, ip) {
                         break;
                     }
                     let f: &[u8; 12] = self.buf[..12].try_into().unwrap();
@@ -634,17 +652,17 @@ impl XzDecoder {
                     self.first_stream = false;
                     if !self.opts.concatenated {
                         self.seq = Seq::Done;
-                        return Ok((ip, op, Status::StreamEnd));
+                        return Ok(Status::StreamEnd);
                     }
                     self.padding = 0;
                     self.seq = Seq::StreamPadding;
                 }
                 Seq::StreamPadding => {
-                    while ip < input.len() && input[ip] == 0 {
-                        ip += 1;
+                    while *ip < input.len() && input[*ip] == 0 {
+                        *ip += 1;
                         self.padding += 1;
                     }
-                    if ip == input.len() {
+                    if *ip == input.len() {
                         break;
                     }
                     if !self.padding.is_multiple_of(4) {
@@ -652,20 +670,20 @@ impl XzDecoder {
                     }
                     self.expect(Seq::StreamHeader, STREAM_HEADER_SIZE);
                 }
-                Seq::Done => return Ok((ip, op, Status::StreamEnd)),
+                Seq::Done => return Ok(Status::StreamEnd),
             }
         }
 
-        if finish && ip == input.len() && op < output.len() {
+        if finish && *ip == input.len() && *op < output.len() {
             if self.seq == Seq::StreamPadding {
                 if !self.padding.is_multiple_of(4) {
                     return Err(Error::Data);
                 }
                 self.seq = Seq::Done;
-                return Ok((ip, op, Status::StreamEnd));
+                return Ok(Status::StreamEnd);
             }
             return Err(Error::Truncated);
         }
-        Ok((ip, op, Status::Ok))
+        Ok(Status::Ok)
     }
 }

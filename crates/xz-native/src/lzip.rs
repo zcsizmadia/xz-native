@@ -55,6 +55,8 @@ pub struct LzipDecoder {
     footer: [u8; V1_FOOTER_SIZE],
     lz: Option<LzDriver<LzmaDecoder>>,
     memusage: u64,
+    /// The error that ended decoding; later calls return it.
+    error: Option<Error>,
 }
 
 impl Default for LzipDecoder {
@@ -87,6 +89,7 @@ impl LzipDecoder {
             footer: [0; V1_FOOTER_SIZE],
             lz: None,
             memusage: 0,
+            error: None,
         }
     }
 
@@ -118,20 +121,34 @@ impl LzipDecoder {
         output: &mut [u8],
         finish: bool,
     ) -> Result<(usize, usize, Status)> {
-        let mut ip = 0;
-        let mut op = 0;
+        if let Some(e) = self.error {
+            return Err(e);
+        }
+        let (mut ip, mut op) = (0, 0);
+        let r = self.run(input, output, finish, &mut ip, &mut op);
+        crate::push::settle(&mut self.error, ip, op, r)
+    }
+
+    fn run(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+        ip: &mut usize,
+        op: &mut usize,
+    ) -> Result<Status> {
         loop {
             match self.seq {
                 Seq::Magic => {
                     while self.pos < MAGIC.len() {
-                        let Some(&b) = input.get(ip) else {
+                        let Some(&b) = input.get(*ip) else {
                             // After the first member, input that ends
                             // inside the magic is ignored.
                             if !self.first_member && finish {
                                 self.seq = Seq::Done;
-                                return Ok((ip, op, Status::StreamEnd));
+                                return Ok(Status::StreamEnd);
                             }
-                            return Self::need_input(ip, op, input, output, finish);
+                            return Self::need_input(*ip, *op, input, output, finish);
                         };
                         if b != MAGIC[self.pos] {
                             if self.first_member {
@@ -139,9 +156,9 @@ impl LzipDecoder {
                             }
                             // Trailing data: stop without consuming `b`.
                             self.seq = Seq::Done;
-                            return Ok((ip, op, Status::StreamEnd));
+                            return Ok(Status::StreamEnd);
                         }
-                        ip += 1;
+                        *ip += 1;
                         self.pos += 1;
                     }
                     self.pos = 0;
@@ -151,8 +168,8 @@ impl LzipDecoder {
                     self.seq = Seq::Version;
                 }
                 Seq::Version => {
-                    let Some(&b) = input.get(ip) else { break };
-                    ip += 1;
+                    let Some(&b) = input.get(*ip) else { break };
+                    *ip += 1;
                     if b > 1 {
                         return Err(Error::Options);
                     }
@@ -161,8 +178,8 @@ impl LzipDecoder {
                     self.seq = Seq::DictSize;
                 }
                 Seq::DictSize => {
-                    let Some(&b) = input.get(ip) else { break };
-                    ip += 1;
+                    let Some(&b) = input.get(*ip) else { break };
+                    *ip += 1;
                     self.member_size += 1;
                     // Base-2 logarithm in the low five bits, minus 0/16 to
                     // 7/16 of it in the high three bits; 4 KiB to 512 MiB.
@@ -177,13 +194,9 @@ impl LzipDecoder {
                 Seq::CoderInit => {
                     self.memusage = Dict::mem_usage(self.dict_size) + 32 * 1024;
                     if self.memusage > self.opts.memlimit.max(1) {
-                        // Return the progress first; the retry consumes
-                        // nothing (the state stays at CoderInit).
-                        return if ip > 0 || op > 0 {
-                            Ok((ip, op, Status::Ok))
-                        } else {
-                            Err(Error::MemLimit)
-                        };
+                        // The retry consumes nothing (the state stays at
+                        // CoderInit).
+                        return Err(Error::MemLimit);
                     }
                     // Unknown size: the member must end with an EOPM.
                     self.lz = Some(LzDriver::new(LzmaDecoder::new(PROPS), self.dict_size)?);
@@ -191,12 +204,12 @@ impl LzipDecoder {
                 }
                 Seq::Lzma => {
                     let lz = self.lz.as_mut().unwrap();
-                    let (u, w, p) = lz.decode(&input[ip..], &mut output[op..])?;
+                    let (u, w, p) = lz.decode(&input[*ip..], &mut output[*op..])?;
                     if !self.opts.ignore_check {
-                        self.crc32 = crc32(&output[op..op + w], self.crc32);
+                        self.crc32 = crc32(&output[*op..*op + w], self.crc32);
                     }
-                    ip += u;
-                    op += w;
+                    *ip += u;
+                    *op += w;
                     self.member_size += u as u64;
                     self.uncompressed += w as u64;
                     if p != Progress::End {
@@ -211,10 +224,10 @@ impl LzipDecoder {
                     } else {
                         V1_FOOTER_SIZE
                     };
-                    let n = (size - self.pos).min(input.len() - ip);
-                    self.footer[self.pos..self.pos + n].copy_from_slice(&input[ip..ip + n]);
+                    let n = (size - self.pos).min(input.len() - *ip);
+                    self.footer[self.pos..self.pos + n].copy_from_slice(&input[*ip..*ip + n]);
                     self.pos += n;
-                    ip += n;
+                    *ip += n;
                     if self.pos < size {
                         break;
                     }
@@ -236,15 +249,15 @@ impl LzipDecoder {
                     }
                     if !self.opts.concatenated {
                         self.seq = Seq::Done;
-                        return Ok((ip, op, Status::StreamEnd));
+                        return Ok(Status::StreamEnd);
                     }
                     self.first_member = false;
                     self.seq = Seq::Magic;
                 }
-                Seq::Done => return Ok((ip, op, Status::StreamEnd)),
+                Seq::Done => return Ok(Status::StreamEnd),
             }
         }
-        Self::need_input(ip, op, input, output, finish)
+        Self::need_input(*ip, *op, input, output, finish)
     }
 
     fn need_input(
@@ -253,11 +266,11 @@ impl LzipDecoder {
         input: &[u8],
         output: &[u8],
         finish: bool,
-    ) -> Result<(usize, usize, Status)> {
+    ) -> Result<Status> {
         if finish && ip == input.len() && op < output.len() {
             return Err(Error::Truncated);
         }
-        Ok((ip, op, Status::Ok))
+        Ok(Status::Ok)
     }
 }
 
@@ -278,9 +291,23 @@ mod tests {
         v
     }
 
-    fn run(d: &mut LzipDecoder, input: &[u8]) -> Result<(usize, Status)> {
+    /// One call.
+    fn run_once(d: &mut LzipDecoder, input: &[u8]) -> Result<(usize, Status)> {
         let mut out = [0u8; 16];
         d.decode(input, &mut out, true).map(|(u, _, s)| (u, s))
+    }
+
+    /// Calls until the end, an error or no progress: errors come after the
+    /// progress made before them.
+    fn run(d: &mut LzipDecoder, input: &[u8]) -> Result<(usize, Status)> {
+        let mut used = 0;
+        loop {
+            let (u, s) = run_once(d, &input[used..])?;
+            used += u;
+            if s == Status::StreamEnd || u == 0 {
+                return Ok((used, s));
+            }
+        }
     }
 
     #[test]
@@ -339,7 +366,7 @@ mod tests {
         let mut d = LzipDecoder::with_options(DecoderOptions::new().memlimit(256 << 20));
         // The header bytes are returned as progress first; the next call
         // fails without consuming anything, and memusage says what is needed.
-        assert_eq!(run(&mut d, &m), Ok((6, Status::Ok)));
+        assert_eq!(run_once(&mut d, &m), Ok((6, Status::Ok)));
         assert_eq!(run(&mut d, &m[6..]), Err(Error::MemLimit));
         assert_eq!(run(&mut d, &m[6..]), Err(Error::MemLimit));
         assert_eq!(d.memusage(), Dict::mem_usage(512 << 20) + 32 * 1024);
@@ -348,7 +375,7 @@ mod tests {
         // allocated).
         m[5] = 0x0C;
         let mut d = LzipDecoder::with_options(DecoderOptions::new().memlimit(1000));
-        assert_eq!(run(&mut d, &m), Ok((6, Status::Ok)));
+        assert_eq!(run_once(&mut d, &m), Ok((6, Status::Ok)));
         assert_eq!(run(&mut d, &m[6..]), Err(Error::MemLimit));
         d.set_memlimit(d.memusage());
         assert_eq!(run(&mut d, &m[6..]), Ok((m.len() - 6, Status::StreamEnd)));
