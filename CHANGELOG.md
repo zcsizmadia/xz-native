@@ -8,7 +8,23 @@ minor version may change the API.
 
 ## [Unreleased]
 
+### Added
+- `memusage()`, `memlimit()` and `set_memlimit()` on `XzDecoder`,
+  `LzmaDecoder` and `LzipDecoder` (`lzma_memusage`, `lzma_memlimit_get`,
+  `lzma_memlimit_set`): after `Error::MemLimit`, `memusage()` says how much
+  memory is needed, and raising the limit and calling `decode` again
+  continues. The readers have `memusage()` for error messages (#57).
+- `Error::Usage` for unsupported uses of the API, liblzma's
+  `LZMA_PROG_ERROR` (#57).
+
 ### Changed
+- `Error::MemLimit` from a push decoder now comes from a call that consumed
+  nothing: the progress made before the limit was hit is returned first, as
+  `Ok` (#57).
+- Encoder actions that liblzma rejects with `LZMA_PROG_ERROR` return
+  `Error::Usage` instead of `Error::InvalidOptions`: flushes on the `.lzma`
+  encoder, `SyncFlush` on the multithreaded encoder, and full flushes on
+  the raw encoder (#57).
 - Decoder: no per-byte history bookkeeping and no bounds checks per literal
   (#61): 2% fewer instructions and 4% fewer branches.
 

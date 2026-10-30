@@ -376,7 +376,10 @@ fn threaded_flushes() {
     let mut enc = XzEncoder::with_options(opts.clone()).unwrap();
     let mut buf = vec![0u8; 1 << 20];
     // Not supported by liblzma's multithreaded encoder either.
-    assert!(enc.encode(b"abc", &mut buf, Action::SyncFlush).is_err());
+    assert_eq!(
+        enc.encode(b"abc", &mut buf, Action::SyncFlush),
+        Err(xz_native::Error::Usage)
+    );
     let mut out = Vec::new();
     for (k, part) in data.chunks(30_000).enumerate() {
         let action = [Action::FullFlush, Action::FullBarrier, Action::Run][k % 3];

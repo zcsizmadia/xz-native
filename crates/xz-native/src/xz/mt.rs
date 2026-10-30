@@ -389,6 +389,8 @@ pub(crate) struct MtDecoder {
     hbuf: Box<[u8; 1024]>,
     hpos: usize,
     failed: Option<Error>,
+    /// Memory the last parsed Block needs (`XzReader::memusage`).
+    memusage: u64,
 }
 
 impl fmt::Debug for MtDecoder {
@@ -423,7 +425,14 @@ impl MtDecoder {
             hbuf: Box::new([0; 1024]),
             hpos: 0,
             failed: None,
+            memusage: 0,
         }
+    }
+
+    /// Memory the last parsed Block needs; after [`Error::MemLimit`], the
+    /// Block that failed (parsing stops there).
+    pub(crate) fn memusage(&self) -> u64 {
+        self.memusage
     }
 
     /// Room in the budget for unused buffers.
@@ -489,6 +498,7 @@ impl MtDecoder {
                 }
                 self.hpos = 0;
                 let hdr = decode_block_header(&self.hbuf[..size], check)?;
+                self.memusage = BlockDecoder::mem_usage(&hdr);
                 let cost = match (hdr.compressed_size, hdr.uncompressed_size) {
                     (Some(c), Some(u)) => c
                         .next_multiple_of(4)
@@ -497,8 +507,7 @@ impl MtDecoder {
                     _ => u64::MAX,
                 };
                 if cost <= self.budget {
-                    let mem: u64 = hdr.filters.iter().map(|f| f.decoder_mem_usage()).sum();
-                    if mem > self.opts.memlimit {
+                    if self.memusage > self.opts.memlimit {
                         return Err(Error::MemLimit.into());
                     }
                     self.parse = Parse::Held(hdr, cost);

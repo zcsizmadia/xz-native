@@ -190,7 +190,8 @@ impl RawEncoder {
     /// - [`Action::Finish`]: this is the last input. [`Status::StreamEnd`]
     ///   means the stream is complete.
     ///
-    /// The other actions are [`Error::InvalidOptions`], as in liblzma.
+    /// As in liblzma, [`Action::SyncFlush`] with LZMA1 is
+    /// [`Error::InvalidOptions`] and the other actions are [`Error::Usage`].
     pub fn encode(
         &mut self,
         input: &[u8],
@@ -204,7 +205,8 @@ impl RawEncoder {
             (Action::Run, _) => MfAction::Run,
             (Action::SyncFlush, EncoderKind::Lzma2(_)) => MfAction::SyncFlush,
             (Action::Finish, _) => MfAction::Finish,
-            _ => return Err(Error::InvalidOptions),
+            (Action::SyncFlush, _) => return Err(Error::InvalidOptions),
+            _ => return Err(Error::Usage),
         };
         let mut ip = 0;
         let mut op = 0;

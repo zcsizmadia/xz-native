@@ -25,6 +25,10 @@ pub enum Error {
     Truncated,
     /// An encoder option is out of range (`LZMA_OPTIONS_ERROR` on encode).
     InvalidOptions,
+    /// The API was used in a way it doesn't support, for example an
+    /// [`Action`](crate::Action) the encoder doesn't accept
+    /// (`LZMA_PROG_ERROR`).
+    Usage,
 }
 
 impl fmt::Display for Error {
@@ -37,6 +41,7 @@ impl fmt::Display for Error {
             Error::MemLimit => "memory usage limit reached",
             Error::Truncated => "unexpected end of input",
             Error::InvalidOptions => "invalid encoder options",
+            Error::Usage => "unsupported use of the API",
         })
     }
 }
@@ -50,6 +55,7 @@ impl From<Error> for std::io::Error {
             Error::Truncated => std::io::ErrorKind::UnexpectedEof,
             Error::MemLimit => std::io::ErrorKind::OutOfMemory,
             Error::Options | Error::InvalidOptions => std::io::ErrorKind::Unsupported,
+            Error::Usage => std::io::ErrorKind::InvalidInput,
             _ => std::io::ErrorKind::InvalidData,
         };
         std::io::Error::new(kind, e)
