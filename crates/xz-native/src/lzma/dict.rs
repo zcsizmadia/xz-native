@@ -141,7 +141,7 @@ impl Dict {
         if self.pos == self.zero_prev {
             0
         } else {
-            self.buf[self.pos - 1]
+            self.buf[self.pos.saturating_sub(1)]
         }
     }
 
