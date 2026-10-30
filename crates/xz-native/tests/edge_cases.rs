@@ -252,3 +252,218 @@ fn bcj_in_later_blocks_one_shot() {
         );
     }
 }
+
+/// x86 code with call/jump opcodes at every distance from 1 to 9, so the
+/// BCJ x86 mask logic sees calls exactly 5 bytes apart and closer.
+fn dense_x86(n: usize) -> Vec<u8> {
+    let mut x = 0x9E37_79B9u32;
+    let mut v = Vec::with_capacity(n);
+    while v.len() < n {
+        x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let gap = 1 + (x >> 28) as usize % 9;
+        v.push(if x & 0x100 == 0 { 0xE8 } else { 0xE9 });
+        for k in 1..gap {
+            v.push(match k {
+                4 => {
+                    if x & 0x200 == 0 {
+                        0x00
+                    } else {
+                        0xFF
+                    }
+                }
+                _ => (x >> (k * 3)) as u8,
+            });
+        }
+    }
+    v.truncate(n);
+    v
+}
+
+#[test]
+fn every_bcj_filter_in_xz() {
+    let data = dense_x86(40_000);
+    for f in [
+        "--x86",
+        "--powerpc",
+        "--ia64",
+        "--arm",
+        "--armthumb",
+        "--arm64",
+        "--sparc",
+        "--riscv",
+    ] {
+        let Some(packed) = xz(&["-zc", f, "--lzma2=preset=0"], &data) else {
+            return;
+        };
+        assert!(decompress(&packed).unwrap() == data, "{f}");
+        assert!(
+            decompress_streaming(&packed, DecoderOptions::default()).unwrap() == data,
+            "{f}"
+        );
+    }
+}
+
+#[test]
+fn bcj_filter_ids() {
+    use xz_native::BcjKind::*;
+    let ids: Vec<u64> = [X86, PowerPc, Ia64, Arm, ArmThumb, Sparc, Arm64, RiscV]
+        .iter()
+        .map(|k| k.filter_id())
+        .collect();
+    assert_eq!(ids, [4, 5, 6, 7, 8, 9, 10, 11]);
+}
+
+/// Rewrites the 4-byte BCJ start offset in the first Block Header of an
+/// .xz made with `--<filter>=start=<old>` and fixes the header CRC.
+fn patch_bcj_start(packed: &[u8], id: u8, old: u32, new: u32) -> Vec<u8> {
+    let mut v = packed.to_vec();
+    let size = (v[12] as usize + 1) * 4;
+    let mut pat = vec![id, 4];
+    pat.extend_from_slice(&old.to_le_bytes());
+    let at = v[12..12 + size]
+        .windows(6)
+        .position(|w| w == pat)
+        .expect("BCJ props")
+        + 12
+        + 2;
+    v[at..at + 4].copy_from_slice(&new.to_le_bytes());
+    let crc = xz_native::crc32(&v[12..12 + size - 4], 0);
+    v[12 + size - 4..12 + size].copy_from_slice(&crc.to_le_bytes());
+    v
+}
+
+#[test]
+fn bcj_start_offset_alignment() {
+    let data = dense_x86(10_000);
+    // (filter, ID, alignment)
+    for (f, id, align) in [
+        ("x86", 4u8, 1u32),
+        ("powerpc", 5, 4),
+        ("ia64", 6, 16),
+        ("arm", 7, 4),
+        ("armthumb", 8, 2),
+        ("sparc", 9, 4),
+        ("arm64", 10, 4),
+        ("riscv", 11, 2),
+    ] {
+        // No check: a different start offset changes the output.
+        let opt = format!("--{f}=start=64");
+        let Some(packed) = xz(&["-zc", "--check=none", &opt, "--lzma2=preset=0"], &data) else {
+            return;
+        };
+        // Aligned start offsets decode; unaligned ones are unsupported options.
+        let ok = patch_bcj_start(&packed, id, 64, 64 + align);
+        assert!(decompress(&ok).is_ok(), "{f} aligned");
+        if align > 1 {
+            let bad = patch_bcj_start(&packed, id, 64, 64 + align / 2);
+            assert_eq!(decompress(&bad), Err(Error::Options), "{f} misaligned");
+            assert_eq!(
+                decompress_streaming(&bad, DecoderOptions::default()),
+                Err(Error::Options),
+                "{f}"
+            );
+        }
+    }
+}
+
+mod seekable {
+    use super::*;
+    use std::io::{Cursor, Read, Seek, SeekFrom};
+    use xz_native::XzSeekableReader;
+
+    fn open(v: &[u8]) -> std::io::Result<XzSeekableReader<Cursor<Vec<u8>>>> {
+        XzSeekableReader::new(Cursor::new(v.to_vec()))
+    }
+
+    fn kind(r: std::io::Result<impl Sized>) -> Option<Error> {
+        r.err()
+            .map(|e| *e.get_ref().unwrap().downcast_ref::<Error>().unwrap())
+    }
+
+    fn read_all_and_seek(v: &[u8], data: &[u8]) {
+        let mut r = open(v).unwrap();
+        let mut out = Vec::new();
+        r.read_to_end(&mut out).unwrap();
+        assert!(out == data);
+        let mut x = 7u64;
+        for _ in 0..40 {
+            x = x.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let pos = (x >> 33) % (data.len() as u64 + 1);
+            r.seek(SeekFrom::Start(pos)).unwrap();
+            let mut b = vec![0u8; ((x >> 20) % 5000) as usize];
+            let n = r.read(&mut b).unwrap();
+            assert!(b[..n] == data[pos as usize..pos as usize + n], "pos={pos}");
+        }
+    }
+
+    #[test]
+    fn file_size_checks() {
+        let Some(empty) = xz(&["-zc"], b"") else {
+            return;
+        };
+        // A Stream Header alone: too short for a Stream, a data error.
+        assert_eq!(kind(open(&empty[..12])), Some(Error::Data));
+        // Shorter than a Stream Header: not .xz at all.
+        assert_eq!(kind(open(&empty[..8])), Some(Error::Format));
+        // Size not a multiple of four.
+        let mut v = empty.clone();
+        v.extend_from_slice(&[0, 0]);
+        assert_eq!(kind(open(&v)), Some(Error::Data));
+        v.extend_from_slice(&[0, 0]);
+        assert!(open(&v).is_ok());
+    }
+
+    #[test]
+    fn long_padding_and_multiple_streams() {
+        let a = b"first stream ".repeat(5000);
+        let b = b"second".repeat(3000);
+        let (Some(pa), Some(pb)) = (xz(&["-zc"], &a), xz(&["-zc", "--check=sha256"], &b)) else {
+            return;
+        };
+        // Padding longer than the 64 KiB read buffer, between and after Streams.
+        let mut v = pa.clone();
+        v.extend(std::iter::repeat_n(0u8, 70_000));
+        v.extend_from_slice(&pb);
+        v.extend(std::iter::repeat_n(0u8, 140_000));
+        let mut data = a.clone();
+        data.extend_from_slice(&b);
+        read_all_and_seek(&v, &data);
+        assert_eq!(open(&v).unwrap().stream_count(), 2);
+        // Padding that isn't a multiple of four.
+        let mut bad = pa.clone();
+        bad.extend(std::iter::repeat_n(0u8, 70_002));
+        bad.extend_from_slice(&pb);
+        assert_eq!(kind(open(&bad)), Some(Error::Data));
+        // A second Stream Header that doesn't fit in front of its Blocks.
+        let mut short = pa[..8].to_vec();
+        short.extend_from_slice(&pb);
+        assert!(open(&short).is_err());
+    }
+
+    #[test]
+    fn index_larger_than_buffer() {
+        // Many tiny Blocks give an Index of more than 64 KiB.
+        let data: Vec<u8> = (0..120_000u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect();
+        let Some(v) = xz(&["-zc", "-0", "--block-size=4"], &data) else {
+            return;
+        };
+        let r = open(&v).unwrap();
+        assert_eq!(r.block_count(), 30_000);
+        drop(r);
+        read_all_and_seek(&v, &data);
+    }
+
+    #[test]
+    fn blocks_larger_than_buffer() {
+        // Incompressible Blocks of 300 KiB need several buffer refills.
+        let data: Vec<u8> = (0..900_000u32)
+            .map(|i| (i.wrapping_mul(2_246_822_519) >> 13) as u8)
+            .collect();
+        let Some(v) = xz(&["-zc", "-0", "--block-size=300000"], &data) else {
+            return;
+        };
+        read_all_and_seek(&v, &data);
+    }
+}
