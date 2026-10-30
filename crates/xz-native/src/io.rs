@@ -1,12 +1,14 @@
 //! `std::io` adapters.
 
-use crate::alone::LzmaDecoderAlone;
+use crate::alone::{LzmaDecoderAlone, LzmaEncoderAlone};
 use crate::error::Result;
 use crate::lzip::LzipDecoder;
+use crate::options::{EncoderOptions, LzmaOptions};
+use crate::xz::encoder::{Action, XzEncoder};
 use crate::xz::mt::{MtDecoder, thread_count};
 use crate::xz::stream::{DecoderOptions, Status, XzDecoder};
 use alloc::boxed::Box;
-use std::io::{self, BufRead, Read};
+use std::io::{self, BufRead, Read, Write};
 
 trait Decode {
     fn decode(
@@ -206,5 +208,229 @@ impl<R: BufRead> LzipReader<R> {
 impl<R: BufRead> Read for LzipReader<R> {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         read_with(&mut self.dec, &mut self.inner, &mut self.done, out)
+    }
+}
+
+/// A push encoder driven by the writers.
+trait Encode {
+    fn encode(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+    ) -> Result<(usize, usize, Status)>;
+}
+
+impl Encode for XzEncoder {
+    fn encode(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+    ) -> Result<(usize, usize, Status)> {
+        let action = if finish { Action::Finish } else { Action::Run };
+        XzEncoder::encode(self, input, output, action)
+    }
+}
+
+impl Encode for LzmaEncoderAlone {
+    fn encode(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+    ) -> Result<(usize, usize, Status)> {
+        LzmaEncoderAlone::encode(self, input, output, finish)
+    }
+}
+
+const WRITER_BUF_SIZE: usize = 1 << 16;
+
+/// The state shared by the compressing writers.
+#[derive(Debug)]
+struct WriterCore<E> {
+    enc: E,
+    buf: Box<[u8]>,
+    /// `buf[pos..len]` is waiting to be written.
+    pos: usize,
+    len: usize,
+    finished: bool,
+}
+
+impl<E: Encode> WriterCore<E> {
+    fn new(enc: E) -> Self {
+        Self {
+            enc,
+            buf: alloc::vec![0; WRITER_BUF_SIZE].into_boxed_slice(),
+            pos: 0,
+            len: 0,
+            finished: false,
+        }
+    }
+
+    fn dump<W: Write>(&mut self, w: &mut W) -> io::Result<()> {
+        while self.pos < self.len {
+            let n = w.write(&self.buf[self.pos..self.len])?;
+            if n == 0 {
+                return Err(io::ErrorKind::WriteZero.into());
+            }
+            self.pos += n;
+        }
+        self.pos = 0;
+        self.len = 0;
+        Ok(())
+    }
+
+    fn write<W: Write>(&mut self, w: &mut W, data: &[u8]) -> io::Result<usize> {
+        if self.finished {
+            return Err(io::Error::other("write after finish"));
+        }
+        loop {
+            self.dump(w)?;
+            let (used, written, _) = self.enc.encode(data, &mut self.buf, false)?;
+            self.len = written;
+            if used > 0 || data.is_empty() {
+                return Ok(used);
+            }
+        }
+    }
+
+    fn finish<W: Write>(&mut self, w: &mut W) -> io::Result<()> {
+        while !self.finished {
+            self.dump(w)?;
+            let (_, written, status) = self.enc.encode(&[], &mut self.buf, true)?;
+            self.len = written;
+            self.finished = status == Status::StreamEnd;
+        }
+        self.dump(w)?;
+        w.flush()
+    }
+}
+
+/// Compressing writer for .xz data.
+///
+/// Call [`finish`](Self::finish) to write the end of the stream and get the
+/// inner writer back; dropping the writer finishes the stream too but
+/// ignores errors. [`flush`](Write::flush) writes out the compressed data
+/// produced so far without flushing the encoder (which would cost
+/// compression).
+#[derive(Debug)]
+pub struct XzWriter<W: Write> {
+    inner: Option<W>,
+    core: WriterCore<XzEncoder>,
+}
+
+impl<W: Write> XzWriter<W> {
+    /// Creates a writer for a preset (0-9, optionally ORed with
+    /// [`crate::PRESET_EXTREME`]) with a CRC64 check.
+    pub fn new(inner: W, preset: u32) -> io::Result<Self> {
+        Ok(Self::with_encoder(inner, XzEncoder::new(preset)?))
+    }
+
+    /// Creates a writer with options.
+    pub fn with_options(inner: W, opts: EncoderOptions) -> io::Result<Self> {
+        Ok(Self::with_encoder(inner, XzEncoder::with_options(opts)?))
+    }
+
+    fn with_encoder(inner: W, enc: XzEncoder) -> Self {
+        Self {
+            inner: Some(inner),
+            core: WriterCore::new(enc),
+        }
+    }
+
+    /// Writes the end of the stream and returns the inner writer.
+    pub fn finish(mut self) -> io::Result<W> {
+        let mut inner = self.inner.take().expect("inner writer present");
+        self.core.finish(&mut inner)?;
+        Ok(inner)
+    }
+
+    /// The inner writer.
+    pub fn get_ref(&self) -> &W {
+        self.inner.as_ref().expect("inner writer present")
+    }
+}
+
+impl<W: Write> Write for XzWriter<W> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        let inner = self.inner.as_mut().expect("inner writer present");
+        self.core.write(inner, data)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let inner = self.inner.as_mut().expect("inner writer present");
+        self.core.dump(inner)?;
+        inner.flush()
+    }
+}
+
+impl<W: Write> Drop for XzWriter<W> {
+    fn drop(&mut self) {
+        if let Some(mut inner) = self.inner.take() {
+            let _ = self.core.finish(&mut inner);
+        }
+    }
+}
+
+/// Compressing writer for legacy .lzma data (see [`XzWriter`]).
+#[derive(Debug)]
+pub struct LzmaWriter<W: Write> {
+    inner: Option<W>,
+    core: WriterCore<LzmaEncoderAlone>,
+}
+
+impl<W: Write> LzmaWriter<W> {
+    /// Creates a writer for a preset.
+    pub fn new(inner: W, preset: u32) -> io::Result<Self> {
+        Ok(Self::with_encoder(inner, LzmaEncoderAlone::new(preset)?))
+    }
+
+    /// Creates a writer with options.
+    pub fn with_options(inner: W, opts: &LzmaOptions) -> io::Result<Self> {
+        Ok(Self::with_encoder(
+            inner,
+            LzmaEncoderAlone::with_options(opts)?,
+        ))
+    }
+
+    fn with_encoder(inner: W, enc: LzmaEncoderAlone) -> Self {
+        Self {
+            inner: Some(inner),
+            core: WriterCore::new(enc),
+        }
+    }
+
+    /// Writes the end of the stream and returns the inner writer.
+    pub fn finish(mut self) -> io::Result<W> {
+        let mut inner = self.inner.take().expect("inner writer present");
+        self.core.finish(&mut inner)?;
+        Ok(inner)
+    }
+
+    /// The inner writer.
+    pub fn get_ref(&self) -> &W {
+        self.inner.as_ref().expect("inner writer present")
+    }
+}
+
+impl<W: Write> Write for LzmaWriter<W> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        let inner = self.inner.as_mut().expect("inner writer present");
+        self.core.write(inner, data)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let inner = self.inner.as_mut().expect("inner writer present");
+        self.core.dump(inner)?;
+        inner.flush()
+    }
+}
+
+impl<W: Write> Drop for LzmaWriter<W> {
+    fn drop(&mut self) {
+        if let Some(mut inner) = self.inner.take() {
+            let _ = self.core.finish(&mut inner);
+        }
     }
 }

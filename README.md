@@ -10,7 +10,8 @@ build scripts or the memory-safety risk. Sibling of the C# library
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/zcsizmadia/xz-native/badge)](https://scorecard.dev/viewer/?uri=github.com/zcsizmadia/xz-native)
 
 > **Status:** early development, not yet 1.0. Decoding of `.xz`, `.lzma` and
-> `.lz` works and is heavily tested; compression is being ported. See the
+> `.lz` and encoding of `.xz` and `.lzma` work and are heavily tested; the
+> encoder output is byte-identical to liblzma 5.8.4 for the same options. See the
 > [roadmap](docs/PROPOSAL.md#milestones) and the
 > [issues](https://github.com/zcsizmadia/xz-native/issues).
 
@@ -41,7 +42,7 @@ build scripts or the memory-safety risk. Sibling of the C# library
 - **Drop-in compatible.** Matches liblzma 5.8.4's behavior, including which
   corrupt files it rejects and with which error. It's checked against xz's own
   test files, the `xz` CLI and differential tests with C liblzma. The encoder
-  target is byte-identical output.
+  writes byte-identical output to liblzma for the same options.
 - **Builds anywhere.** `cargo add` and done: no C compiler, simple
   cross-compilation, wasm, `no_std` + `alloc`, and no performance penalty
   with MSVC.
@@ -53,6 +54,22 @@ build scripts or the memory-safety risk. Sibling of the C# library
 
 ```rust
 let data = xz_native::decompress(&compressed)?;
+let compressed = xz_native::compress(&data, 6)?; // like `xz -6`
+```
+
+Compression options follow liblzma: presets 0-9 (`| PRESET_EXTREME` for
+`-e`), or any LZMA2 options, check, filter chain and Block size. Given all
+input at once, the output is byte-identical to liblzma 5.8.4 (and to
+`xz -T1`):
+
+```rust
+use xz_native::{BcjKind, Check, EncoderOptions, Filter};
+
+let mut opts = EncoderOptions::preset(9 | xz_native::PRESET_EXTREME)?;
+opts.check = Check::Sha256;
+opts.filters = vec![Filter::Bcj { kind: BcjKind::X86, start_offset: 0 }];
+opts.block_size = 16 << 20; // like `xz --block-size=16MiB`
+let compressed = xz_native::compress_with_options(&data, &opts)?;
 ```
 
 Streaming with `std::io`:
@@ -64,6 +81,10 @@ let file = std::fs::File::open("archive.tar.xz")?;
 let mut reader = xz_native::XzReader::new(BufReader::new(file));
 let mut out = Vec::new();
 reader.read_to_end(&mut out)?;
+
+let mut writer = xz_native::XzWriter::new(std::fs::File::create("out.xz")?, 6)?;
+std::io::copy(&mut std::io::stdin(), &mut writer)?;
+writer.finish()?;
 ```
 
 Multi-Block files (`xz -T`) decode in parallel with `threads` (0 = one per
@@ -88,20 +109,23 @@ let mut buf = [0u8; 4096];
 reader.read_exact(&mut buf)?;
 ```
 
-The push-style [`XzDecoder`](crates/xz-native/src/xz/stream.rs) works
-without `std`, like `lzma_code` in liblzma.
+The push-style [`XzDecoder`](crates/xz-native/src/xz/stream.rs) and
+[`XzEncoder`](crates/xz-native/src/xz/encoder.rs) work without `std`, like
+`lzma_code` in liblzma.
 
 ## Supported
 
 | Feature | Decode | Encode |
 |---|---|---|
-| `.xz` (multi-block, concatenated streams, padding) | yes | planned |
+| `.xz` (multi-block, concatenated streams, padding) | yes | yes (byte-identical to liblzma) |
 | Seekable `.xz` reading through the Index (`XzSeekableReader`) | yes | - |
-| `.lzma` (LZMA_Alone) | yes | planned |
-| Raw LZMA1 / LZMA2 | internal | planned |
+| `.lzma` (LZMA_Alone) | yes | yes (byte-identical) |
+| Raw LZMA1 / LZMA2 | internal | internal |
 | `.lz` (lzip, versions 0 and 1, concatenated members, trailing data) | yes | - |
-| Filters: x86, ARM, ARM-Thumb, ARM64, PowerPC, IA-64, SPARC, RISC-V, Delta | yes | planned |
-| Checks: None, CRC32, CRC64, SHA-256 | yes | planned |
+| Presets 0-9 and extreme, all LZMA2 options (lc/lp/pb, dict size, fast/normal mode, nice_len, hc3/hc4/bt2/bt3/bt4, depth) | - | yes |
+| Block splitting (`block_size`, sync and full flushes) | - | yes |
+| Filters: x86, ARM, ARM-Thumb, ARM64, PowerPC, IA-64, SPARC, RISC-V, Delta | yes | yes |
+| Checks: None, CRC32, CRC64, SHA-256 | yes | yes |
 | Multithreading (one-shot and `XzReader`, `DecoderOptions::threads`) | yes | planned |
 
 ## How it's tested

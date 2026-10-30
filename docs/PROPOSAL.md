@@ -52,16 +52,21 @@ apply.
 ```
 crates/xz-native/   the library (no_std + alloc; `std` feature for io)
   src/check/        CRC32, CRC64, SHA-256 with x86-64 and AArch64 SIMD
-  src/lzma/         range decoder, LZMA, LZMA2, dictionary
-  src/filter/       BCJ filters, Delta, filter chains
-  src/xz/           .xz headers, blocks, index, stream decoder, one-shot and
-                    multithreaded decoding
+  src/lzma/         range decoder/encoder and prices, LZMA, LZMA2, dictionary,
+                    LZ window and match finders (hc3/hc4/bt2/bt3/bt4), optimum
+                    fast/normal, LZMA2 chunking
+  src/filter/       BCJ filters, Delta, decoder and encoder filter chains
+  src/xz/           .xz headers, blocks, index, stream decoder and encoder,
+                    one-shot and multithreaded decoding
+  src/options.rs    encoder options and presets 0-9/extreme
   src/alone.rs      .lzma
   src/lzip.rs       .lz (lzip)
-  src/io.rs         std::io readers
+  src/io.rs         std::io readers and writers
   src/seek.rs       seekable .xz reader (Index parsed backwards, per-Block decoding)
-  tests/            xz test files, xz CLI interop, seekable and threaded readers
-crates/xz-bench/    criterion benchmarks and the liblzma differential test
+  tests/            xz test files, xz CLI interop (decode and encode), seekable
+                    and threaded readers, encoder round trips
+crates/xz-bench/    criterion benchmarks, the liblzma differential test and
+                    the encoder byte-identity tests
 fuzz/               cargo-fuzz targets (incl. differential vs liblzma)
 third_party/xz/     xz 5.8.4 source (reference only)
 ```
@@ -95,18 +100,35 @@ third_party/xz/     xz 5.8.4 source (reference only)
   decoder (one byte at a time near the error), so the error and the data
   before it are the same as without threads. Headers, Index, Footer and
   Padding errors wait in the queue behind the Blocks before them.
+- **Encoder:** a line-by-line port of liblzma 5.8.4 (window sizes and
+  sliding, hash tables and their normalization at 2^32, match finders,
+  price tables, optimal parsing, LZMA2 chunking), so that the same options
+  and the same input give the same bytes. Two differences in mechanics:
+  bits are range-encoded immediately instead of being queued per symbol
+  (the queued symbols never share a probability, and normalization still
+  happens before each bit so LZMA2 chunk limits see the same pending
+  count), and a length price table that liblzma refreshes inside
+  `length()` before applying the queued bits is refreshed before encoding
+  the length. As in liblzma, the output depends on how the input is split
+  between calls (the window fills differently); one-shot encoding equals
+  liblzma given all input at once, and feeding it like `xz` does gives
+  `xz -T1` output.
 - **`unsafe`:** denied workspace-wide, except the SIMD modules (intrinsics,
   unaligned loads), the x86-64 range-decoder assembly ported from liblzma
-  (`lzma/x86_asm.rs`, `core::arch::asm!`, baseline x86-64 only) and a few
-  benchmarked hot-path reads. Each has a SAFETY comment and debug assertions
+  (`lzma/x86_asm.rs`, `core::arch::asm!`, baseline x86-64 only), a few
+  benchmarked hot-path reads and the prefetch hints of the binary tree
+  match finder (`lzma/lz_encoder.rs`, +2-7% at presets 4-9). Each has a SAFETY comment and debug assertions
   and a safe Rust fallback that `portable` selects; tests and fuzzers
   compare both. New `unsafe` needs a benchmark showing the gain.
 
 ## Benchmarks
 
 `cargo bench -p xz-bench` compares xz-native with lzma-rust2 (best pure-Rust
-crate) and C liblzma 5.8.4 on text, binary and incompressible data at
-presets 1 and 6, plus CRC32/CRC64/SHA-256 throughput. Set `XZ_BENCH_FILE`
+crate) and C liblzma 5.8.4 on text, binary and incompressible data:
+decoding at presets 1 and 6, single-threaded encoding at presets 0, 1, 6,
+9 and 9e (`benches/encode.rs`, the first 4 MiB of each dataset), plus
+CRC32/CRC64/SHA-256 throughput. `examples/profile_encode.rs` and
+`profile_decode.rs` loop one case for profiling and quick A/B runs. Set `XZ_BENCH_FILE`
 to add a real file (for example a Silesia tarball). The Benchmarks workflow
 runs weekly and on demand on all CI platforms.
 
@@ -118,20 +140,28 @@ runs weekly and on demand on all CI platforms.
 - `miri.yml` (manual for now, it is slow): Miri on x86-64 and s390x (big
   endian).
 - `fuzz.yml`: cargo-fuzz targets `decode_xz`, `decode_lzma` (streaming with
-  random buffer sizes must equal one-shot) and `diff_liblzma` (must agree
-  with C liblzma). 3 minutes per target on every push and PR, 30 minutes
-  nightly, with the corpus cached between runs and seeded from the xz test
-  files.
+  random buffer sizes must equal one-shot), `diff_liblzma` (must agree
+  with C liblzma) and `encode_roundtrip` (options from the input; must
+  round-trip and be byte-identical to liblzma). 3 minutes per target on
+  every push and PR, 30 minutes nightly, with the corpus cached between
+  runs and seeded from the xz test files.
 - `differential` test (xz-bench): thousands of mutated streams compared
   with liblzma on every `cargo test`.
+- `encode_identity` test (xz-bench): encoder output byte-identical to
+  liblzma for presets 0-9 with and without extreme, every check, lc/lp/pb,
+  every match finder and mode with custom nice_len/depth, dictionaries from
+  4 KiB to 64 MiB, all BCJ filters and Delta (and chains), block_size,
+  sync/full flushes, LZMA2 chunk-size boundaries, incompressible data,
+  .lzma, and random option combinations; an ignored test covers positions
+  wrapping at 4 GiB. `encode_roundtrip` fuzzes the same.
 
 ## Milestones
 
 | # | Deliverable | Status |
 |---|---|---|
 | M1 | LZMA/LZMA2 decoder, `.xz`/`.lzma`, checks with SIMD, BCJ/Delta decode, tests, fuzzing, CI, benchmarks | done |
-| M2 | Range encoder, match finders, presets 0-9/extreme, byte-identical `.xz` output | |
-| M3 | Seekable reader, lzip decoding, raw LZMA1/LZMA2 API, filter encoders | |
+| M2 | Range encoder, match finders, presets 0-9/extreme, byte-identical `.xz` output | done |
+| M3 | Seekable reader, lzip decoding, raw LZMA1/LZMA2 API, filter encoders | seekable, lzip, filter encoders done |
 | M4 | Decoder and check tuning (decode into the caller's buffer, VPCLMULQDQ CRC, branchless bits) | |
 | M5 | Multithreaded encode/decode (decode done), async adapters, CLI, 1.0 (`5.8.400`) | |
 

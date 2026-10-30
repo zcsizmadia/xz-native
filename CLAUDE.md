@@ -19,7 +19,9 @@ decisions and roadmap: [docs/PROPOSAL.md](docs/PROPOSAL.md).
   set `XZ_NATIVE_REQUIRE_XZ=1` to require it)
 - `cargo test -p xz-native --profile ci --features portable` (no SIMD)
 - `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt`
-- `cargo bench -p xz-bench`
+- `cargo bench -p xz-bench` (decode, encode, check); `--bench encode` for
+  compression only. The encoder must stay byte-identical to liblzma:
+  `cargo test -p xz-bench --profile ci --test encode_identity`
 - Fuzzing needs Linux/macOS + nightly: `cd fuzz && cargo +nightly fuzz run diff_liblzma`
 
 On this Windows machine, cargo is in `~/.cargo/bin` (not on PATH in Bash)
@@ -29,9 +31,10 @@ and `xz` 5.8.4 is in `/ucrt64/bin`.
 
 - `unsafe` is denied by default. It is allowed in the SIMD modules
   (`check/x86.rs`, `check/aarch64.rs`), the x86-64 decoder assembly
-  (`lzma/x86_asm.rs`, a port of liblzma's range decoder asm) and a few
-  hot-path reads in `lzma/decoder.rs`, each with a SAFETY comment and debug
-  assertions. New `unsafe` needs a benchmark showing the gain and must keep
+  (`lzma/x86_asm.rs`, a port of liblzma's range decoder asm), a few
+  hot-path reads in `lzma/decoder.rs` and the prefetch hints of the binary
+  tree match finder (`lzma/lz_encoder.rs`), each with a SAFETY comment
+  and debug assertions. New `unsafe` needs a benchmark showing the gain and must keep
   a safe Rust fallback that the `portable` feature selects.
 - CPU-specific code goes behind runtime detection in `cpu.rs`, with a
   portable fallback tested via the `portable` feature.

@@ -25,3 +25,7 @@ harness = false
 [[bench]]
 name = "check"
 harness = false
+
+[[bench]]
+name = "encode"
+harness = false

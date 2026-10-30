@@ -2,7 +2,11 @@
 
 pub(crate) mod decoder;
 pub(crate) mod dict;
+pub(crate) mod encoder;
+pub(crate) mod lz_encoder;
 pub(crate) mod lzma2;
+pub(crate) mod lzma2_encoder;
+pub(crate) mod range_encoder;
 #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
 mod x86_asm;
 

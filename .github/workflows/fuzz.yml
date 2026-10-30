@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [decode_xz, decode_lzma, diff_liblzma]
+        target: [decode_xz, decode_lzma, diff_liblzma, encode_roundtrip]
     env:
       # Short runs on pushes and PRs, long runs nightly or on demand.
       SECONDS_PER_TARGET: ${{ github.event_name == 'schedule' && '1800' || github.event.inputs.seconds || '180' }}

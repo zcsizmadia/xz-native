@@ -85,3 +85,78 @@ impl LzmaDecoderAlone {
         Ok((ip, w, Status::Ok))
     }
 }
+
+/// Streaming .lzma encoder (liblzma `alone_encoder.c`): LZMA1 with an end
+/// of payload marker and an unknown uncompressed size in the header.
+#[derive(Debug)]
+pub struct LzmaEncoderAlone {
+    header: [u8; 13],
+    header_pos: usize,
+    lz: alloc::boxed::Box<
+        crate::lzma::lzma2_encoder::LzEncoder<crate::lzma::lzma2_encoder::Lzma1Encoder>,
+    >,
+    done: bool,
+}
+
+impl LzmaEncoderAlone {
+    /// Creates an encoder for a preset (0-9, optionally ORed with
+    /// [`crate::PRESET_EXTREME`]), like `xz --format=lzma -6`.
+    pub fn new(preset: u32) -> Result<Self> {
+        Self::with_options(&crate::LzmaOptions::preset(preset)?)
+    }
+
+    /// Creates an encoder with options.
+    pub fn with_options(opts: &crate::LzmaOptions) -> Result<Self> {
+        let lz = crate::lzma::lzma2_encoder::Lzma1Encoder::new_lz(opts)?;
+        let mut header = [0u8; 13];
+        header[0] = opts.props_byte();
+        // Round the dictionary size up to 2^n or 2^n + 2^(n-1) so that
+        // liblzma's decoder accepts the file.
+        let mut d = opts.dict_size - 1;
+        d |= d >> 2;
+        d |= d >> 3;
+        d |= d >> 4;
+        d |= d >> 8;
+        d |= d >> 16;
+        d = d.saturating_add(1);
+        header[1..5].copy_from_slice(&d.to_le_bytes());
+        header[5..].fill(0xFF);
+        Ok(Self {
+            header,
+            header_pos: 0,
+            lz: alloc::boxed::Box::new(lz),
+            done: false,
+        })
+    }
+
+    /// Encodes from `input` into `output`; with `finish`, this is the last
+    /// input. Returns `(input used, output written, status)`;
+    /// [`Status::StreamEnd`] means the stream is complete.
+    pub fn encode(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+    ) -> Result<(usize, usize, Status)> {
+        if self.done {
+            return Ok((0, 0, Status::StreamEnd));
+        }
+        let mut op = (13 - self.header_pos).min(output.len());
+        output[..op].copy_from_slice(&self.header[self.header_pos..self.header_pos + op]);
+        self.header_pos += op;
+        if self.header_pos < 13 {
+            return Ok((0, op, Status::Ok));
+        }
+        let mut ip = 0;
+        let action = if finish {
+            crate::lzma::lz_encoder::MfAction::Finish
+        } else {
+            crate::lzma::lz_encoder::MfAction::Run
+        };
+        if self.lz.code(input, &mut ip, output, &mut op, action)? {
+            self.done = true;
+            return Ok((ip, op, Status::StreamEnd));
+        }
+        Ok((ip, op, Status::Ok))
+    }
+}
