@@ -124,6 +124,6 @@ pub use options::{
 pub use push::{PushDecoder, PushEncoder};
 pub use raw::{RawDecoder, RawEncoder, RawMethod, RawOptions};
 #[cfg(feature = "std")]
-pub use seek::XzSeekableReader;
+pub use seek::{BlockDetails, BlockInfo, StreamInfo, XzSeekableReader};
 pub use xz::encoder::{Action, XzEncoder};
 pub use xz::stream::{DecoderOptions, Status, XzDecoder};

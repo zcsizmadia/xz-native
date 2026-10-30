@@ -9,6 +9,10 @@ minor version may change the API.
 ## [Unreleased]
 
 ### Added
+- `XzSeekableReader::streams()`, `blocks()` and `block_details(i)`: the
+  Stream and Block tables of `xz --list -vv` (offsets, sizes, checks,
+  padding, and from the Block Header its size, stored sizes, filter chain,
+  memory usage and check value) (#59).
 - `memusage()`, `memlimit()` and `set_memlimit()` on `XzDecoder`,
   `LzmaDecoder` and `LzipDecoder` (`lzma_memusage`, `lzma_memlimit_get`,
   `lzma_memlimit_set`): after `Error::MemLimit`, `memusage()` says how much

@@ -7,6 +7,7 @@
 
 use crate::check::Check;
 use crate::error::Error;
+use crate::filter::Filter;
 use crate::xz::format::*;
 use crate::xz::stream::{BlockDecoder, DecoderOptions, IndexDecoder};
 use alloc::boxed::Box;
@@ -18,22 +19,83 @@ use std::io::{self, Read, Seek, SeekFrom};
 const BUF_SIZE: usize = 64 << 10;
 const HEADER: u64 = STREAM_HEADER_SIZE as u64;
 
-/// One Block from the Index.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct BlockEntry {
-    /// Offset of the Block's data in the uncompressed output.
-    pub(crate) uncompressed_offset: u64,
-    pub(crate) uncompressed_size: u64,
-    /// File offset of the Block Header.
-    pub(crate) compressed_offset: u64,
-    pub(crate) unpadded_size: u64,
-    pub(crate) check: Check,
+/// A Stream of a seekable .xz file, from its Stream Header, Stream Footer
+/// and Index (the Stream rows of `xz --list -vv`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct StreamInfo {
+    /// File offset of the Stream Header.
+    pub compressed_offset: u64,
+    /// Size from the start of the Stream Header to the end of the Stream
+    /// Footer, without the Stream Padding after it.
+    pub compressed_size: u64,
+    /// Offset of the Stream's data in the uncompressed output.
+    pub uncompressed_offset: u64,
+    /// Uncompressed size of all its Blocks.
+    pub uncompressed_size: u64,
+    /// Index of its first Block in [`XzSeekableReader::blocks`].
+    pub first_block: usize,
+    /// Number of Blocks.
+    pub block_count: usize,
+    /// Check type.
+    pub check: Check,
+    /// Size of the Stream Padding after the Stream.
+    pub padding: u64,
 }
 
-impl BlockEntry {
+/// A Block of a seekable .xz file, from the Index (the Block rows of
+/// `xz --list -v`). [`XzSeekableReader::block_details`] reads the rest from
+/// the Block Header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BlockInfo {
+    /// Index of its Stream in [`XzSeekableReader::streams`].
+    pub stream: usize,
+    /// File offset of the Block Header.
+    pub compressed_offset: u64,
+    /// Offset of the Block's data in the uncompressed output.
+    pub uncompressed_offset: u64,
+    /// Unpadded Size: Block Header, compressed data and check, without the
+    /// Block Padding.
+    pub unpadded_size: u64,
+    /// Uncompressed size.
+    pub uncompressed_size: u64,
+    /// Check type of its Stream.
+    pub check: Check,
+}
+
+impl BlockInfo {
+    /// Size in the file, with the Block Padding (`TotalSize` in
+    /// `xz --list`).
+    pub fn total_size(&self) -> u64 {
+        self.unpadded_size.next_multiple_of(4)
+    }
+
     fn uncompressed_end(&self) -> u64 {
         self.uncompressed_offset + self.uncompressed_size
     }
+}
+
+pub(crate) type BlockEntry = BlockInfo;
+
+/// What the Block Header and the check field of a Block hold (the extra
+/// columns of `xz --list -vv`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BlockDetails {
+    /// Size of the Block Header in bytes.
+    pub header_size: usize,
+    /// Compressed size, if the Block Header stores it.
+    pub compressed_size: Option<u64>,
+    /// Uncompressed size, if the Block Header stores it.
+    pub uncompressed_size: Option<u64>,
+    /// The filter chain, LZMA2 last.
+    pub filters: Vec<Filter>,
+    /// Memory needed to decode the Block (see [`crate::XzDecoder::memusage`]).
+    pub memusage: u64,
+    /// The integrity check value as stored (CRC32 and CRC64 little-endian;
+    /// empty for [`Check::None`]).
+    pub check_value: Vec<u8>,
 }
 
 /// The Block being decoded.
@@ -72,6 +134,7 @@ pub struct XzSeekableReader<R> {
     inner: R,
     opts: DecoderOptions,
     blocks: Vec<BlockEntry>,
+    streams: Vec<StreamInfo>,
     checks: Vec<Check>,
     size: u64,
     pos: u64,
@@ -103,7 +166,7 @@ pub(crate) fn parse<R: Read + Seek>(
     inner: &mut R,
     opts: &DecoderOptions,
     buf: &mut [u8],
-) -> io::Result<(Vec<BlockEntry>, Vec<Check>)> {
+) -> io::Result<(Vec<BlockEntry>, Vec<StreamInfo>)> {
     let file_size = inner.seek(SeekFrom::End(0))?;
     if file_size < HEADER {
         return Err(Error::Format.into());
@@ -119,7 +182,7 @@ pub(crate) fn parse<R: Read + Seek>(
     let mut total_records = 0u64;
     // Last Stream and last Block first; reversed at the end.
     let mut blocks: Vec<BlockEntry> = Vec::new();
-    let mut checks = Vec::new();
+    let mut streams = Vec::new();
     let mut pos = file_size;
     loop {
         // Stream Padding, never reaching into the first Stream Header.
@@ -144,6 +207,7 @@ pub(crate) fn parse<R: Read + Seek>(
         // Stream Footer. A bad magic is a data error here, not a format error.
         read_at(inner, pos - HEADER, &mut h)?;
         let (flags, backward) = decode_stream_footer(&h)?;
+        let stream_end = pos;
         pos -= HEADER;
         if pos < backward + HEADER {
             return Err(Error::Data.into());
@@ -196,11 +260,21 @@ pub(crate) fn parse<R: Read + Seek>(
         if opts.fail_on_unsupported_check && matches!(flags.check, Check::Unsupported(_)) {
             return Err(Error::Options.into());
         }
-        checks.push(flags.check);
+        streams.push(StreamInfo {
+            compressed_offset: pos,
+            compressed_size: stream_end - pos,
+            uncompressed_offset: 0,
+            uncompressed_size: 0,
+            first_block: 0,
+            block_count: records.len(),
+            check: flags.check,
+            padding,
+        });
         let mut compressed_offset = index_pos;
         for &(unpadded_size, uncompressed_size) in records.iter().rev() {
             compressed_offset -= unpadded_size.next_multiple_of(4);
             blocks.push(BlockEntry {
+                stream: 0,
                 uncompressed_offset: 0,
                 uncompressed_size,
                 compressed_offset,
@@ -214,16 +288,24 @@ pub(crate) fn parse<R: Read + Seek>(
     }
 
     blocks.reverse();
-    checks.reverse();
+    streams.reverse();
     let mut uncompressed_offset = 0u64;
-    for b in &mut blocks {
-        b.uncompressed_offset = uncompressed_offset;
-        uncompressed_offset = uncompressed_offset
-            .checked_add(b.uncompressed_size)
-            .filter(|&v| v <= VLI_MAX)
-            .ok_or(Error::Data)?;
+    let mut first_block = 0;
+    for (i, s) in streams.iter_mut().enumerate() {
+        s.first_block = first_block;
+        s.uncompressed_offset = uncompressed_offset;
+        for b in &mut blocks[first_block..first_block + s.block_count] {
+            b.stream = i;
+            b.uncompressed_offset = uncompressed_offset;
+            uncompressed_offset = uncompressed_offset
+                .checked_add(b.uncompressed_size)
+                .filter(|&v| v <= VLI_MAX)
+                .ok_or(Error::Data)?;
+        }
+        s.uncompressed_size = uncompressed_offset - s.uncompressed_offset;
+        first_block += s.block_count;
     }
-    Ok((blocks, checks))
+    Ok((blocks, streams))
 }
 
 /// Decodes into `out` (refilling the input from `inner`) until there is
@@ -290,12 +372,14 @@ impl<R: Read + Seek> XzSeekableReader<R> {
     /// table (all Indexes) and, separately, to each Block decoder.
     pub fn with_options(mut inner: R, opts: DecoderOptions) -> io::Result<Self> {
         let mut buf = vec![0u8; BUF_SIZE].into_boxed_slice();
-        let (blocks, checks) = parse(&mut inner, &opts, &mut buf)?;
+        let (blocks, streams) = parse(&mut inner, &opts, &mut buf)?;
         let size = blocks.last().map_or(0, |b| b.uncompressed_end());
+        let checks = streams.iter().map(|s| s.check).collect();
         Ok(Self {
             inner,
             opts,
             blocks,
+            streams,
             checks,
             size,
             pos: 0,
@@ -324,6 +408,50 @@ impl<R: Read + Seek> XzSeekableReader<R> {
         &self.checks
     }
 
+    /// The Streams, in file order.
+    pub fn streams(&self) -> &[StreamInfo] {
+        &self.streams
+    }
+
+    /// The Blocks of all Streams, in file order.
+    pub fn blocks(&self) -> &[BlockInfo] {
+        &self.blocks
+    }
+
+    /// Reads the Block Header and the check value of Block `i` (an index
+    /// into [`blocks`](Self::blocks)). The header is verified against the
+    /// Index as when the Block is decoded. The read position in the
+    /// uncompressed data doesn't change.
+    ///
+    /// # Panics
+    ///
+    /// If `i` is out of range.
+    pub fn block_details(&mut self, i: usize) -> io::Result<BlockDetails> {
+        let at = self.inner.stream_position()?;
+        let r = self.read_details(i);
+        self.inner.seek(SeekFrom::Start(at))?;
+        r
+    }
+
+    fn read_details(&mut self, i: usize) -> io::Result<BlockDetails> {
+        let b = self.blocks[i];
+        let (h, header_size) = self.read_header(i)?;
+        let mut check_value = vec![0; b.check.size()];
+        read_at(
+            &mut self.inner,
+            b.compressed_offset + b.total_size() - check_value.len() as u64,
+            &mut check_value,
+        )?;
+        Ok(BlockDetails {
+            header_size,
+            memusage: BlockDecoder::mem_usage(&h),
+            compressed_size: h.compressed_size,
+            uncompressed_size: h.uncompressed_size,
+            filters: h.filters,
+            check_value,
+        })
+    }
+
     /// Returns a reference to the inner reader.
     pub fn get_ref(&self) -> &R {
         &self.inner
@@ -345,9 +473,9 @@ impl<R: Read + Seek> XzSeekableReader<R> {
         i
     }
 
-    /// Starts decoding Block `i`: reads and checks its header.
-    fn open(&mut self, i: usize) -> io::Result<()> {
-        self.cur = None;
+    /// Reads Block `i`'s header and checks it against the Index. Returns it
+    /// with its size; the inner reader is left after it.
+    fn read_header(&mut self, i: usize) -> io::Result<(BlockHeader, usize)> {
         let b = self.blocks[i];
         self.inner.seek(SeekFrom::Start(b.compressed_offset))?;
         let mut hdr = [0u8; 1024];
@@ -358,7 +486,7 @@ impl<R: Read + Seek> XzSeekableReader<R> {
         }
         let header_size = (hdr[0] as usize + 1) * 4;
         read_full(&mut self.inner, &mut hdr[1..header_size])?;
-        let mut h = decode_block_header(&hdr[..header_size], b.check)?;
+        let h = decode_block_header(&hdr[..header_size], b.check)?;
 
         // The header and the Index must agree (`lzma_block_compressed_size`).
         let container = header_size as u64 + b.check.size() as u64;
@@ -372,7 +500,16 @@ impl<R: Read + Seek> XzSeekableReader<R> {
         {
             return Err(Error::Data.into());
         }
-        h.compressed_size = Some(compressed);
+        Ok((h, header_size))
+    }
+
+    /// Starts decoding Block `i`: reads and checks its header.
+    fn open(&mut self, i: usize) -> io::Result<()> {
+        self.cur = None;
+        let b = self.blocks[i];
+        let (mut h, header_size) = self.read_header(i)?;
+        let container = header_size as u64 + b.check.size() as u64;
+        h.compressed_size = Some(b.unpadded_size - container);
         h.uncompressed_size = Some(b.uncompressed_size);
 
         self.cur = Some(Current {
