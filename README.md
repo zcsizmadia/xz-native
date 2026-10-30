@@ -226,6 +226,13 @@ release 0.1.0, compatible with xz 5.8.4. Depend on it as
 `xz-native = "0.1"`; Cargo ignores the metadata. Until 1.0, a minor bump
 (0.2, 0.3, ...) may change the API. Git tags are `vX.Y.Z`.
 
+Issues and pull requests in the upstream
+[xz repository](https://github.com/tukaani-project/xz) are tracked
+regularly. Fixes to liblzma's behavior, new test files and new filters are
+followed in xz-native, and upstream performance work is re-measured in
+[BENCHMARK.md](BENCHMARK.md). The current list is in
+[#68](https://github.com/zcsizmadia/xz-native/issues/68).
+
 ## Development
 
 ```sh
