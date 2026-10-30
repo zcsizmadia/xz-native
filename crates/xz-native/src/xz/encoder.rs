@@ -459,10 +459,13 @@ mod tests {
 
     #[test]
     fn roundtrip_presets() {
-        let data = sample(300_000);
+        let data = sample(if cfg!(miri) { 4_000 } else { 300_000 });
         for preset in [0, 1, 3, 4, 6, 9 | crate::PRESET_EXTREME] {
             let mut opts = EncoderOptions::preset(preset).unwrap();
-            opts.lzma.dict_size = opts.lzma.dict_size.min(1 << 20);
+            opts.lzma.dict_size =
+                opts.lzma
+                    .dict_size
+                    .min(if cfg!(miri) { 1 << 16 } else { 1 << 20 });
             let c = compress_with(&data, &opts);
             assert_eq!(crate::decompress(&c).unwrap(), data, "preset {preset}");
         }
@@ -477,7 +480,7 @@ mod tests {
 
     #[test]
     fn small_output_buffers() {
-        let data = sample(100_000);
+        let data = sample(if cfg!(miri) { 3_000 } else { 100_000 });
         let opts = EncoderOptions {
             lzma: LzmaOptions::preset(1).unwrap(),
             ..Default::default()

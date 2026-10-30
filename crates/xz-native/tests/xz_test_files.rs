@@ -20,6 +20,8 @@ fn files(ext: &str) -> Vec<(String, Vec<u8>)> {
         .unwrap()
         .map(|e| e.unwrap().path())
         .filter(|p| p.extension().is_some_and(|e| e == ext))
+        // Under Miri, only the small files (all but the delta-coded TIFF).
+        .filter(|p| !cfg!(miri) || fs::metadata(p).unwrap().len() <= 4096)
         .map(|p| {
             (
                 p.file_name().unwrap().to_string_lossy().into_owned(),

@@ -1090,13 +1090,18 @@ mod tests {
                 (0, 273, 512),
             ] {
                 let nice = nice.max(kind.hash_bytes());
-                let data = test_data(dk, 20_000, 7 + dk as u64);
+                let n = if cfg!(miri) { 300 } else { 20_000 };
+                let data = test_data(dk, n, 7 + dk as u64);
                 check_finder(kind, nice, depth, &data, 0);
             }
         }
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "the window is about 530 KiB; sliding it is safe code (copy_within)"
+    )]
     fn window_slides() {
         let data = test_data(1, 1_300_000, 11);
         for kind in [MatchFinder::Hc4, MatchFinder::Bt4] {
@@ -1108,7 +1113,8 @@ mod tests {
     fn binary_trees_find_longest_match() {
         for kind in [MatchFinder::Bt2, MatchFinder::Bt3, MatchFinder::Bt4] {
             for dk in 0..3 {
-                let data = test_data(dk, 8000, 99 + dk as u64);
+                let n = if cfg!(miri) { 200 } else { 8000 };
+                let data = test_data(dk, n, 99 + dk as u64);
                 check_finder(kind, 273, 1 << 20, &data, 0);
                 check_finder(kind, 32, 1 << 20, &data, 0);
             }
@@ -1127,7 +1133,12 @@ mod tests {
             MatchFinder::Bt3,
             MatchFinder::Bt4,
         ] {
-            let data = test_data(1, 40_000, 5);
+            let (n, wrap) = if cfg!(miri) {
+                (1_500, 500)
+            } else {
+                (40_000, 15_000)
+            };
+            let data = test_data(1, n, 5);
             let run = |offset: u32| {
                 let opts = LzOptions {
                     before_size: 4096,
@@ -1158,20 +1169,21 @@ mod tests {
                     }
                     let before = mf.offset;
                     let (len, count) = mf.find(&mut matches);
-                    normalized |= mf.offset != before;
                     mf.read_ahead = 0;
                     out.push((len, matches[..count as usize].to_vec()));
                     if len > 8 && mf.avail() > 3 {
                         mf.skip(3);
                         mf.read_ahead = 0;
                     }
+                    // Both find and skip can normalize.
+                    normalized |= mf.offset != before;
                 }
                 (out, normalized)
             };
             let (a, na) = run(0);
-            // 4097 = cyclic_size; positions reach u32::MAX after ~15000
+            // 4097 = cyclic_size; positions reach u32::MAX after ~`wrap`
             // bytes, then again after about 4 GiB.
-            let (b, nb) = run(u32::MAX - 15_000);
+            let (b, nb) = run(u32::MAX - wrap);
             assert!(!na && nb, "{kind:?}: normalization must happen once");
             assert_eq!(a.len(), b.len());
             for (i, (x, y)) in a.iter().zip(&b).enumerate() {

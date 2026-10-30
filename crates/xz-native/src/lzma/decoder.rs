@@ -254,7 +254,7 @@ fn bittree<const SAFE: bool, const BITS: u32>(
     undo: &mut Undo,
     base: usize,
 ) -> core::result::Result<u32, Stop> {
-    #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+    #[cfg(all(target_arch = "x86_64", not(feature = "portable"), not(miri)))]
     if !SAFE {
         debug_assert!(base + (1 << BITS) <= PROBS_SIZE);
         // SAFETY: the tree is inside `probs` (see `prob`), and the fast path
@@ -360,7 +360,7 @@ fn direct_bits<const SAFE: bool>(
     inp: &mut Input<'_, SAFE>,
     count: u32,
 ) -> core::result::Result<u32, Stop> {
-    #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+    #[cfg(all(target_arch = "x86_64", not(feature = "portable"), not(miri)))]
     if !SAFE && count > 0 {
         // SAFETY: the fast path has at least FAST_MIN input bytes left, more
         // than the 26 direct bits a distance can have.
@@ -473,7 +473,7 @@ fn symbol<const SAFE: bool>(
             // Matched literal: while the decoded bits equal the match byte's,
             // the probabilities come from the upper half of the coder. After
             // the first difference the rest is a plain literal tree (LZMA SDK).
-            #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+            #[cfg(all(target_arch = "x86_64", not(feature = "portable"), not(miri)))]
             if !SAFE {
                 debug_assert!(base + 0x300 <= PROBS_SIZE);
                 // SAFETY: the literal coder is inside `probs` (see `prob`), and

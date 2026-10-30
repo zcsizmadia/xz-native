@@ -773,15 +773,24 @@ mod tests {
 
     #[test]
     fn roundtrip_and_thread_independence() {
-        let data = sample(300_000);
+        // Several Blocks per thread count either way.
+        let (n, block_size) = if cfg!(miri) {
+            (12_000, 4_000)
+        } else {
+            (300_000, 40_000)
+        };
+        let data = sample(n);
         for preset in [0, 6] {
             let mut want = None;
             for threads in [2, 3, 8] {
-                let o = EncoderOptions {
+                let mut o = EncoderOptions {
                     threads,
-                    block_size: 40_000,
+                    block_size,
                     ..EncoderOptions::preset(preset).unwrap()
                 };
+                if cfg!(miri) {
+                    o.lzma.dict_size = 1 << 16;
+                }
                 let c = compress(&data, &o).unwrap();
                 assert_eq!(crate::decompress(&c).unwrap(), data);
                 assert_eq!(*want.get_or_insert_with(|| c.clone()), c);
@@ -790,6 +799,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "32 MiB input; incompressible_chunks_are_stored covers stored chunks"
+    )]
     fn stored_block() {
         // LZMA2 stores random data in chunks of about 61 KiB while the bound
         // allows for 64 KiB chunks, so a large random Block doesn't fit.
