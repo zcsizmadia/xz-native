@@ -79,3 +79,27 @@ pub fn decompress_lzip_with_memlimit(input: &[u8], memlimit: u64) -> Result<Vec<
     let mut d = LzipDecoder::new(memlimit);
     decode_all(input, true, |i, o, f| d.decode(i, o, f))
 }
+
+/// Like [`decompress`], but appends to `out` and reuses its capacity.
+///
+/// Decoding many files into one reused buffer avoids paying for fresh memory
+/// on every call. Fresh pages must be committed and zeroed by the operating
+/// system, which on Windows costs more than decoding incompressible data
+/// itself. On error, `out` is left at its original length.
+pub fn decompress_into(input: &[u8], out: &mut Vec<u8>) -> Result<()> {
+    decompress_with_options_into(input, DecoderOptions::default(), out)
+}
+
+/// Like [`decompress_with_options`], but appends to `out`; see
+/// [`decompress_into`].
+pub fn decompress_with_options_into(
+    input: &[u8],
+    opts: DecoderOptions,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    #[cfg(feature = "std")]
+    if opts.threads != 1 {
+        return crate::xz::flat::decompress_threads_into(input, &opts, out);
+    }
+    crate::xz::flat::decompress_into(input, &opts, out)
+}

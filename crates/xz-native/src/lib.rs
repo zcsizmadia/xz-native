@@ -48,8 +48,9 @@ pub use io::{LzipReader, LzmaReader, XzReader};
 pub use lzip::LzipDecoder;
 pub use lzma::LzmaProps;
 pub use oneshot::{
-    decompress, decompress_lzip, decompress_lzip_with_memlimit, decompress_lzma,
+    decompress, decompress_into, decompress_lzip, decompress_lzip_with_memlimit, decompress_lzma,
     decompress_lzma_with_memlimit, decompress_streaming, decompress_with_options,
+    decompress_with_options_into,
 };
 #[cfg(feature = "std")]
 pub use seek::XzSeekableReader;
