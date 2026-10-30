@@ -26,9 +26,8 @@ build scripts or the memory-safety risk. Sibling of the C# library
   `unsafe` is limited to a few SIMD and assembly modules, each with a safe
   fallback. Every push is fuzzed, and the results are compared with C
   liblzma on millions of mutated files.
-- **As fast as liblzma, often faster** (details in
-  [#23](https://github.com/zcsizmadia/xz-native/issues/23) and
-  [#38](https://github.com/zcsizmadia/xz-native/pull/38)):
+- **As fast as liblzma, often faster** (machines, methods and full tables
+  in [BENCHMARK.md](BENCHMARK.md)):
 
   | | xz-native compared with C liblzma 5.8.4 |
   |---|---|
