@@ -6,7 +6,8 @@
 //! the C library (its multithreaded decoder with `threads`). With `threads`
 //! given, the input is a multi-Block file (1 MiB Blocks, the dataset
 //! repeated 8 times) and the decoder uses that many threads (0 = one per
-//! CPU).
+//! CPU). `XZ_PROBE_BLOCK_MIB` changes the Block size; 0 makes the 64 MiB a
+//! single Block.
 
 use std::io::Read;
 
@@ -26,9 +27,14 @@ fn main() {
     let mut packed = Vec::new();
     if threads.is_some() {
         data = data.repeat(8);
+        let block_mib: u64 = std::env::var("XZ_PROBE_BLOCK_MIB").map_or(1, |s| s.parse().unwrap());
         let enc = liblzma::stream::MtStreamBuilder::new()
             .threads(4)
-            .block_size(1 << 20)
+            .block_size(if block_mib == 0 {
+                1 << 30
+            } else {
+                block_mib << 20
+            })
             .preset(preset)
             .encoder()
             .unwrap();
