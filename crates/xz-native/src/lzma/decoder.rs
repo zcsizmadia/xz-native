@@ -546,13 +546,13 @@ fn symbol<const SAFE: bool>(
                 Err(Stop::Data)
             };
         }
-        if at_limit || dist as usize >= dict.full {
+        if at_limit || dist as usize >= dict.full() {
             return Err(Stop::Data);
         }
         st.state = if state < 7 { 7 } else { 10 };
         st.reps = [dist, st.reps[0], st.reps[1], st.reps[2]];
     } else {
-        if dict.full == 0 {
+        if dict.full() == 0 {
             return Err(Stop::Data);
         }
         if bit(rc, inp, probs, undo, IS_REP0 + state)? == 0 {

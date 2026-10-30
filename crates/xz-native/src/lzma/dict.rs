@@ -20,8 +20,6 @@ pub(crate) struct Dict {
     pub(crate) buf: Vec<u8>,
     /// Next write position.
     pub(crate) pos: usize,
-    /// Number of valid history bytes, capped at the dictionary size.
-    pub(crate) full: usize,
     /// Write limit for the current decode call.
     pub(crate) limit: usize,
     /// Usable buffer size (dictionary size + 2 * REPEAT_MAX).
@@ -31,6 +29,9 @@ pub(crate) struct Dict {
     pub(crate) need_reset: bool,
     /// Position of the oldest byte after the last reset.
     base: usize,
+    /// Position at which the previous byte reads as 0: `base` in a flat
+    /// dictionary. A ring dictionary stores that 0 before `INIT_POS`.
+    zero_prev: usize,
     /// Flat mode: `buf` is the output itself and never wraps. Its length
     /// can be anything from `pos` up: [`Dict::write`] appends and
     /// [`Dict::init_to_limit`] zero-fills for the LZMA decoder.
@@ -52,12 +53,12 @@ impl Dict {
         let mut d = Self {
             buf: vec![0; size + EXTRA],
             pos: INIT_POS,
-            full: 0,
             limit: INIT_POS,
             size,
             has_wrapped: false,
             need_reset: false,
             base: INIT_POS,
+            zero_prev: usize::MAX,
             flat: false,
         };
         d.reset();
@@ -71,12 +72,12 @@ impl Dict {
         Self {
             buf,
             pos: start,
-            full: 0,
             limit: start,
             size: usize::MAX,
             has_wrapped: false,
             need_reset: false,
             base: start,
+            zero_prev: start,
             flat: true,
         }
     }
@@ -89,11 +90,11 @@ impl Dict {
     pub(crate) fn reset(&mut self) {
         if self.flat {
             self.base = self.pos;
+            self.zero_prev = self.pos;
         } else {
             self.pos = INIT_POS;
             self.buf[INIT_POS - 1] = 0;
         }
-        self.full = 0;
         self.has_wrapped = false;
         self.need_reset = false;
     }
@@ -108,10 +109,14 @@ impl Dict {
         }
     }
 
+    /// Number of valid history bytes, capped at the dictionary size.
+    /// Computed when needed (once per match) rather than updated per byte.
     #[inline(always)]
-    fn update_full(&mut self) {
-        if !self.has_wrapped {
-            self.full = self.pos - self.base;
+    pub(crate) fn full(&self) -> usize {
+        if self.has_wrapped {
+            self.size - INIT_POS
+        } else {
+            self.pos - self.base
         }
     }
 
@@ -130,9 +135,10 @@ impl Dict {
 
     #[inline(always)]
     pub(crate) fn get0(&self) -> u8 {
-        // The previous byte is 0 right after a reset. (A flat dictionary
-        // has the previous Block's data before `base`.)
-        if self.full == 0 {
+        // The previous byte is 0 right after a reset. A ring dictionary has
+        // that 0 in the buffer; a flat one has the previous Block's data
+        // before `base`, so it checks the position.
+        if self.pos == self.zero_prev {
             0
         } else {
             self.buf[self.pos - 1]
@@ -143,7 +149,6 @@ impl Dict {
     pub(crate) fn put(&mut self, b: u8) {
         self.buf[self.pos] = b;
         self.pos += 1;
-        self.update_full();
     }
 
     /// Copies up to `len` bytes from `distance + 1` back, stopping at the
@@ -162,7 +167,6 @@ impl Dict {
             let (src, dst) = self.buf.split_at_mut(self.pos);
             dst[..32].copy_from_slice(&src[back..back + 32]);
             self.pos += left;
-            self.update_full();
             return len - left as u32;
         }
         let back = if d < self.pos {
@@ -188,7 +192,6 @@ impl Dict {
             self.buf.copy_within(back..back + left, self.pos);
         }
         self.pos += left;
-        self.update_full();
         len - left as u32
     }
 
@@ -202,7 +205,6 @@ impl Dict {
         self.buf[self.pos..self.pos + init].copy_from_slice(&data[..init]);
         self.buf.extend_from_slice(&data[init..n]);
         self.pos += n;
-        self.update_full();
         n
     }
 
