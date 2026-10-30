@@ -67,6 +67,9 @@
 //! # Ok::<(), xz_native::Error>(())
 //! ```
 //!
+//! The [`PushDecoder`] and [`PushEncoder`] traits cover every push decoder
+//! and encoder, for code that is generic over the format.
+//!
 //! # Features
 //!
 //! - `std` (default): the `std::io` types, threads, and run-time CPU
@@ -94,6 +97,7 @@ mod lzip;
 mod lzma;
 mod oneshot;
 mod options;
+mod push;
 mod raw;
 #[cfg(feature = "std")]
 mod seek;
@@ -117,6 +121,7 @@ pub use options::{
     DICT_SIZE_MAX, DICT_SIZE_MIN, EncoderOptions, LzmaOptions, MatchFinder, Mode, PRESET_DEFAULT,
     PRESET_EXTREME,
 };
+pub use push::{PushDecoder, PushEncoder};
 pub use raw::{RawDecoder, RawEncoder, RawMethod, RawOptions};
 #[cfg(feature = "std")]
 pub use seek::XzSeekableReader;
