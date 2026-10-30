@@ -1,40 +1,81 @@
-//! Pure Rust XZ/LZMA compression, compatible with xz 5.8.4.
+//! Pure Rust XZ/LZMA compression and decompression, compatible with
+//! xz/liblzma 5.8.4: the same file formats, the same strictness on bad input,
+//! and encoder output byte-identical to liblzma for the same options.
 //!
-//! Decompress `.xz` data in one call:
+//! # Which API
 //!
-//! ```
-//! # let compressed: &[u8] = &[
-//! #     0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00, 0x00, 0x04, 0xE6, 0xD6, 0xB4, 0x46, 0x00, 0x00, 0x00, 0x00,
-//! #     0x1C, 0xDF, 0x44, 0x21, 0x1F, 0xB6, 0xF3, 0x7D, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x59, 0x5A,
-//! # ];
-//! let data = xz_native::decompress(compressed)?;
-//! assert!(data.is_empty());
-//! # Ok::<(), xz_native::Error>(())
-//! ```
+//! The same layers exist for `.xz`, legacy `.lzma` and (decoding) `.lz`:
 //!
-//! Compress, byte-identical to liblzma 5.8.4 (`xz -6`) for the same options:
+//! | Layer | Decode | Encode | For |
+//! |---|---|---|---|
+//! | One-shot | [`decompress`], [`decompress_into`] | [`compress`] | data in memory |
+//! | `std::io` | [`XzReader`], [`XzSeekableReader`] | [`XzWriter`] | files and streams |
+//! | Push | [`XzDecoder`] | [`XzEncoder`] | `no_std`, custom I/O, event loops |
+//! | Raw | [`RawDecoder`] | [`RawEncoder`] | LZMA1/LZMA2 without a container |
+//!
+//! `.lzma` uses [`decompress_lzma`], [`LzmaReader`], [`LzmaDecoder`],
+//! [`compress_lzma`], [`LzmaWriter`] and [`LzmaEncoder`]; `.lz` uses
+//! [`decompress_lzip`], [`LzipReader`] and [`LzipDecoder`]. The [`compat`]
+//! module mirrors the `xz2` and `liblzma` crates' read/bufread/write APIs for
+//! migrating code.
+//!
+//! Options are [`DecoderOptions`] and [`EncoderOptions`] (with
+//! [`LzmaOptions`] inside), built with chainable setters. Multi-Block files
+//! decode in parallel with [`DecoderOptions::threads`], and
+//! [`EncoderOptions::threads`] compresses like `xz -T`.
+//!
+//! # One-shot
 //!
 //! ```
 //! let data = b"hello hello hello hello";
-//! let compressed = xz_native::compress(data, 6)?;
+//! let compressed = xz_native::compress(data, 6)?; // like `xz -6`
 //! assert_eq!(xz_native::decompress(&compressed)?, data);
 //! # Ok::<(), xz_native::Error>(())
 //! ```
 //!
-//! [`EncoderOptions`] selects presets, LZMA2 options, the check, filters and
-//! the Block size, and with `threads` compresses Blocks in parallel like
-//! `xz -T` (byte-identical to liblzma's multithreaded encoder);
-//! [`XzWriter`] and [`LzmaWriter`] compress through
-//! `std::io::Write`, and [`XzEncoder`] is the push-style encoder.
+//! For outputs of tens of MiB or more, decoding into a reused buffer with
+//! [`decompress_into`] avoids paying for fresh memory on every call.
 //!
-//! Use [`XzReader`] for streaming with `std::io`, [`XzSeekableReader`] for
-//! random access to multi-Block files, or the push-style [`XzDecoder`]
-//! without `std`. `.lzma` and `.lz` (lzip) have their own functions, readers
-//! and decoders ([`decompress_lzma`], [`decompress_lzip`], ...). CPU features
-//! (CLMUL, ARMv8 CRC, SHA extensions) are detected at run time; the
-//! `portable` feature disables all SIMD paths.
+//! # `std::io`
+//!
+//! ```
+//! use std::io::{Read, Write};
+//!
+//! let mut writer = xz_native::XzWriter::new(Vec::new(), 6)?;
+//! writer.write_all(b"streamed data")?;
+//! let compressed = writer.finish()?;
+//!
+//! let mut out = Vec::new();
+//! xz_native::XzReader::new(&compressed[..]).read_to_end(&mut out)?;
+//! assert_eq!(out, b"streamed data");
+//! # Ok::<(), std::io::Error>(())
+//! ```
+//!
+//! # Push (no `std` needed)
+//!
+//! The decoder consumes whatever input it is given and fills whatever output
+//! space there is; call it until it returns [`Status::StreamEnd`]:
+//!
+//! ```
+//! use xz_native::{Status, XzDecoder};
+//!
+//! let compressed = xz_native::compress(b"push", 0)?;
+//! let mut dec = XzDecoder::new();
+//! let mut out = [0u8; 64];
+//! let (used, written, status) = dec.decode(&compressed, &mut out, true)?;
+//! assert_eq!((used, &out[..written], status), (compressed.len(), &b"push"[..], Status::StreamEnd));
+//! # Ok::<(), xz_native::Error>(())
+//! ```
+//!
+//! # Features
+//!
+//! - `std` (default): the `std::io` types, threads, and run-time CPU
+//!   feature detection. Without it the crate is `no_std` + `alloc`.
+//! - `portable`: disables all SIMD and assembly paths (CLMUL and ARMv8 CRC,
+//!   SHA extensions, the x86-64 range decoder), for testing the fallbacks.
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![warn(missing_docs)]
 
 extern crate alloc;
 #[cfg(feature = "std")]
