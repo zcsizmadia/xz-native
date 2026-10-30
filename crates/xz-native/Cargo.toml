@@ -1,6 +1,6 @@
 [package]
 name = "xz-native"
-description = "Pure Rust XZ/LZMA compression, compatible with xz 5.8.4"
+description = "Pure Rust XZ/LZMA compression and decompression, compatible with xz/liblzma: byte-identical output, the same strictness on bad input, no C code."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
