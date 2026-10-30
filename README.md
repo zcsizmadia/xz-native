@@ -104,6 +104,33 @@ without `std`, like `lzma_code` in liblzma.
 | Checks: None, CRC32, CRC64, SHA-256 | yes | planned |
 | Multithreading (one-shot and `XzReader`, `DecoderOptions::threads`) | yes | planned |
 
+## How it's tested
+
+A decompressor parses untrusted input, and this one claims liblzma's
+behavior, so testing is layered:
+
+| Layer | What it checks |
+|---|---|
+| **xz's own test suite** | Every `.xz`, `.lzma` and `.lz` file from xz 5.8.4's `tests/files`: good files must match `xz -dc`, bad ones must fail, and unsupported ones must fail with `Error::Options`. |
+| **`xz` CLI interop** | Dozens of `xz` option sets (presets, `-e`, every check, lc/lp/pb, every BCJ filter, Delta, multi-Block and `-T4`, concatenated streams) over a corpus of text, binary, random, periodic and edge-size inputs. Each is decoded one-shot, streamed through 1-byte buffers, and through `XzReader` with 1-20 threads. |
+| **Differential tests vs C liblzma** | Tens of thousands of mutated streams (bit flips, header damage, truncation, insertion), single- and multi-Block, `.xz`/`.lzma`/`.lz`. Ours and liblzma must agree on success or failure and produce identical output, across every decode path: one-shot, streaming, threaded. |
+| **Strictness regressions** | Hand-built corruptions: chunk sizes off by one, non-canonical VLIs, Index record counts, reserved flags, Block size fields. Each must give the same error kind as liblzma. |
+| **Fuzzing (CI)** | cargo-fuzz with libFuzzer: streaming vs one-shot consistency for `.xz` and `.lzma`, and a differential target against C liblzma. Runs 3 minutes per target on every push and PR, and 30 minutes nightly, with a persistent corpus seeded from xz's test files. |
+| **Mutation testing** | [cargo-mutants](https://mutants.rs) over the validation code (`xz/`, `lzip.rs`, `seek.rs`, `filter/`, `alone.rs`, LZMA2). Every surviving mutant becomes a test or is documented as equivalent ([#22](https://github.com/zcsizmadia/xz-native/issues/22)). |
+| **SIMD and assembly paths** | Each CRC/SHA kernel is compared with the portable code for every length 0-2100 at several alignments. The whole suite also runs with `--features portable`, which disables all SIMD and assembly. Hot-path `unsafe` has debug assertions that the CI-profile tests and the fuzzers run with. |
+| **Miri** | Unit tests and the xz test files on x86-64 and big-endian s390x (manual workflow for now, [#15](https://github.com/zcsizmadia/xz-native/issues/15)). |
+
+**CI** (GitHub Actions, every PR, all required before merging to `main`):
+
+- fmt, clippy with `-D warnings`, docs with `-D warnings`
+- tests (SIMD and `portable`) on Linux x64/arm64, Windows x64/arm64 and macOS arm64
+- builds for `no_std` (thumbv7em), wasm32, i686 and aarch64
+- MSRV (Rust 1.89)
+- the three fuzz targets
+- cargo-deny (RustSec advisories, licenses, sources)
+
+The OpenSSF Scorecard and CodeQL watch the workflows themselves: actions are pinned by SHA and tokens are read-only.
+
 ## Versioning
 
 Versions track the xz release they match: `5.8.4XX` is this crate's release
