@@ -24,6 +24,10 @@ const TOP: u32 = 1 << 24;
 const BIT_MODEL_TOTAL_BITS: u32 = 11;
 const BIT_MODEL_TOTAL: u32 = 1 << BIT_MODEL_TOTAL_BITS;
 const MOVE_BITS: u32 = 5;
+/// Added to a probability before the update shift when the bit is 0 (liblzma
+/// `RC_BIT_MODEL_OFFSET`): `p - ((p + OFFSET) >> MOVE_BITS)` equals
+/// `p + ((TOTAL - p) >> MOVE_BITS)` modulo 2^16, which is how it is stored.
+const BIT_MODEL_OFFSET: u32 = ((1u32 << MOVE_BITS) - 1).wrapping_sub(BIT_MODEL_TOTAL);
 const PROB_INIT: u16 = (BIT_MODEL_TOTAL / 2) as u16;
 
 /// More input than any single symbol can consume (liblzma: 20).
@@ -208,6 +212,13 @@ fn bit<const SAFE: bool>(
     }
 }
 
+/// Branchless probability update with a single formula for both bit values.
+#[inline(always)]
+fn updated(p: u32, one: bool) -> u32 {
+    let offset = select_unpredictable(one, 0, BIT_MODEL_OFFSET);
+    p.wrapping_sub(p.wrapping_add(offset) >> MOVE_BITS)
+}
+
 /// Branchless version of [`bit`] for bit trees, where the decoded bits are
 /// unpredictable: the result selects with conditional moves instead of a
 /// branch (what liblzma's x86-64 assembly does).
@@ -228,11 +239,7 @@ fn bit_bl<const SAFE: bool>(
     let one = rc.code >= bound;
     rc.range = select_unpredictable(one, rc.range.wrapping_sub(bound), bound);
     rc.code = select_unpredictable(one, rc.code.wrapping_sub(bound), rc.code);
-    let p = select_unpredictable(
-        one,
-        p - (p >> MOVE_BITS),
-        p + ((BIT_MODEL_TOTAL - p) >> MOVE_BITS),
-    );
+    let p = updated(p, one);
     set_prob(probs, i, p);
     Ok(one as u32)
 }
@@ -267,19 +274,47 @@ fn bittree<const SAFE: bool, const BITS: u32>(
         let one = rc.code >= bound;
         rc.range = select_unpredictable(one, rc.range.wrapping_sub(bound), bound);
         rc.code = select_unpredictable(one, rc.code.wrapping_sub(bound), rc.code);
-        set_prob(
-            probs,
-            i,
-            select_unpredictable(
-                one,
-                p - (p >> MOVE_BITS),
-                p + ((BIT_MODEL_TOTAL - p) >> MOVE_BITS),
-            ),
-        );
+        set_prob(probs, i, updated(p, one));
         sym = 2 * sym + one as usize;
         p = select_unpredictable(one, p1, p0);
     }
     Ok(sym as u32 - (1 << BITS))
+}
+
+/// Finishes a literal from tree node `sym` (1..0x200) with the plain literal
+/// probabilities, preloading like [`bittree`]. The children of the last level
+/// are still inside the 0x300-entry coder, so preloading needs no bound check.
+#[inline(always)]
+fn literal_tail<const SAFE: bool>(
+    rc: &mut Rc,
+    inp: &mut Input<'_, SAFE>,
+    probs: &mut Probs,
+    undo: &mut Undo,
+    base: usize,
+    mut sym: u32,
+) -> core::result::Result<u32, Stop> {
+    if sym >= 0x100 {
+        return Ok(sym);
+    }
+    let mut s = sym as usize;
+    let mut p = prob(probs, base + s);
+    while s < 0x100 {
+        let (p0, p1) = (prob(probs, base + 2 * s), prob(probs, base + 2 * s + 1));
+        inp.normalize(rc)?;
+        let i = base + s;
+        if SAFE {
+            undo.push(i, p as u16);
+        }
+        let bound = (rc.range >> BIT_MODEL_TOTAL_BITS) * p;
+        let one = rc.code >= bound;
+        rc.range = select_unpredictable(one, rc.range.wrapping_sub(bound), bound);
+        rc.code = select_unpredictable(one, rc.code.wrapping_sub(bound), rc.code);
+        set_prob(probs, i, updated(p, one));
+        s = 2 * s + one as usize;
+        p = select_unpredictable(one, p1, p0);
+    }
+    sym = s as u32;
+    Ok(sym)
 }
 
 /// Reverse bit tree of `bits` bits rooted at `base + 1`.
@@ -386,23 +421,27 @@ fn symbol<const SAFE: bool>(
         let byte = if state < 7 {
             bittree::<SAFE, 8>(rc, inp, probs, undo, base)?
         } else {
+            // Matched literal: while the decoded bits equal the match byte's,
+            // the probabilities come from the upper half of the coder. After
+            // the first difference the rest is a plain literal tree (LZMA SDK).
             let mut match_byte = dict.get(st.reps[0]) as u32;
-            let mut offset = 0x100u32;
             let mut sym = 1u32;
             while sym < 0x100 {
                 match_byte <<= 1;
-                let match_bit = match_byte & offset;
+                let match_bit = match_byte & 0x100;
                 let b = bit_bl(
                     rc,
                     inp,
                     probs,
                     undo,
-                    base + (offset + match_bit + sym) as usize,
+                    base + (0x100 + match_bit + sym) as usize,
                 )?;
                 sym = (sym << 1) + b;
-                offset &= if b != 0 { match_bit } else { !match_bit };
+                if b << 8 != match_bit {
+                    break;
+                }
             }
-            sym - 0x100
+            literal_tail(rc, inp, probs, undo, base, sym)? - 0x100
         };
         if at_limit {
             return Err(Stop::Data);
@@ -842,5 +881,26 @@ impl LzmaDecoder {
             }));
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_formula_update_matches_both_branches() {
+        for p in 1..BIT_MODEL_TOTAL {
+            assert_eq!(
+                updated(p, true) as u16,
+                (p - (p >> MOVE_BITS)) as u16,
+                "p={p} bit=1"
+            );
+            assert_eq!(
+                updated(p, false) as u16,
+                (p + ((BIT_MODEL_TOTAL - p) >> MOVE_BITS)) as u16,
+                "p={p} bit=0"
+            );
+        }
     }
 }
