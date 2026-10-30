@@ -5,7 +5,7 @@ default-members = ["crates/xz-native"]
 exclude = ["fuzz", "third_party"]
 
 [workspace.package]
-version = "5.8.400-alpha.1"
+version = "0.1.0+xz.5.8.4"
 edition = "2024"
 rust-version = "1.89"
 license = "0BSD"

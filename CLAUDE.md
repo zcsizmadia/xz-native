@@ -38,7 +38,8 @@ and `xz` 5.8.4 is in `/ucrt64/bin`.
   a safe Rust fallback that the `portable` feature selects.
 - CPU-specific code goes behind runtime detection in `cpu.rs`, with a
   portable fallback tested via the `portable` feature.
-- Versioning: `5.8.4NN` crate versions, `v5.8.4.N` tags (see PROPOSAL.md).
+- Versioning: SemVer with the matched xz version as build metadata
+  (`0.1.0+xz.5.8.4`), tags `vX.Y.Z` (see PROPOSAL.md).
 
 ## Git and GitHub
 

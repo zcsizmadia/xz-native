@@ -561,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "xz-bench"
-version = "5.8.400-alpha.1"
+version = "0.1.0+xz.5.8.4"
 dependencies = [
  "criterion",
  "liblzma",
@@ -573,7 +573,7 @@ dependencies = [
 
 [[package]]
 name = "xz-native"
-version = "5.8.400-alpha.1"
+version = "0.1.0+xz.5.8.4"
 
 [[package]]
 name = "zerocopy"

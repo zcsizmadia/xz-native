@@ -198,16 +198,20 @@ runs weekly and on demand on all CI platforms.
 | M2 | Range encoder, match finders, presets 0-9/extreme, byte-identical `.xz` output | done |
 | M3 | Seekable reader, lzip decoding, raw LZMA1/LZMA2 API, filter encoders | seekable, lzip, filter encoders done |
 | M4 | Decoder and check tuning (decode into the caller's buffer, VPCLMULQDQ CRC, branchless bits, x86-64 asm) | done; incompressible one-shot on Windows (#34) open |
-| M5 | Multithreaded encode/decode, async adapters, CLI, 1.0 (`5.8.400`) | multithreaded encode and decode done |
+| M5 | Multithreaded encode/decode, async adapters, CLI; first release `0.1.0+xz.5.8.4`, 1.0 once the API is settled | multithreaded encode and decode done |
 
 ## Decisions
 
 - **Name:** `xz-native` for the repository and crate (no `-rs`/`-rust`,
   per the Rust API Guidelines).
 - **License:** 0BSD, matching liblzma and Lzma.Net.
-- **Versioning:** follows xz. Cargo needs three-part SemVer, so xz-native
-  release `N` for xz 5.8.4 is `5.8.4NN` (`5.8.400`, `5.8.401`, ...), with git
-  tags `v5.8.4.N`. Pre-releases use `-alpha.N`.
+- **Versioning:** SemVer for the crate's own API, with the xz version it
+  matches as build metadata: `0.1.0+xz.5.8.4`, git tags `vX.Y.Z`. 0.x until
+  the API is settled, then 1.0. The metadata records which xz release the
+  behavior and byte-identical encoder output match; Cargo ignores it, so a
+  new xz target also needs a regular version bump. (An earlier plan used
+  `5.8.4NN`, which would have frozen the major version at 5 from the first
+  release.)
 - **Single crate** with a `std` feature instead of separate core/std crates.
 - **Work tracking:** GitHub issues per milestone item, one PR per change,
   squash-merged when CI is green.

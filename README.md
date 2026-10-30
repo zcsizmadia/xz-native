@@ -190,9 +190,11 @@ The OpenSSF Scorecard and CodeQL watch the workflows themselves: actions are pin
 
 ## Versioning
 
-Versions track the xz release they match: `5.8.4XX` is this crate's release
-`XX` for xz 5.8.4 (Cargo requires three-part SemVer, so `5.8.4.x` becomes
-`5.8.400`, `5.8.401`, ...). Git tags use `v5.8.4.x`.
+The crate follows SemVer for its own API, and the build metadata names the
+xz release whose behavior and encoder output it matches: `0.1.0+xz.5.8.4` is
+release 0.1.0, compatible with xz 5.8.4. Depend on it as
+`xz-native = "0.1"`; Cargo ignores the metadata. Until 1.0, a minor bump
+(0.2, 0.3, ...) may change the API. Git tags are `vX.Y.Z`.
 
 ## Development
 
