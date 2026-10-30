@@ -26,19 +26,22 @@ build scripts or the memory-safety risk. Sibling of the C# library
   `unsafe` is limited to a few SIMD and assembly modules, each with a safe
   fallback. Every push is fuzzed, and the results are compared with C
   liblzma on millions of mutated files.
-- **As fast as liblzma, often faster** (decoding, details in
-  [#23](https://github.com/zcsizmadia/xz-native/issues/23)):
+- **As fast as liblzma, often faster** (details in
+  [#23](https://github.com/zcsizmadia/xz-native/issues/23) and
+  [#38](https://github.com/zcsizmadia/xz-native/pull/38)):
 
   | | xz-native compared with C liblzma 5.8.4 |
   |---|---|
-  | Single thread, Linux (liblzma built with GCC and its assembly) | 96-103% |
-  | Single thread, Windows (MSVC build, as `xz2`/`liblzma` give Rust users there) | 1.3-1.4x faster |
-  | Multithreaded | 1.3-2x faster |
-  | Incompressible data | 4-11x faster |
+  | Compression, Linux (liblzma built with GCC) | +37-62% at presets 0-1, +3-11% at 6-9 (level on one dataset at -9e) |
+  | Decompression, single thread, Linux (liblzma built with GCC and its assembly) | 96-103% |
+  | Decompression, single thread, Windows (MSVC build, as `xz2`/`liblzma` give Rust users there) | 1.3-1.4x faster |
+  | Decompression, multithreaded | 1.3-2x faster |
+  | Decompression of incompressible data | 4-11x faster |
   | CRC32 / CRC64 (SIMD detected at run time) | 10-25x faster |
 
   About 1.5x faster than [lzma-rust2](https://crates.io/crates/lzma-rust2),
-  the fastest pure-Rust alternative.
+  the fastest pure-Rust alternative, at decompression, and 1.1-1.4x at
+  compression (presets 0-9; it has no extreme mode).
 - **Drop-in compatible.** Matches liblzma 5.8.4's behavior, including which
   corrupt files it rejects and with which error. It's checked against xz's own
   test files, the `xz` CLI and differential tests with C liblzma. The encoder

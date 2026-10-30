@@ -162,8 +162,8 @@ runs weekly and on demand on all CI platforms.
 | M1 | LZMA/LZMA2 decoder, `.xz`/`.lzma`, checks with SIMD, BCJ/Delta decode, tests, fuzzing, CI, benchmarks | done |
 | M2 | Range encoder, match finders, presets 0-9/extreme, byte-identical `.xz` output | done |
 | M3 | Seekable reader, lzip decoding, raw LZMA1/LZMA2 API, filter encoders | seekable, lzip, filter encoders done |
-| M4 | Decoder and check tuning (decode into the caller's buffer, VPCLMULQDQ CRC, branchless bits) | |
-| M5 | Multithreaded encode/decode (decode done), async adapters, CLI, 1.0 (`5.8.400`) | |
+| M4 | Decoder and check tuning (decode into the caller's buffer, VPCLMULQDQ CRC, branchless bits, x86-64 asm) | done; incompressible one-shot on Windows (#34) open |
+| M5 | Multithreaded encode/decode, async adapters, CLI, 1.0 (`5.8.400`) | multithreaded decode done |
 
 ## Decisions
 
