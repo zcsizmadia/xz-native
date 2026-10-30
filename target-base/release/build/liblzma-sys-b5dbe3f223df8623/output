@@ -1,0 +1,413 @@
+cargo:rerun-if-changed=build.rs
+cargo:rerun-if-env-changed=LZMA_API_STATIC
+cargo:root=C:/OpenSource/xz-native/target-base\release\build\liblzma-sys-b5dbe3f223df8623\out
+cargo:include=C:\Users\zcsizmadia\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\liblzma-sys-0.4.9\xz/src/liblzma/api
+cargo:rerun-if-env-changed=CC_FORCE_DISABLE
+CC_FORCE_DISABLE = None
+cargo:rerun-if-env-changed=CC_PREFER_CLANG_CL_OVER_MSVC
+CC_PREFER_CLANG_CL_OVER_MSVC = None
+cargo:rerun-if-env-changed=VCINSTALLDIR
+VCINSTALLDIR = None
+cargo:rerun-if-env-changed=VSTEL_MSBuildProjectFullPath
+VSTEL_MSBuildProjectFullPath = None
+cargo:rerun-if-env-changed=VCToolsVersion
+VCToolsVersion = None
+cargo:rerun-if-env-changed=VSCMD_ARG_VCVARS_SPECTRE
+VSCMD_ARG_VCVARS_SPECTRE = None
+cargo:rerun-if-env-changed=WindowsSdkDir
+WindowsSdkDir = None
+cargo:rerun-if-env-changed=WindowsSDKVersion
+WindowsSDKVersion = None
+cargo:rerun-if-env-changed=LIB
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+cargo:rerun-if-env-changed=INCLUDE
+INCLUDE = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+cargo:rerun-if-env-changed=CC_x86_64-pc-windows-msvc
+CC_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=CC_x86_64_pc_windows_msvc
+CC_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_CC
+HOST_CC = None
+cargo:rerun-if-env-changed=CC
+CC = None
+cargo:rerun-if-env-changed=EXTERNAL_INCLUDE
+cargo:rerun-if-env-changed=CL
+cargo:rerun-if-env-changed=_CL_
+cargo:rerun-if-env-changed=LIBPATH
+cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+CRATE_CC_NO_DEFAULTS = None
+cargo:rerun-if-env-changed=CFLAGS
+CFLAGS = None
+cargo:rerun-if-env-changed=HOST_CFLAGS
+HOST_CFLAGS = None
+cargo:rerun-if-env-changed=CFLAGS_x86_64_pc_windows_msvc
+CFLAGS_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=CFLAGS_x86_64-pc-windows-msvc
+CFLAGS_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
+tuklib_cpucores.c
+tuklib_physmem.c
+check.c
+crc32_fast.c
+crc64_fast.c
+alone_decoder.c
+sha256.c
+alone_encoder.c
+auto_decoder.c
+block_buffer_decoder.c
+xz/src/liblzma/lz\lz_decoder.h(208): warning C4267: 'initializing': conversion from 'size_t' to 'uint32_t', possible loss of data
+block_buffer_encoder.c
+block_decoder.c
+block_header_decoder.c
+block_encoder.c
+block_header_encoder.c
+block_util.c
+common.c
+easy_buffer_encoder.c
+easy_decoder_memusage.c
+easy_encoder.c
+xz/src/liblzma/common\block_buffer_encoder.c(146): warning C4267: '=': conversion from 'size_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/common\block_encoder.c(150): warning C4100: 'filters': unreferenced parameter
+xz/src/liblzma/common\block_header_encoder.c(84): warning C4267: '=': conversion from 'size_t' to 'uint8_t', possible loss of data
+easy_encoder_memusage.c
+filter_buffer_decoder.c
+easy_preset.c
+file_info.c
+filter_buffer_encoder.c
+filter_common.c
+filter_decoder.c
+filter_encoder.c
+filter_flags_decoder.c
+filter_flags_encoder.c
+xz/src/liblzma/common\file_info.c(254): warning C4100: 'action': unreferenced parameter
+xz/src/liblzma/common\file_info.c(253): warning C4100: 'out_size': unreferenced parameter
+xz/src/liblzma/common\file_info.c(252): warning C4100: 'out_pos': unreferenced parameter
+xz/src/liblzma/common\file_info.c(251): warning C4100: 'out': unreferenced parameter
+hardware_cputhreads.c
+hardware_physmem.c
+index.c
+index_decoder.c
+index_hash.c
+index_encoder.c
+lzip_decoder.c
+microlzma_decoder.c
+microlzma_encoder.c
+xz/src/liblzma/common\index_decoder.c(72): warning C4100: 'action': unreferenced parameter
+xz/src/liblzma/common\index_decoder.c(71): warning C4100: 'out_size': unreferenced parameter
+xz/src/liblzma/common\index_decoder.c(70): warning C4100: 'out_pos': unreferenced parameter
+xz/src/liblzma/common\index_decoder.c(69): warning C4100: 'out': unreferenced parameter
+outqueue.c
+stream_buffer_decoder.c
+xz/src/liblzma/common\index_encoder.c(50): warning C4100: 'action': unreferenced parameter
+xz/src/liblzma/common\index_encoder.c(47): warning C4100: 'in_size': unreferenced parameter
+xz/src/liblzma/common\index_encoder.c(46): warning C4100: 'in_pos': unreferenced parameter
+xz/src/liblzma/common\index_encoder.c(45): warning C4100: 'in': unreferenced parameter
+xz/src/liblzma/common\index_encoder.c(44): warning C4100: 'allocator': unreferenced parameter
+xz/src/liblzma/lz\lz_decoder.h(208): warning C4267: 'initializing': conversion from 'size_t' to 'uint32_t', possible loss of data
+xz/src/liblzma/common\lzip_decoder.c(345): warning C4100: 'coder_ptr': unreferenced parameter
+stream_decoder.c
+stream_buffer_encoder.c
+stream_decoder_mt.c
+stream_encoder.c
+stream_flags_common.c
+stream_encoder_mt.c
+stream_flags_decoder.c
+stream_flags_encoder.c
+string_conversion.c
+vli_decoder.c
+xz/src/liblzma/common\stream_encoder_mt.c(917): warning C4100: 'reversed_filters': unreferenced parameter
+vli_encoder.c
+xz/src/liblzma/common\stream_flags_encoder.c(68): warning C4244: 'function': conversion from 'const lzma_vli' to 'uint32_t', possible loss of data
+vli_size.c
+delta_common.c
+delta_decoder.c
+delta_encoder.c
+lz_decoder.c
+lz_encoder.c
+lz_encoder_mf.c
+fastpos_table.c
+lzma2_encoder.c
+lzma2_decoder.c
+xz/src/liblzma/delta\delta_encoder.c(97): warning C4100: 'filters_null': unreferenced parameter
+xz/src/liblzma/delta\delta_encoder.c(129): warning C4244: '=': conversion from 'const uint32_t' to 'uint8_t', possible loss of data
+C:\Users\zcsizmadia\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\liblzma-sys-0.4.9\xz\src\liblzma\lz\lz_decoder.h(208): warning C4267: 'initializing': conversion from 'size_t' to 'uint32_t', possible loss of data
+lzma_decoder.c
+lzma_encoder.c
+lzma_encoder_optimum_normal.c
+lzma_encoder_optimum_fast.c
+lzma_encoder_presets.c
+xz/src/liblzma/lz\lz_encoder.c(110): warning C4267: '=': conversion from 'size_t' to 'uint32_t', possible loss of data
+xz/src/liblzma/lz\lz_encoder.c(202): warning C4267: '=': conversion from 'size_t' to 'uint32_t', possible loss of data
+xz/src/liblzma/lz\lz_encoder.c(205): warning C4267: '=': conversion from 'size_t' to 'uint32_t', possible loss of data
+xz/src/liblzma/lz\lz_encoder.c(223): warning C4267: '+=': conversion from 'size_t' to 'uint32_t', possible loss of data
+xz/src/liblzma/lz\lz_encoder.c(236): warning C4267: '=': conversion from 'size_t' to 'uint32_t', possible loss of data
+xz/src/liblzma/lz\lz_encoder.c(237): warning C4267: '=': conversion from 'size_t' to 'uint32_t', possible loss of data
+xz/src/liblzma/lz\lz_encoder.c(254): warning C4267: '=': conversion from 'size_t' to 'uint32_t', possible loss of data
+xz/src/liblzma/lz\lz_encoder.c(311): warning C4267: '=': conversion from 'size_t' to 'uint32_t', possible loss of data
+xz/src/liblzma/lz\lz_encoder.c(218): warning C4267: 'initializing': conversion from 'size_t' to 'uint32_t', possible loss of data
+xz/src/liblzma/lz\lz_encoder.c(509): warning C4100: 'filters_null': unreferenced parameter
+price_table.c
+xz/src/liblzma/lzma\lzma2_encoder.c(84): warning C4267: '+=': conversion from 'size_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/lzma\lzma2_encoder.c(90): warning C4267: '=': conversion from 'size_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/lzma\lzma2_encoder.c(125): warning C4267: '=': conversion from 'size_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/lzma\lzma2_encoder.c(168): warning C4267: 'initializing': conversion from 'size_t' to 'const uint32_t', possible loss of data
+xz/src/liblzma/lzma\lzma2_encoder.c(309): warning C4100: 'id': unreferenced parameter
+xz/src/liblzma/lzma\lzma2_encoder.c(397): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/lz\lz_decoder.h(208): warning C4267: 'initializing': conversion from 'size_t' to 'uint32_t', possible loss of data
+xz/src/liblzma/lzma\lzma2_decoder.c(249): warning C4100: 'id': unreferenced parameter
+xz/src/liblzma/lz\lz_decoder.h(208): warning C4267: 'initializing': conversion from 'size_t' to 'uint32_t', possible loss of data
+xz/src/liblzma/lzma\lzma_decoder.c(381): warning C4244: 'function': conversion from 'uint32_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/lzma\lzma_decoder.c(745): warning C4244: 'function': conversion from 'uint32_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/lzma\lzma_decoder.c(1206): warning C4244: '-=': conversion from 'uint32_t' to 'uint8_t', possible loss of data
+arm.c
+arm64.c
+xz/src/liblzma/lzma\lzma_encoder.c(756): warning C4244: '=': conversion from 'const uint32_t' to 'uint8_t', possible loss of data
+ia64.c
+armthumb.c
+riscv.c
+powerpc.c
+simple_coder.c
+xz/src/liblzma/simple\arm.c(38): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/simple\arm.c(39): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/simple\arm.c(40): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/simple\arm.c(17): warning C4100: 'simple': unreferenced parameter
+simple_encoder.c
+sparc.c
+xz/src/liblzma/simple\arm64.c(27): warning C4100: 'simple': unreferenced parameter
+simple_decoder.c
+xz/src/liblzma/simple\ia64.c(17): warning C4100: 'simple': unreferenced parameter
+xz/src/liblzma/simple\powerpc.c(42): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/simple\powerpc.c(43): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/simple\powerpc.c(17): warning C4100: 'simple': unreferenced parameter
+xz/src/liblzma/simple\armthumb.c(45): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/simple\armthumb.c(47): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data
+xz/src/liblzma/simple\armthumb.c(17): warning C4100: 'simple': unreferenced parameter
+xz/src/liblzma/simple\riscv.c(355): warning C4100: 'is_encoder': unreferenced parameter
+xz/src/liblzma/simple\riscv.c(353): warning C4100: 'simple': unreferenced parameter
+xz/src/liblzma/simple\riscv.c(636): warning C4100: 'is_encoder': unreferenced parameter
+xz/src/liblzma/simple\riscv.c(634): warning C4100: 'simple': unreferenced parameter
+x86.c
+xz/src/liblzma/simple\simple_coder.c(62): warning C4267: '+=': conversion from 'size_t' to 'uint32_t', possible loss of data
+xz/src/liblzma/simple\simple_coder.c(224): warning C4100: 'filters_null': unreferenced parameter
+xz/src/liblzma/simple\sparc.c(17): warning C4100: 'simple': unreferenced parameter
+CC_FORCE_DISABLE = None
+cargo:rerun-if-env-changed=AR_x86_64-pc-windows-msvc
+AR_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=AR_x86_64_pc_windows_msvc
+AR_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_AR
+HOST_AR = None
+cargo:rerun-if-env-changed=AR
+AR = None
+CC_PREFER_CLANG_CL_OVER_MSVC = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+CC_x86_64-pc-windows-msvc = None
+CC_x86_64_pc_windows_msvc = None
+HOST_CC = None
+CC = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+cargo:rerun-if-env-changed=ARFLAGS
+ARFLAGS = None
+cargo:rerun-if-env-changed=HOST_ARFLAGS
+HOST_ARFLAGS = None
+cargo:rerun-if-env-changed=ARFLAGS_x86_64_pc_windows_msvc
+ARFLAGS_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=ARFLAGS_x86_64-pc-windows-msvc
+ARFLAGS_x86_64-pc-windows-msvc = None
+AR_x86_64-pc-windows-msvc = None
+AR_x86_64_pc_windows_msvc = None
+HOST_AR = None
+AR = None
+CC_PREFER_CLANG_CL_OVER_MSVC = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+CC_x86_64-pc-windows-msvc = None
+CC_x86_64_pc_windows_msvc = None
+HOST_CC = None
+CC = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+ARFLAGS = None
+HOST_ARFLAGS = None
+ARFLAGS_x86_64_pc_windows_msvc = None
+ARFLAGS_x86_64-pc-windows-msvc = None
+AR_x86_64-pc-windows-msvc = None
+AR_x86_64_pc_windows_msvc = None
+HOST_AR = None
+AR = None
+CC_PREFER_CLANG_CL_OVER_MSVC = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+CC_x86_64-pc-windows-msvc = None
+CC_x86_64_pc_windows_msvc = None
+HOST_CC = None
+CC = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+ARFLAGS = None
+HOST_ARFLAGS = None
+ARFLAGS_x86_64_pc_windows_msvc = None
+ARFLAGS_x86_64-pc-windows-msvc = None
+AR_x86_64-pc-windows-msvc = None
+AR_x86_64_pc_windows_msvc = None
+HOST_AR = None
+AR = None
+CC_PREFER_CLANG_CL_OVER_MSVC = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+CC_x86_64-pc-windows-msvc = None
+CC_x86_64_pc_windows_msvc = None
+HOST_CC = None
+CC = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+ARFLAGS = None
+HOST_ARFLAGS = None
+ARFLAGS_x86_64_pc_windows_msvc = None
+ARFLAGS_x86_64-pc-windows-msvc = None
+CC_PREFER_CLANG_CL_OVER_MSVC = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:/OpenSource/xz-native/target-base\release;C:/OpenSource/xz-native/target-base\release\deps;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\zcsizmadia\.cargo\bin;C:\Users\zcsizmadia\bin;C:\Program Files\Git\ucrt64\bin;C:\Program Files\Git\usr\local\bin;C:\Program Files\Git\usr\bin;C:\Program Files\Git\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\Git\usr\bin\vendor_perl;C:\Program Files\Git\usr\bin\core_perl;C:\Users\zcsizmadia\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+CC_x86_64-pc-windows-msvc = None
+CC_x86_64_pc_windows_msvc = None
+HOST_CC = None
+CC = None
+cargo:rustc-link-search=native=C:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Tools\MSVC\14.52.37025\atlmfc\lib\x64
+cargo:rustc-link-lib=static=lzma
+cargo:rustc-link-search=native=C:/OpenSource/xz-native/target-base\release\build\liblzma-sys-b5dbe3f223df8623\out

@@ -93,6 +93,13 @@ jobs:
         run: |
           cargo test -p xz-native --profile ci --features tokio,futures-io --test async_io
           cargo test -p xz-native --profile ci --features tokio,futures-io --doc
+      - name: Test (32-bit)
+        # Dictionary and buffer sizes from untrusted headers hit the 32-bit
+        # address space limits.
+        if: matrix.name == 'windows-x64'
+        run: |
+          rustup target add i686-pc-windows-msvc
+          cargo test -p xz-native --profile ci --target i686-pc-windows-msvc
       - name: Build benchmarks
         run: cargo bench -p xz-bench --no-run
 
