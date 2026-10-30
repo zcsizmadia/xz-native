@@ -7,7 +7,7 @@ pub use bcj::BcjKind;
 
 use crate::error::{Error, Result};
 use crate::lzma::lzma2::Lzma2Decoder;
-use crate::lzma::{LzDriver, Progress, lzma2_dict_size};
+use crate::lzma::{LzCodec, LzDriver, Progress, lzma2_dict_size};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -340,11 +340,12 @@ enum Stage {
     Bcj(BcjStage),
 }
 
-/// A decoder for a complete filter chain ending in LZMA2.
+/// A decoder for a complete filter chain ending in LZMA2 (or, for raw
+/// streams, LZMA1).
 #[derive(Debug)]
-pub(crate) struct ChainDecoder {
+pub(crate) struct ChainDecoder<C = Lzma2Decoder> {
     stages: Vec<Stage>,
-    lz: LzDriver<Lzma2Decoder>,
+    lz: LzDriver<C>,
 }
 
 impl ChainDecoder {
@@ -355,6 +356,13 @@ impl ChainDecoder {
         let Filter::Lzma2 { dict_size } = *last else {
             unreachable!("validated chain")
         };
+        Self::with_codec(rest, Lzma2Decoder::new(), cap_dict(dict_size, uncompressed))
+    }
+}
+
+impl<C: LzCodec> ChainDecoder<C> {
+    /// `rest` are the filters before the LZ codec (Delta and BCJ).
+    pub(crate) fn with_codec(rest: &[Filter], codec: C, dict_size: u32) -> Self {
         let stages = rest
             .iter()
             .map(|f| match *f {
@@ -367,7 +375,7 @@ impl ChainDecoder {
             .collect();
         Self {
             stages,
-            lz: LzDriver::new(Lzma2Decoder::new(), cap_dict(dict_size, uncompressed)),
+            lz: LzDriver::new(codec, dict_size),
         }
     }
 
@@ -380,9 +388,9 @@ impl ChainDecoder {
     }
 }
 
-fn decode_level(
+fn decode_level<C: LzCodec>(
     stages: &mut [Stage],
-    lz: &mut LzDriver<Lzma2Decoder>,
+    lz: &mut LzDriver<C>,
     inp: &[u8],
     out: &mut [u8],
 ) -> Result<(usize, usize, Progress)> {

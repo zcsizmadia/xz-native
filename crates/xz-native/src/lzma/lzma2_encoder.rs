@@ -291,7 +291,9 @@ pub(crate) struct Lzma1Encoder {
 }
 
 impl Lzma1Encoder {
-    pub(crate) fn new_lz(opts: &LzmaOptions) -> Result<LzEncoder<Self>> {
+    /// Creates the LZ encoder; `filters` are the filters before LZMA1 (raw
+    /// streams only, .lzma has none).
+    pub(crate) fn new_lz(opts: &LzmaOptions, filters: &[Filter]) -> Result<LzEncoder<Self>> {
         let (lzma, lz) = LzmaEncoder::new(opts, false)?;
         Ok(LzEncoder {
             mf: Mf::new(&lz)?,
@@ -300,7 +302,7 @@ impl Lzma1Encoder {
                 out_done: 0,
                 finished: false,
             },
-            chain: ChainEncoder::new(&[]),
+            chain: ChainEncoder::new(filters),
         })
     }
 
@@ -429,7 +431,7 @@ mod tests {
         {
             let input = data(300_000, 9 + i as u32);
             let o = opts(mode, mf, 64);
-            let mut lz = Lzma1Encoder::new_lz(&o).unwrap();
+            let mut lz = Lzma1Encoder::new_lz(&o, &[]).unwrap();
             let packed = encode(&mut lz, &input);
             let props = LzmaProps::from_byte(o.props_byte()).unwrap();
             let mut d = LzmaDecoder::new(props);

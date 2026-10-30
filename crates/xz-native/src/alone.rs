@@ -107,7 +107,7 @@ impl LzmaEncoderAlone {
 
     /// Creates an encoder with options.
     pub fn with_options(opts: &crate::LzmaOptions) -> Result<Self> {
-        let lz = crate::lzma::lzma2_encoder::Lzma1Encoder::new_lz(opts)?;
+        let lz = crate::lzma::lzma2_encoder::Lzma1Encoder::new_lz(opts, &[])?;
         let mut header = [0u8; 13];
         header[0] = opts.props_byte();
         // Round the dictionary size up to 2^n or 2^n + 2^(n-1) so that

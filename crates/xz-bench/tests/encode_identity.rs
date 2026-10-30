@@ -124,9 +124,11 @@ fn check_c(c: xz_native::Check) -> Check {
     }
 }
 
-fn filters_c(o: &EncoderOptions) -> Filters {
+/// The filters before LZMA as a liblzma chain, to be ended with LZMA1 or
+/// LZMA2.
+fn prefilters_c(filters: &[Filter]) -> Filters {
     let mut f = Filters::new();
-    for filter in &o.filters {
+    for filter in filters {
         match *filter {
             Filter::Delta { distance } => {
                 f.delta_properties(&[(distance - 1) as u8]).unwrap();
@@ -149,6 +151,11 @@ fn filters_c(o: &EncoderOptions) -> Filters {
             _ => unreachable!(),
         }
     }
+    f
+}
+
+fn filters_c(o: &EncoderOptions) -> Filters {
+    let mut f = prefilters_c(&o.filters);
     f.lzma2(&lzma_opts_c(&o.lzma));
     f
 }
@@ -485,6 +492,76 @@ fn lzma_alone_matches_liblzma() {
         );
         assert_same(&format!("lzma dict {dict}"), &ours, &theirs);
     }
+}
+
+/// liblzma's raw encoder for `o`.
+fn raw_c(o: &xz_native::RawOptions) -> Stream {
+    let mut f = prefilters_c(&o.filters);
+    match o.method {
+        xz_native::RawMethod::Lzma1 => f.lzma1(&lzma_opts_c(&o.lzma)),
+        _ => f.lzma2(&lzma_opts_c(&o.lzma)),
+    };
+    Stream::new_raw_encoder(&f).unwrap()
+}
+
+#[test]
+fn raw_matches_liblzma() {
+    use xz_native::{RawEncoder, RawMethod, RawOptions};
+    let filter_sets = [
+        vec![],
+        vec![Filter::Delta { distance: 2 }],
+        vec![
+            Filter::Bcj {
+                kind: BcjKind::Arm64,
+                start_offset: 64,
+            },
+            Filter::Delta { distance: 1 },
+        ],
+    ];
+    for (name, data) in corpus() {
+        for method in [RawMethod::Lzma1, RawMethod::Lzma2] {
+            for preset in [0, 6, 9 | xz_native::PRESET_EXTREME] {
+                for filters in &filter_sets {
+                    let mut o = RawOptions::preset(method, preset).unwrap();
+                    o.lzma.dict_size = o.lzma.dict_size.min(1 << 20);
+                    o.filters = filters.clone();
+                    let ours = xz_native::compress_raw(&data, &o).unwrap();
+                    let theirs = run_c(raw_c(&o), &[(&data, Action::Finish)]);
+                    let what = format!("raw {method:?} {name} preset {preset:#x} {filters:?}");
+                    assert_same(&what, &ours, &theirs);
+                    assert_eq!(
+                        xz_native::decompress_raw(&ours, &o).unwrap(),
+                        data,
+                        "{what}"
+                    );
+                }
+            }
+        }
+    }
+
+    // LZMA2 sync flushes.
+    let data = text(300_000, 5);
+    let o = RawOptions::preset(RawMethod::Lzma2, 1).unwrap();
+    let mut chunks: Vec<(&[u8], Action)> = data
+        .chunks(70_001)
+        .map(|c| (c, Action::SyncFlush))
+        .collect();
+    chunks.push((&[], Action::Finish));
+    let theirs = run_c(raw_c(&o), &chunks);
+    let mut enc = RawEncoder::new(&o).unwrap();
+    let mut ours = Vec::new();
+    let mut buf = vec![0u8; 1 << 20];
+    for &(c, a) in &chunks {
+        let a = match a {
+            Action::SyncFlush => xz_native::Action::SyncFlush,
+            _ => xz_native::Action::Finish,
+        };
+        let (u, w, s) = enc.encode(c, &mut buf, a).unwrap();
+        assert_eq!((u, s), (c.len(), xz_native::Status::StreamEnd));
+        ours.extend_from_slice(&buf[..w]);
+    }
+    assert_same("raw LZMA2 sync flushes", &ours, &theirs);
+    assert_eq!(xz_native::decompress_raw(&ours, &o).unwrap(), data);
 }
 
 /// Positions in the match finder wrap at 2^32 - dict_size; normalization
