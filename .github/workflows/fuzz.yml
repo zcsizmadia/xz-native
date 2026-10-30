@@ -13,7 +13,10 @@ on:
         default: "1800"
 
 concurrency:
-  group: fuzz-${{ github.ref }}
+  # Runs of the same PR share a group, so a new push cancels the old run.
+  # Every other run (pushes to main, schedules) gets its own group and
+  # runs to the end, so main's results (and the badge) are real.
+  group: fuzz-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 permissions:
