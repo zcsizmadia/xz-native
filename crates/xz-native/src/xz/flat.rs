@@ -197,6 +197,26 @@ pub(crate) fn decode_block(
 /// over the whole input, but faster.
 pub(crate) fn decompress(input: &[u8], opts: &DecoderOptions) -> Result<Vec<u8>> {
     let mut out = Vec::new();
+    decompress_into(input, opts, &mut out)?;
+    Ok(out)
+}
+
+/// [`decompress`], appending to `out`. On error `out` is restored to its
+/// original length.
+pub(crate) fn decompress_into(
+    input: &[u8],
+    opts: &DecoderOptions,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    let start = out.len();
+    let r = decompress_append(input, opts, out);
+    if r.is_err() {
+        out.truncate(start);
+    }
+    r
+}
+
+fn decompress_append(input: &[u8], opts: &DecoderOptions, out: &mut Vec<u8>) -> Result<()> {
     let mut pos = 0;
     let mut first = true;
     loop {
@@ -221,7 +241,7 @@ pub(crate) fn decompress(input: &[u8], opts: &DecoderOptions) -> Result<Vec<u8>>
                 return Err(Error::MemLimit);
             }
             let (used, unpadded, uncompressed) =
-                decode_block(&input[pos..], &mut out, &hdr, check, !opts.ignore_check)?;
+                decode_block(&input[pos..], out, &hdr, check, !opts.ignore_check)?;
             pos += used;
             blocks.add(unpadded, uncompressed)?;
         }
@@ -257,7 +277,7 @@ pub(crate) fn decompress(input: &[u8], opts: &DecoderOptions) -> Result<Vec<u8>>
         // Like `xz`, trailing data after the end is an error.
         return Err(Error::Data);
     }
-    Ok(out)
+    Ok(())
 }
 
 /// Decodes one Block of a parsed file into `out` (cleared first), which must
@@ -300,18 +320,30 @@ fn decode_entry(
 /// errors are the same as without threads.
 #[cfg(feature = "std")]
 pub(crate) fn decompress_threads(input: &[u8], opts: &DecoderOptions) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    decompress_threads_into(input, opts, &mut out)?;
+    Ok(out)
+}
+
+/// [`decompress_threads`], appending to `out` like [`decompress_into`].
+#[cfg(feature = "std")]
+pub(crate) fn decompress_threads_into(
+    input: &[u8],
+    opts: &DecoderOptions,
+    out: &mut Vec<u8>,
+) -> Result<()> {
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
 
     let threads = super::mt::thread_count(opts.threads);
     if threads < 2 || !opts.concatenated {
-        return decompress(input, opts);
+        return decompress_into(input, opts, out);
     }
     let Ok(blocks) = crate::seek::parse_slice(input, opts) else {
-        return decompress(input, opts);
+        return decompress_into(input, opts, out);
     };
     if blocks.len() < 2 {
-        return decompress(input, opts);
+        return decompress_into(input, opts, out);
     }
 
     // The output is allocated once and split into one slice per Block. Each
@@ -320,9 +352,16 @@ pub(crate) fn decompress_threads(input: &[u8], opts: &DecoderOptions) -> Result<
     let total = blocks
         .last()
         .map_or(0, |b| b.uncompressed_offset + b.uncompressed_size);
-    let mut out = vec![0u8; usize::try_from(total).map_err(|_| Error::MemLimit)?];
+    let total = usize::try_from(total).map_err(|_| Error::MemLimit)?;
+    let base = out.len();
+    if base == 0 && out.capacity() < total {
+        // Fresh zeroed pages: the workers fault them in in parallel.
+        *out = vec![0u8; total];
+    } else {
+        out.resize(base + total, 0);
+    }
     let mut slots = Vec::with_capacity(blocks.len());
-    let mut rest = &mut out[..];
+    let mut rest = &mut out[base..];
     for b in &blocks {
         let (slot, r) = rest.split_at_mut(b.uncompressed_size as usize);
         slots.push(Mutex::new(slot));
@@ -350,8 +389,9 @@ pub(crate) fn decompress_threads(input: &[u8], opts: &DecoderOptions) -> Result<
     });
     if failed.load(Ordering::Relaxed) {
         // Report exactly what the single-threaded decoder reports.
-        return decompress(input, opts);
+        out.truncate(base);
+        return decompress_into(input, opts, out);
     }
     drop(slots);
-    Ok(out)
+    Ok(())
 }
