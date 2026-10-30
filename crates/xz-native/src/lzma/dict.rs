@@ -165,7 +165,7 @@ impl Dict {
         if left <= 32 && d >= 31 && d < self.pos && self.pos + 32 <= self.buf.len() {
             let back = self.pos - d - 1;
             let (src, dst) = self.buf.split_at_mut(self.pos);
-            dst[..32].copy_from_slice(&src[back..back + 32]);
+            dst[..32].copy_from_slice(&src[back..][..32]);
             self.pos += left;
             return len - left as u32;
         }
