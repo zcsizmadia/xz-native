@@ -3,6 +3,8 @@
 pub(crate) mod decoder;
 pub(crate) mod dict;
 pub(crate) mod lzma2;
+#[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+mod x86_asm;
 
 use crate::error::{Error, Result};
 pub(crate) use decoder::Progress;

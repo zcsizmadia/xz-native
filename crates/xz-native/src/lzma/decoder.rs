@@ -254,6 +254,23 @@ fn bittree<const SAFE: bool, const BITS: u32>(
     undo: &mut Undo,
     base: usize,
 ) -> core::result::Result<u32, Stop> {
+    #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+    if !SAFE {
+        debug_assert!(base + (1 << BITS) <= PROBS_SIZE);
+        // SAFETY: the tree is inside `probs` (see `prob`), and the fast path
+        // has at least FAST_MIN input bytes left, more than BITS.
+        #[allow(unsafe_code)]
+        unsafe {
+            let p = probs.as_mut_ptr().add(base);
+            let (r, c, i, pos) = (&mut rc.range, &mut rc.code, inp.buf, &mut inp.pos);
+            return Ok(match BITS {
+                3 => super::x86_asm::bittree3(r, c, i, pos, p),
+                6 => super::x86_asm::bittree6(r, c, i, pos, p),
+                8 => super::x86_asm::bittree8(r, c, i, pos, p),
+                _ => unreachable!(),
+            });
+        }
+    }
     // Like liblzma's x86-64 assembly: load both children's probabilities
     // before the current bit is known and pick one afterwards, so the next
     // step doesn't wait for a load. The last level has no children.
