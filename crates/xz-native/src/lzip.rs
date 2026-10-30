@@ -186,7 +186,7 @@ impl LzipDecoder {
                         };
                     }
                     // Unknown size: the member must end with an EOPM.
-                    self.lz = Some(LzDriver::new(LzmaDecoder::new(PROPS), self.dict_size));
+                    self.lz = Some(LzDriver::new(LzmaDecoder::new(PROPS), self.dict_size)?);
                     self.seq = Seq::Lzma;
                 }
                 Seq::Lzma => {

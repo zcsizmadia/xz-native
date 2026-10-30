@@ -5,6 +5,7 @@
 //! the last `REPEAT_MAX` bytes are copied to the start, so a match copy never
 //! has to read from both ends of the buffer.
 
+use crate::error::{Error, Result};
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -14,6 +15,22 @@ pub(crate) const REPEAT_MAX: usize = 288;
 pub(crate) const INIT_POS: usize = 2 * REPEAT_MAX;
 /// Slack after the end of the buffer for over-copying.
 pub(crate) const EXTRA: usize = 32;
+/// Buffers from this size on are allocated only after a fallible probe.
+const LARGE: usize = 32 << 20;
+
+/// `vec![0; len]`, but [`Error::MemLimit`] instead of an abort when the
+/// memory can't be allocated (liblzma's `LZMA_MEM_ERROR`). Large buffers
+/// are probed with a fallible reservation first. The probe doesn't touch
+/// the memory, and the zeroed allocation after it gets fresh pages, which
+/// a reservation followed by a fill wouldn't.
+pub(crate) fn zeroed(len: usize) -> Result<Vec<u8>> {
+    if len >= LARGE {
+        Vec::<u8>::new()
+            .try_reserve_exact(len)
+            .map_err(|_| Error::MemLimit)?;
+    }
+    Ok(vec![0; len])
+}
 
 #[derive(Debug)]
 pub(crate) struct Dict {
@@ -24,6 +41,9 @@ pub(crate) struct Dict {
     pub(crate) limit: usize,
     /// Usable buffer size (dictionary size + 2 * REPEAT_MAX).
     pub(crate) size: usize,
+    /// Dictionary size, rounded like liblzma: the most history a match can
+    /// reach.
+    cap: usize,
     has_wrapped: bool,
     /// Set by the LZMA2 decoder; the driver resets after flushing.
     pub(crate) need_reset: bool,
@@ -41,20 +61,25 @@ pub(crate) struct Dict {
 impl Dict {
     /// Memory used by a dictionary of `dict_size` bytes.
     pub(crate) fn mem_usage(dict_size: u32) -> u64 {
-        Self::rounded(dict_size) as u64 + (2 * REPEAT_MAX + EXTRA) as u64
+        Self::rounded(dict_size) + (2 * REPEAT_MAX + EXTRA) as u64
     }
 
-    fn rounded(dict_size: u32) -> usize {
-        (dict_size.max(4096) as usize).next_multiple_of(16)
+    fn rounded(dict_size: u32) -> u64 {
+        (dict_size.max(4096) as u64).next_multiple_of(16)
     }
 
-    pub(crate) fn new(dict_size: u32) -> Self {
-        let size = Self::rounded(dict_size) + 2 * REPEAT_MAX;
+    /// Fails with [`Error::MemLimit`] when the buffer doesn't fit in the
+    /// address space or can't be allocated (liblzma's `LZMA_MEM_ERROR`).
+    pub(crate) fn new(dict_size: u32) -> Result<Self> {
+        let cap = usize::try_from(Self::rounded(dict_size)).map_err(|_| Error::MemLimit)?;
+        let size = cap.checked_add(2 * REPEAT_MAX).ok_or(Error::MemLimit)?;
+        let len = size.checked_add(EXTRA).ok_or(Error::MemLimit)?;
         let mut d = Self {
-            buf: vec![0; size + EXTRA],
+            buf: zeroed(len)?,
             pos: INIT_POS,
             limit: INIT_POS,
             size,
+            cap,
             has_wrapped: false,
             need_reset: false,
             base: INIT_POS,
@@ -62,18 +87,21 @@ impl Dict {
             flat: false,
         };
         d.reset();
-        d
+        Ok(d)
     }
 
     /// A dictionary that decodes straight into `buf`, starting at `start`
     /// (an LZMA2 dictionary reset point). The caller grows `buf` and sets
-    /// `limit` before each decode call.
-    pub(crate) fn new_flat(buf: Vec<u8>, start: usize) -> Self {
+    /// `limit` before each decode call. Matches reach back at most
+    /// `dict_size` bytes (rounded like [`Dict::new`]), as in a ring
+    /// dictionary of that size.
+    pub(crate) fn new_flat(buf: Vec<u8>, start: usize, dict_size: u32) -> Self {
         Self {
             buf,
             pos: start,
             limit: start,
             size: usize::MAX,
+            cap: usize::try_from(Self::rounded(dict_size)).unwrap_or(usize::MAX),
             has_wrapped: false,
             need_reset: false,
             base: start,
@@ -114,9 +142,9 @@ impl Dict {
     #[inline(always)]
     pub(crate) fn full(&self) -> usize {
         if self.has_wrapped {
-            self.size - INIT_POS
+            self.cap
         } else {
-            self.pos - self.base
+            (self.pos - self.base).min(self.cap)
         }
     }
 
@@ -223,6 +251,34 @@ impl Dict {
 mod tests {
     use super::*;
 
+    /// Sizes that can't be allocated are errors, not aborts or panics.
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri reports huge allocations as unsupported")]
+    fn unallocatable_sizes_are_errors() {
+        assert_eq!(zeroed(usize::MAX).unwrap_err(), Error::MemLimit);
+        assert_eq!(zeroed(isize::MAX as usize).unwrap_err(), Error::MemLimit);
+        // 4 GiB plus the margins doesn't fit in a 32-bit address space.
+        if usize::BITS == 32 {
+            assert_eq!(Dict::new(u32::MAX).unwrap_err(), Error::MemLimit);
+            assert_eq!(Dict::new(0xFFFF_FF00).unwrap_err(), Error::MemLimit);
+        }
+    }
+
+    /// A flat dictionary reaches back at most the declared dictionary
+    /// size, rounded like liblzma (at least 4 KiB, a multiple of 16).
+    #[test]
+    fn flat_history_is_capped_at_dict_size() {
+        let mut d = Dict::new_flat(Vec::new(), 0, 5000);
+        d.limit = 10_000;
+        d.init_to_limit();
+        for i in 0..10_000 {
+            d.put(i as u8);
+        }
+        assert_eq!(d.full(), 5008);
+        d.reset();
+        assert_eq!(d.full(), 0);
+    }
+
     /// `repeat` and `put` against a byte-by-byte model of the history, in
     /// ring mode (with wrapping) and flat mode, with short and long,
     /// overlapping and distant matches, so the 32-byte over-copy path and
@@ -240,9 +296,9 @@ mod tests {
         let steps = if cfg!(miri) { 300 } else { 20_000 };
         for flat in [false, true] {
             let mut d = if flat {
-                Dict::new_flat(Vec::new(), 0)
+                Dict::new_flat(Vec::new(), 0, u32::MAX)
             } else {
-                Dict::new(4096)
+                Dict::new(4096).unwrap()
             };
             let mut model: Vec<u8> = Vec::new();
             for _ in 0..steps {

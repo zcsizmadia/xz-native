@@ -412,7 +412,7 @@ mod tests {
             let o = opts(mode, mf, nice);
             let mut lz = Lzma2Encoder::new_lz(&o, &[]).unwrap();
             let packed = encode(&mut lz, &input);
-            let mut dec = LzDriver::new(Lzma2Decoder::new(), o.dict_size);
+            let mut dec = LzDriver::new(Lzma2Decoder::new(), o.dict_size).unwrap();
             let mut out = vec![0u8; input.len() + 1];
             let (u, w, p) = dec.decode(&packed, &mut out).unwrap();
             assert_eq!((u, w, p), (packed.len(), input.len(), Progress::End), "{i}");
@@ -436,7 +436,7 @@ mod tests {
             let props = LzmaProps::from_byte(o.props_byte()).unwrap();
             let mut d = LzmaDecoder::new(props);
             d.set_uncompressed(None, true);
-            let mut dec = LzDriver::new(d, o.dict_size);
+            let mut dec = LzDriver::new(d, o.dict_size).unwrap();
             let mut out = vec![0u8; input.len() + 1];
             let (u, w, p) = dec.decode(&packed, &mut out).unwrap();
             assert_eq!((u, w, p), (packed.len(), input.len(), Progress::End), "{i}");
@@ -459,7 +459,7 @@ mod tests {
         // First chunk: uncompressed with dictionary reset.
         assert_eq!(packed[0], 1);
         assert!(packed.len() < input.len() + input.len() / 1000 + 16);
-        let mut dec = LzDriver::new(Lzma2Decoder::new(), o.dict_size);
+        let mut dec = LzDriver::new(Lzma2Decoder::new(), o.dict_size).unwrap();
         let mut out = vec![0u8; input.len()];
         let (_, w, p) = dec.decode(&packed, &mut out).unwrap();
         assert_eq!((w, p), (input.len(), Progress::End));

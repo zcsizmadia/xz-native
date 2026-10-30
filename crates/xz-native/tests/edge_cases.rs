@@ -590,3 +590,23 @@ fn compressed_size_shorter_than_data() {
     let threaded = DecoderOptions::default().threads(4);
     assert_eq!(decompress_with_options(&v, threaded), Err(Error::Data));
 }
+
+/// Dictionary sizes from untrusted headers that can't be allocated (on
+/// 32-bit targets, anything near 4 GiB) give an error, not a panic.
+#[test]
+fn huge_lzma_dictionary_is_an_error_on_32_bit() {
+    if usize::BITS != 32 {
+        return;
+    }
+    for dict in [0x8000_0000u32, 0xFFFF_FF00, u32::MAX] {
+        let mut lzma = vec![0x5D];
+        lzma.extend_from_slice(&dict.to_le_bytes());
+        lzma.extend_from_slice(&[0xFF; 8]);
+        lzma.extend_from_slice(&[0; 16]);
+        assert_eq!(
+            xz_native::decompress_lzma(&lzma).err(),
+            Some(xz_native::Error::MemLimit),
+            "dict {dict:#x}"
+        );
+    }
+}

@@ -67,13 +67,13 @@ pub(crate) struct LzDriver<C> {
 }
 
 impl<C: LzCodec> LzDriver<C> {
-    pub(crate) fn new(codec: C, dict_size: u32) -> Self {
-        Self {
+    pub(crate) fn new(codec: C, dict_size: u32) -> crate::error::Result<Self> {
+        Ok(Self {
             codec,
-            dict: Dict::new(dict_size),
+            dict: Dict::new(dict_size)?,
             done: false,
             error: None,
-        }
+        })
     }
 
     /// Streaming decode. Returns `(input used, output written, progress)`.

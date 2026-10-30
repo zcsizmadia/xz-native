@@ -215,3 +215,42 @@ fn periodic_and_rle_round_trip() {
         }
     }
 }
+
+/// A Block whose matches reach further back than the dictionary size in
+/// its header is corrupt, also when the decoder has that much output at
+/// hand (the one-shot decoder decodes into the output). liblzma: DATA_ERROR.
+#[test]
+fn match_beyond_declared_dictionary_is_data_error() {
+    let mut r = Rng(0xD1C7);
+    let part: Vec<u8> = (0..50_000).map(|_| r.next() as u8).collect();
+    let data = [&part[..], &part[..]].concat();
+    let lzma = xz_native::LzmaOptions::preset(6)
+        .unwrap()
+        .dict_size(64 << 10);
+    let opts = xz_native::EncoderOptions::preset(6).unwrap().lzma(lzma);
+    let mut packed = xz_native::compress_with_options(&data, &opts).unwrap();
+    assert_eq!(decompress(&packed).unwrap(), data);
+
+    // Set the LZMA2 dictionary size property to 4 KiB.
+    let size = (packed[12] as usize + 1) * 4;
+    let header = &mut packed[12..12 + size];
+    let at = header.windows(2).position(|w| w == [0x21, 1]).unwrap() + 2;
+    header[at] = 0;
+    let crc = crc32(&header[..size - 4], 0);
+    header[size - 4..].copy_from_slice(&crc.to_le_bytes());
+
+    assert_eq!(decompress(&packed).err(), Some(xz_native::Error::Data));
+    let opts = DecoderOptions::default();
+    assert_eq!(
+        xz_native::decompress_streaming(&packed, opts).err(),
+        Some(xz_native::Error::Data)
+    );
+    let mut out = Vec::new();
+    assert!(XzReader::new(&packed[..]).read_to_end(&mut out).is_err());
+    let mt = DecoderOptions::default().threads(4);
+    assert!(
+        XzReader::with_options(&packed[..], mt)
+            .read_to_end(&mut out)
+            .is_err()
+    );
+}

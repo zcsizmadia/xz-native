@@ -351,7 +351,7 @@ pub(crate) struct ChainDecoder<C = Lzma2Decoder> {
 impl ChainDecoder {
     /// `filters` must have passed [`validate_chain`]. With a known
     /// uncompressed size, the dictionary is no larger than that.
-    pub(crate) fn new(filters: &[Filter], uncompressed: Option<u64>) -> Self {
+    pub(crate) fn new(filters: &[Filter], uncompressed: Option<u64>) -> Result<Self> {
         let (last, rest) = filters.split_last().expect("validated chain");
         let Filter::Lzma2 { dict_size } = *last else {
             unreachable!("validated chain")
@@ -362,7 +362,7 @@ impl ChainDecoder {
 
 impl<C: LzCodec> ChainDecoder<C> {
     /// `rest` are the filters before the LZ codec (Delta and BCJ).
-    pub(crate) fn with_codec(rest: &[Filter], codec: C, dict_size: u32) -> Self {
+    pub(crate) fn with_codec(rest: &[Filter], codec: C, dict_size: u32) -> Result<Self> {
         let stages = rest
             .iter()
             .map(|f| match *f {
@@ -373,10 +373,10 @@ impl<C: LzCodec> ChainDecoder<C> {
                 Filter::Lzma2 { .. } => unreachable!("validated chain"),
             })
             .collect();
-        Self {
+        Ok(Self {
             stages,
-            lz: LzDriver::new(codec, dict_size),
-        }
+            lz: LzDriver::new(codec, dict_size)?,
+        })
     }
 
     pub(crate) fn decode(

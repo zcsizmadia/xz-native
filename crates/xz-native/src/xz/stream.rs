@@ -307,7 +307,7 @@ impl BlockDecoder {
         }
         Ok(Self {
             seq: BlockSeq::Data,
-            chain: ChainDecoder::new(&h.filters, h.uncompressed_size),
+            chain: ChainDecoder::new(&h.filters, h.uncompressed_size)?,
             check_type: check,
             header_size: h.header_size as u64,
             declared_compressed: h.compressed_size,

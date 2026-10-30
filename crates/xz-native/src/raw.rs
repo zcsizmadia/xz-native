@@ -107,13 +107,13 @@ impl RawDecoder {
             RawMethod::Lzma1 => {
                 let mut dec = LzmaDecoder::new(opts.props()?);
                 dec.set_uncompressed(None, true);
-                DecoderKind::Lzma1(ChainDecoder::with_codec(&opts.filters, dec, dict_size))
+                DecoderKind::Lzma1(ChainDecoder::with_codec(&opts.filters, dec, dict_size)?)
             }
             RawMethod::Lzma2 => DecoderKind::Lzma2(ChainDecoder::with_codec(
                 &opts.filters,
                 Lzma2Decoder::new(),
                 dict_size,
-            )),
+            )?),
         };
         Ok(Self {
             inner: Box::new(inner),
