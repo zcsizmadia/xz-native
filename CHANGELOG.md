@@ -13,6 +13,10 @@ minor version may change the API.
   Stream and Block tables of `xz --list -vv` (offsets, sizes, checks,
   padding, and from the Block Header its size, stored sizes, filter chain,
   memory usage and check value) (#59).
+- Async readers and writers: `xz_native::tokio` (feature `tokio`) and
+  `xz_native::futures` (feature `futures-io`), with `XzReader`,
+  `LzmaReader`, `LzipReader`, `XzWriter`, `LzmaWriter`, and generic
+  `Reader`/`Writer` for any push decoder or encoder (#14).
 - `memusage()`, `memlimit()` and `set_memlimit()` on `XzDecoder`,
   `LzmaDecoder` and `LzipDecoder` (`lzma_memusage`, `lzma_memlimit_get`,
   `lzma_memlimit_set`): after `Error::MemLimit`, `memusage()` says how much

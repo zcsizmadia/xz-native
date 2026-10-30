@@ -139,6 +139,22 @@ The push-style [`XzDecoder`](crates/xz-native/src/xz/stream.rs) and
 [`XzEncoder`](crates/xz-native/src/xz/encoder.rs) work without `std`, like
 `lzma_code` in liblzma.
 
+Async readers and writers come with the `tokio` feature
+(`xz_native::tokio`) or the `futures-io` feature (`xz_native::futures`, for
+async-std, smol and `futures`). Without them the crate has no dependencies.
+
+```rust
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+let mut writer = xz_native::tokio::XzWriter::new(tokio::fs::File::create("out.xz").await?, 6)?;
+writer.write_all(b"hello").await?;
+writer.shutdown().await?; // ends the stream
+
+let file = tokio::io::BufReader::new(tokio::fs::File::open("out.xz").await?);
+let mut text = String::new();
+xz_native::tokio::XzReader::new(file).read_to_string(&mut text).await?;
+```
+
 ### Migrating from `xz2` or `liblzma`
 
 `xz_native::compat` mirrors those crates' `read`, `bufread` and `write`
@@ -169,6 +185,7 @@ equivalent; use `DecoderOptions` and `EncoderOptions` instead.
 | Filters: x86, ARM, ARM-Thumb, ARM64, PowerPC, IA-64, SPARC, RISC-V, Delta | yes | yes |
 | Checks: None, CRC32, CRC64, SHA-256 | yes | yes |
 | Multithreading (one-shot and streaming, `threads` options) | yes | yes (byte-identical to liblzma's multithreaded encoder) |
+| Async (tokio, futures-io) readers and writers | yes | yes |
 
 ## How it's tested
 
