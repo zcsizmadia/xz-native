@@ -1,9 +1,11 @@
 //! Decodes one benchmark dataset in a loop, for `perf record` and A/B runs.
 //!
-//! Usage: profile_decode <text|binary|random> <preset> <iterations> [native|reader|liblzma] [threads]
+//! Usage: profile_decode <text|binary|random> <preset> <iterations> [native|reader|reader-buf|liblzma|liblzma-bufread] [threads]
 //!
 //! `native` is one-shot decoding, `reader` is `XzReader` and `liblzma` is
-//! the C library (its multithreaded decoder with `threads`). With `threads`
+//! the C library (its multithreaded decoder with `threads`). `reader-buf`
+//! and `liblzma-bufread` swap the input buffering: `XzReader` behind an
+//! 8 KiB `BufReader`, liblzma reading the slice directly. With `threads`
 //! given, the input is a multi-Block file (1 MiB Blocks, the dataset
 //! repeated 8 times) and the decoder uses that many threads (0 = one per
 //! CPU). `XZ_PROBE_BLOCK_MIB` changes the Block size; 0 makes the 64 MiB a
@@ -69,6 +71,25 @@ fn main() {
             }
             "liblzma" => {
                 liblzma::read::XzDecoder::new(&packed[..])
+                    .read_to_end(&mut out)
+                    .unwrap();
+            }
+            // liblzma reading the compressed slice directly, without the
+            // 8 KiB BufReader of `liblzma::read` (#50).
+            "liblzma-bufread" => {
+                liblzma::bufread::XzDecoder::new(&packed[..])
+                    .read_to_end(&mut out)
+                    .unwrap();
+            }
+            // XzReader with the compressed input staged through an 8 KiB
+            // BufReader, as `liblzma::read` does (#50).
+            "reader-buf" => {
+                let opts = xz_native::DecoderOptions {
+                    threads: threads as usize,
+                    ..Default::default()
+                };
+                let input = std::io::BufReader::with_capacity(8192, &packed[..]);
+                xz_native::XzReader::with_options(input, opts)
                     .read_to_end(&mut out)
                     .unwrap();
             }
