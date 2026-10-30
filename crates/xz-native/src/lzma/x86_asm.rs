@@ -201,3 +201,154 @@ bittree_fn!(
     middle!("p0", "p1"),
     last!("p1"),
 );
+
+/// One matched-literal step. While the bits match the match byte, `offset`
+/// stays 0x100 and selects the upper half of the coder; after a mismatch it
+/// becomes 0 and the rest decodes as a plain literal.
+macro_rules! matched {
+    (nonlast) => {
+        concat!(
+            matched!(@load),
+            "xor {match_bit:e}, {offset:e}\n",
+            "add {match_byte:e}, {match_byte:e}\n",
+            matched!(@decode),
+            "cmovae {match_bit:e}, {offset:e}\n",
+            "mov {match_byte:e}, {match_bit:e}\n",
+            matched!(@store),
+        )
+    };
+    (last) => {
+        concat!(matched!(@load), matched!(@decode), matched!(@store))
+    };
+    (@load) => {
+        concat!(
+            "add {offset:e}, {sym:e}\n",
+            "and {offset:e}, {match_bit:e}\n",
+            "add {match_bit:e}, {sym:e}\n",
+            "movzwl ({base},{sym:r},2), {p0:e}\n",
+            "add {sym:e}, {sym:e}\n",
+        )
+    };
+    (@decode) => {
+        concat!(
+            normalize!(),
+            calc!("p0"),
+            "cmovae {t0:e}, {range:e}\n",
+            "lea {off}({p0:r}), {t0:e}\n",
+            "cmovb {t1:e}, {code:e}\n",
+            "mov {sym:e}, {t1:e}\n",
+            "cmovae {p0:e}, {t0:e}\n",
+        )
+    };
+    (@store) => {
+        concat!(
+            "sbb $-1, {sym:e}\n",
+            "shr $5, {t0:e}\n",
+            // Undo `sym += match_bit + offset`.
+            "and $0x1FF, {sym:e}\n",
+            "sub {t0:e}, {p0:e}\n",
+            "mov {p0:x}, ({base},{t1:r},1)\n",
+        )
+    };
+}
+
+/// Decodes a matched literal whose coder starts at `probs` (index 0).
+/// Returns the byte.
+///
+/// # Safety
+///
+/// `probs[..0x300]` must be in bounds, and at least 8 input bytes must be
+/// readable at `*pos`.
+#[inline(always)]
+pub(super) unsafe fn matched_literal(
+    range: &mut u32,
+    code: &mut u32,
+    input: &[u8],
+    pos: &mut usize,
+    probs: *mut u16,
+    match_byte: u32,
+) -> u32 {
+    debug_assert!(*pos + 8 <= input.len());
+    // SAFETY: the caller guarantees the input bytes and the coder.
+    unsafe {
+        let mut in_ptr = input.as_ptr().add(*pos);
+        let mut sym: usize = 1;
+        let mut match_byte = (match_byte << 1) as usize;
+        let mut match_bit = match_byte;
+        let mut offset: usize = 0x100;
+        asm!(
+            matched!(nonlast),
+            matched!(nonlast),
+            matched!(nonlast),
+            matched!(nonlast),
+            matched!(nonlast),
+            matched!(nonlast),
+            matched!(nonlast),
+            matched!(last),
+            range = inout(reg) *range,
+            code = inout(reg) *code,
+            t0 = out(reg) _,
+            t1 = out(reg) _,
+            p0 = out(reg) _,
+            match_bit = inout(reg) match_bit,
+            sym = inout(reg) sym,
+            match_byte = inout(reg) match_byte,
+            offset = inout(reg) offset,
+            in_ptr = inout(reg) in_ptr,
+            base = in(reg) probs,
+            top = const 1 << 24,
+            off = const -2017,
+            options(att_syntax, nostack),
+        );
+        let _ = (match_bit, match_byte, offset);
+        *pos = in_ptr.offset_from(input.as_ptr()) as usize;
+        sym as u32 - 0x100
+    }
+}
+
+/// Decodes `count` (at least 1) bits with fixed probability 1/2.
+///
+/// # Safety
+///
+/// At least `count` input bytes must be readable at `*pos`.
+#[inline(always)]
+pub(super) unsafe fn direct_bits(
+    range: &mut u32,
+    code: &mut u32,
+    input: &[u8],
+    pos: &mut usize,
+    count: u32,
+) -> u32 {
+    debug_assert!(count >= 1 && *pos + count as usize <= input.len());
+    // SAFETY: the caller guarantees the input bytes.
+    unsafe {
+        let mut in_ptr = input.as_ptr().add(*pos);
+        let mut dest: u32 = 0;
+        let mut count = count;
+        asm!(
+            "2:\n",
+            "add {dest:e}, {dest:e}\n",
+            "lea 1({dest:r}), {t1:e}\n",
+            normalize!(),
+            "shr $1, {range:e}\n",
+            "mov {code:e}, {t0:e}\n",
+            "sub {range:e}, {code:e}\n",
+            "cmovns {t1:e}, {dest:e}\n",
+            "cmovs {t0:e}, {code:e}\n",
+            "dec {count:e}\n",
+            "jnz 2b\n",
+            range = inout(reg) *range,
+            code = inout(reg) *code,
+            t0 = out(reg) _,
+            t1 = out(reg) _,
+            dest = inout(reg) dest,
+            count = inout(reg) count,
+            in_ptr = inout(reg) in_ptr,
+            top = const 1 << 24,
+            options(att_syntax, nostack),
+        );
+        let _ = count;
+        *pos = in_ptr.offset_from(input.as_ptr()) as usize;
+        dest
+    }
+}

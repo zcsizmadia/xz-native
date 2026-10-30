@@ -360,6 +360,15 @@ fn direct_bits<const SAFE: bool>(
     inp: &mut Input<'_, SAFE>,
     count: u32,
 ) -> core::result::Result<u32, Stop> {
+    #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+    if !SAFE && count > 0 {
+        // SAFETY: the fast path has at least FAST_MIN input bytes left, more
+        // than the 26 direct bits a distance can have.
+        #[allow(unsafe_code)]
+        return Ok(unsafe {
+            super::x86_asm::direct_bits(&mut rc.range, &mut rc.code, inp.buf, &mut inp.pos, count)
+        });
+    }
     let mut v = 0u32;
     for _ in 0..count {
         inp.normalize(rc)?;
@@ -392,6 +401,29 @@ fn len_decode<const SAFE: bool>(
     } else {
         Ok(MATCH_LEN_MIN + 16 + bittree::<SAFE, 8>(rc, inp, probs, undo, base + LEN_HIGH)?)
     }
+}
+
+/// Writes a decoded literal and updates the state.
+#[inline(always)]
+fn finish_literal(
+    st: &mut Locals,
+    dict: &mut Dict,
+    byte: u32,
+    at_limit: bool,
+) -> core::result::Result<Sym, Stop> {
+    if at_limit {
+        return Err(Stop::Data);
+    }
+    let state = st.state;
+    st.state = if state < 4 {
+        0
+    } else if state < 10 {
+        state - 3
+    } else {
+        state - 6
+    };
+    dict.put(byte as u8);
+    Ok(Sym::Out(0))
 }
 
 /// Static per-stream parameters used by the symbol decoder.
@@ -441,6 +473,24 @@ fn symbol<const SAFE: bool>(
             // Matched literal: while the decoded bits equal the match byte's,
             // the probabilities come from the upper half of the coder. After
             // the first difference the rest is a plain literal tree (LZMA SDK).
+            #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+            if !SAFE {
+                debug_assert!(base + 0x300 <= PROBS_SIZE);
+                // SAFETY: the literal coder is inside `probs` (see `prob`), and
+                // the fast path has at least FAST_MIN input bytes left.
+                #[allow(unsafe_code)]
+                let byte = unsafe {
+                    super::x86_asm::matched_literal(
+                        &mut rc.range,
+                        &mut rc.code,
+                        inp.buf,
+                        &mut inp.pos,
+                        probs.as_mut_ptr().add(base),
+                        dict.get(st.reps[0]) as u32,
+                    )
+                };
+                return finish_literal(st, dict, byte, at_limit);
+            }
             let mut match_byte = dict.get(st.reps[0]) as u32;
             let mut sym = 1u32;
             while sym < 0x100 {
@@ -460,18 +510,7 @@ fn symbol<const SAFE: bool>(
             }
             literal_tail(rc, inp, probs, undo, base, sym)? - 0x100
         };
-        if at_limit {
-            return Err(Stop::Data);
-        }
-        st.state = if state < 4 {
-            0
-        } else if state < 10 {
-            state - 3
-        } else {
-            state - 6
-        };
-        dict.put(byte as u8);
-        return Ok(Sym::Out(0));
+        return finish_literal(st, dict, byte, at_limit);
     }
 
     let len;
