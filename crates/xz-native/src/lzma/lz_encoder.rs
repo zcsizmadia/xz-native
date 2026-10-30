@@ -79,9 +79,9 @@ fn read64(buf: &[u8], i: usize) -> u64 {
 }
 
 /// Prefetch hint for `p` (any address).
+#[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
 #[inline(always)]
 fn prefetch<T>(p: *const T) {
-    #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
     // SAFETY: prefetching is only a hint: it never faults and has no
     // observable effect, whatever the address (callers use wrapping
     // arithmetic, so no out-of-bounds pointer offsets are made).
@@ -90,8 +90,6 @@ fn prefetch<T>(p: *const T) {
         use core::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
         _mm_prefetch::<_MM_HINT_T0>(p.cast());
     }
-    #[cfg(not(all(target_arch = "x86_64", not(feature = "portable"))))]
-    let _ = p;
 }
 
 /// Prefetches the window bytes and tree nodes of both children of the tree

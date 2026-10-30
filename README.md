@@ -175,7 +175,7 @@ behavior, so testing is layered:
 | **Fuzzing (CI)** | cargo-fuzz with libFuzzer: streaming vs one-shot consistency for `.xz` and `.lzma`, a differential target against C liblzma, and an encoder round-trip and byte-identity target. Runs 3 minutes per target on every push and PR, and 30 minutes nightly, with a persistent corpus seeded from xz's test files. |
 | **Mutation testing** | [cargo-mutants](https://mutants.rs) over the validation code (`xz/`, `lzip.rs`, `seek.rs`, `filter/`, `alone.rs`, LZMA2). Every surviving mutant becomes a test or is documented as equivalent ([#22](https://github.com/zcsizmadia/xz-native/issues/22)). |
 | **SIMD and assembly paths** | Each CRC/SHA kernel is compared with the portable code for every length 0-2100 at several alignments. The whole suite also runs with `--features portable`, which disables all SIMD and assembly. Hot-path `unsafe` has debug assertions that the CI-profile tests and the fuzzers run with. |
-| **Miri** | Unit tests and the xz test files on x86-64 and big-endian s390x (manual workflow for now, [#15](https://github.com/zcsizmadia/xz-native/issues/15)). |
+| **Miri** | On x86-64 and big-endian s390x. Every push and PR runs the tests of the `unsafe` code (checksums, decoder, match finder) and the xz test files, about 3 minutes; all unit tests, including the encoder, run after each merge that changes the library and weekly. |
 
 **CI** (GitHub Actions, every PR, all required before merging to `main`):
 
