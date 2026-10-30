@@ -1,12 +1,16 @@
 //! Decodes one benchmark dataset in a loop, for `perf record` and A/B runs.
 //!
-//! Usage: profile_decode <text|binary|random> <preset> <iterations> [native|reader|liblzma] [threads]
+//! Usage: profile_decode <text|binary|random> <preset> <iterations> [native|reader|reader-buf|liblzma|liblzma-bufread] [threads]
 //!
 //! `native` is one-shot decoding, `reader` is `XzReader` and `liblzma` is
-//! the C library (its multithreaded decoder with `threads`). With `threads`
+//! the C library (its multithreaded decoder with `threads`). `reader-buf`
+//! and `liblzma-bufread` swap the input buffering: `XzReader` behind an
+//! 8 KiB `BufReader`, liblzma reading the slice directly. With `threads`
 //! given, the input is a multi-Block file (1 MiB Blocks, the dataset
 //! repeated 8 times) and the decoder uses that many threads (0 = one per
-//! CPU).
+//! CPU). `XZ_PROBE_BLOCK_MIB` changes the Block size; 0 makes the 64 MiB a
+//! single Block. `XZ_PROBE_DUMP=file` writes the compressed input and exits;
+//! `XZ_PROBE_LOAD=file` decodes that file instead (no compression first).
 
 use std::io::Read;
 
@@ -24,11 +28,19 @@ fn main() {
         .1;
 
     let mut packed = Vec::new();
-    if threads.is_some() {
+    if let Ok(path) = std::env::var("XZ_PROBE_LOAD") {
+        packed = std::fs::read(&path).unwrap();
+        data = xz_native::decompress(&packed).unwrap();
+    } else if threads.is_some() {
         data = data.repeat(8);
+        let block_mib: u64 = std::env::var("XZ_PROBE_BLOCK_MIB").map_or(1, |s| s.parse().unwrap());
         let enc = liblzma::stream::MtStreamBuilder::new()
             .threads(4)
-            .block_size(1 << 20)
+            .block_size(if block_mib == 0 {
+                1 << 30
+            } else {
+                block_mib << 20
+            })
             .preset(preset)
             .encoder()
             .unwrap();
@@ -39,6 +51,13 @@ fn main() {
         liblzma::read::XzEncoder::new(&data[..], preset)
             .read_to_end(&mut packed)
             .unwrap();
+    }
+    // Save the compressed input once and load it in later runs, so that a
+    // profile of the decode loop doesn't include the compression above.
+    if let Ok(path) = std::env::var("XZ_PROBE_DUMP") {
+        std::fs::write(&path, &packed).unwrap();
+        println!("wrote {} bytes to {path}", packed.len());
+        return;
     }
     let threads = threads.unwrap_or(1);
 
@@ -63,6 +82,25 @@ fn main() {
             }
             "liblzma" => {
                 liblzma::read::XzDecoder::new(&packed[..])
+                    .read_to_end(&mut out)
+                    .unwrap();
+            }
+            // liblzma reading the compressed slice directly, without the
+            // 8 KiB BufReader of `liblzma::read` (#50).
+            "liblzma-bufread" => {
+                liblzma::bufread::XzDecoder::new(&packed[..])
+                    .read_to_end(&mut out)
+                    .unwrap();
+            }
+            // XzReader with the compressed input staged through an 8 KiB
+            // BufReader, as `liblzma::read` does (#50).
+            "reader-buf" => {
+                let opts = xz_native::DecoderOptions {
+                    threads: threads as usize,
+                    ..Default::default()
+                };
+                let input = std::io::BufReader::with_capacity(8192, &packed[..]);
+                xz_native::XzReader::with_options(input, opts)
                     .read_to_end(&mut out)
                     .unwrap();
             }

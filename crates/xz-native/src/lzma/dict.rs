@@ -13,7 +13,7 @@ pub(crate) const REPEAT_MAX: usize = 288;
 /// Initial write position of an empty dictionary.
 pub(crate) const INIT_POS: usize = 2 * REPEAT_MAX;
 /// Slack after the end of the buffer for over-copying.
-const EXTRA: usize = 32;
+pub(crate) const EXTRA: usize = 32;
 
 #[derive(Debug)]
 pub(crate) struct Dict {
@@ -152,6 +152,19 @@ impl Dict {
     pub(crate) fn repeat(&mut self, distance: u32, len: u32) -> u32 {
         let left = (self.limit - self.pos).min(len as usize);
         let d = distance as usize;
+        // Short match whose source ends before the destination: copy a
+        // fixed 32 bytes (inline, no memmove call) and keep `left` of them.
+        // The extra bytes land in the REPEAT_MAX gap after `pos`, which no
+        // distance reaches (wrapped reads start REPEAT_MAX further on), or
+        // in the EXTRA slack, and are overwritten before they are read.
+        if left <= 32 && d >= 31 && d < self.pos && self.pos + 32 <= self.buf.len() {
+            let back = self.pos - d - 1;
+            let (src, dst) = self.buf.split_at_mut(self.pos);
+            dst[..32].copy_from_slice(&src[back..back + 32]);
+            self.pos += left;
+            self.update_full();
+            return len - left as u32;
+        }
         let back = if d < self.pos {
             self.pos - d - 1
         } else {
@@ -193,12 +206,81 @@ impl Dict {
         n
     }
 
-    /// Makes `buf[pos..limit]` writable for the LZMA decoder (only a flat
-    /// buffer can be shorter).
+    /// Makes `buf[pos..limit + EXTRA]` writable for the LZMA decoder (only a
+    /// flat buffer can be shorter): the slack lets [`Dict::repeat`] over-copy
+    /// up to the limit. The flat caller truncates the output afterwards.
     #[inline]
     pub(crate) fn init_to_limit(&mut self) {
-        if self.buf.len() < self.limit {
-            self.buf.resize(self.limit, 0);
+        if self.buf.len() < self.limit + EXTRA {
+            self.buf.resize(self.limit + EXTRA, 0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `repeat` and `put` against a byte-by-byte model of the history, in
+    /// ring mode (with wrapping) and flat mode, with short and long,
+    /// overlapping and distant matches, so the 32-byte over-copy path and
+    /// its fallbacks (distance below 31, length above 32, near the end of
+    /// the buffer) all run.
+    #[test]
+    fn repeat_matches_bytewise_model() {
+        let mut x = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move |n: u64| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x % n
+        };
+        let steps = if cfg!(miri) { 300 } else { 20_000 };
+        for flat in [false, true] {
+            let mut d = if flat {
+                Dict::new_flat(Vec::new(), 0)
+            } else {
+                Dict::new(4096)
+            };
+            let mut model: Vec<u8> = Vec::new();
+            for _ in 0..steps {
+                if d.pos == d.limit {
+                    if flat {
+                        d.limit = d.pos + 1 + next(700) as usize;
+                        d.init_to_limit();
+                    } else {
+                        d.wrap_if_needed();
+                        d.limit = (d.pos + 1 + next(700) as usize).min(d.size);
+                    }
+                }
+                if model.is_empty() || next(4) == 0 {
+                    let b = next(256) as u8;
+                    d.put(b);
+                    model.push(b);
+                    continue;
+                }
+                let max_dist = model.len().min(if flat { usize::MAX } else { 4096 });
+                let dist = match next(3) {
+                    0 => next(31.min(max_dist as u64)),
+                    _ => next(max_dist as u64),
+                } as u32;
+                let max_len = if next(2) == 0 { 40 } else { 273 };
+                let len = 1 + next(max_len) as u32;
+                let left = d.repeat(dist, len);
+                let done = (len - left) as usize;
+                for _ in 0..done {
+                    let b = model[model.len() - dist as usize - 1];
+                    model.push(b);
+                }
+                // The last bytes written must match the model.
+                let n = done.min(model.len());
+                for k in 1..=n {
+                    assert_eq!(d.get(k as u32 - 1), model[model.len() - k], "flat={flat}");
+                }
+            }
+            if flat {
+                assert_eq!(&d.buf[..d.pos], &model[..], "flat output");
+            }
         }
     }
 }

@@ -11,7 +11,7 @@ use super::stream::{DecoderOptions, IndexDecoder, RecordHash};
 use crate::check::{Check, CheckState};
 use crate::error::{Error, Result};
 use crate::filter::{ChainDecoder, InPlaceFilters};
-use crate::lzma::dict::Dict;
+use crate::lzma::dict::{Dict, EXTRA as DICT_EXTRA};
 use crate::lzma::lzma2::Lzma2Decoder;
 use crate::lzma::{LzCodec, Progress};
 use alloc::vec;
@@ -119,7 +119,8 @@ pub(crate) fn decode_block(
         .ok()
         .and_then(|t| start.checked_add(t))
         .ok_or(Error::MemLimit)?;
-    out.reserve(total.min(comp_len.saturating_mul(MAX_RATIO) as u64) as usize);
+    // Plus the slack that the LZMA decoder's over-copying needs past the end.
+    out.reserve(total.min(comp_len.saturating_mul(MAX_RATIO) as u64) as usize + DICT_EXTRA);
 
     let mut dict = Dict::new_flat(core::mem::take(out), start);
     let mut lz = Lzma2Decoder::new();
@@ -134,9 +135,9 @@ pub(crate) fn decode_block(
         // Grow by doubling. Uncompressed chunks are appended, and the LZMA
         // decoder zero-fills only up to the limit it decodes to.
         let cap = dict.buf.capacity();
-        if cap < lim {
-            dict.buf
-                .reserve(lim.max(cap.saturating_mul(2).min(target)) - dict.buf.len());
+        if cap < lim + DICT_EXTRA {
+            let want = lim.max(cap.saturating_mul(2).min(target)) + DICT_EXTRA;
+            dict.buf.reserve(want - dict.buf.len());
         }
         dict.limit = lim;
         let before = (ip, dict.pos);
