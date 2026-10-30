@@ -16,6 +16,8 @@ pub struct LzmaDecoder {
     memusage: u64,
     lz: Option<LzDriver<Lzma1Decoder>>,
     done: bool,
+    /// The error that ended decoding; later calls return it.
+    error: Option<Error>,
 }
 
 impl Default for LzmaDecoder {
@@ -40,6 +42,7 @@ impl LzmaDecoder {
             memusage: 0,
             lz: None,
             done: false,
+            error: None,
         }
     }
 
@@ -71,20 +74,35 @@ impl LzmaDecoder {
         output: &mut [u8],
         finish: bool,
     ) -> Result<(usize, usize, Status)> {
+        if let Some(e) = self.error {
+            return Err(e);
+        }
         if self.done {
             return Ok((0, 0, Status::StreamEnd));
         }
-        let mut ip = 0;
+        let (mut ip, mut op) = (0, 0);
+        let r = self.run(input, output, finish, &mut ip, &mut op);
+        crate::push::settle(&mut self.error, ip, op, r)
+    }
+
+    fn run(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+        ip: &mut usize,
+        op: &mut usize,
+    ) -> Result<Status> {
         if self.lz.is_none() {
             let n = (13 - self.header_pos).min(input.len());
             self.header[self.header_pos..self.header_pos + n].copy_from_slice(&input[..n]);
             self.header_pos += n;
-            ip = n;
+            *ip = n;
             if self.header_pos < 13 {
                 return if finish {
                     Err(Error::Truncated)
                 } else {
-                    Ok((ip, 0, Status::Ok))
+                    Ok(Status::Ok)
                 };
             }
             let props = LzmaProps::from_byte(self.header[0]).ok_or(Error::Format)?;
@@ -92,12 +110,8 @@ impl LzmaDecoder {
             let size = u64::from_le_bytes(self.header[5..13].try_into().unwrap());
             self.memusage = Dict::mem_usage(dict_size) + 32 * 1024;
             if self.memusage > self.memlimit {
-                // Return the progress first; the retry consumes nothing.
-                return if ip > 0 {
-                    Ok((ip, 0, Status::Ok))
-                } else {
-                    Err(Error::MemLimit)
-                };
+                // The retry consumes nothing: the header is kept.
+                return Err(Error::MemLimit);
             }
             let known = (size != u64::MAX).then_some(size);
             let mut dec = Lzma1Decoder::new(props);
@@ -108,16 +122,17 @@ impl LzmaDecoder {
             )?);
         }
         let lz = self.lz.as_mut().unwrap();
-        let (u, w, p) = lz.decode(&input[ip..], output)?;
-        ip += u;
+        let (u, w, p) = lz.decode(&input[*ip..], output)?;
+        *ip += u;
+        *op = w;
         if p == Progress::End {
             self.done = true;
-            return Ok((ip, w, Status::StreamEnd));
+            return Ok(Status::StreamEnd);
         }
-        if finish && ip == input.len() && w < output.len() {
+        if finish && *ip == input.len() && w < output.len() {
             return Err(Error::Truncated);
         }
-        Ok((ip, w, Status::Ok))
+        Ok(Status::Ok)
     }
 }
 
@@ -130,7 +145,7 @@ pub struct LzmaEncoder {
     lz: alloc::boxed::Box<
         crate::lzma::lzma2_encoder::LzEncoder<crate::lzma::lzma2_encoder::Lzma1Encoder>,
     >,
-    done: bool,
+    seq: crate::push::EncodeSeq,
 }
 
 impl LzmaEncoder {
@@ -160,7 +175,7 @@ impl LzmaEncoder {
             header,
             header_pos: 0,
             lz: alloc::boxed::Box::new(lz),
-            done: false,
+            seq: Default::default(),
         })
     }
 
@@ -172,32 +187,31 @@ impl LzmaEncoder {
     ///   means the stream is complete.
     ///
     /// .lzma has no flushing, so the other actions are
-    /// [`Error::Usage`], as in liblzma (`LZMA_PROG_ERROR`).
+    /// [`Error::Usage`], as in liblzma (`LZMA_PROG_ERROR`), and nothing is
+    /// written. Once [`Action::Finish`] has started, every call must pass
+    /// it with the input that is left until [`Status::StreamEnd`].
     pub fn encode(
         &mut self,
         input: &[u8],
         output: &mut [u8],
         action: Action,
     ) -> Result<(usize, usize, Status)> {
-        if self.done {
-            return Ok((0, 0, Status::StreamEnd));
-        }
-        let mut op = (13 - self.header_pos).min(output.len());
-        output[..op].copy_from_slice(&self.header[self.header_pos..self.header_pos + op]);
-        self.header_pos += op;
-        if self.header_pos < 13 {
-            return Ok((0, op, Status::Ok));
-        }
-        let mut ip = 0;
-        let action = match action {
+        let mf_action = match action {
             Action::Run => crate::lzma::lz_encoder::MfAction::Run,
             Action::Finish => crate::lzma::lz_encoder::MfAction::Finish,
             _ => return Err(Error::Usage),
         };
-        if self.lz.code(input, &mut ip, output, &mut op, action)? {
-            self.done = true;
-            return Ok((ip, op, Status::StreamEnd));
-        }
-        Ok((ip, op, Status::Ok))
+        let (header, header_pos, lz) = (&self.header, &mut self.header_pos, &mut self.lz);
+        self.seq.run(input, action, |input| {
+            let mut op = (13 - *header_pos).min(output.len());
+            output[..op].copy_from_slice(&header[*header_pos..*header_pos + op]);
+            *header_pos += op;
+            if *header_pos < 13 {
+                return Ok((0, op, Status::Ok));
+            }
+            let mut ip = 0;
+            let end = lz.code(input, &mut ip, output, &mut op, mf_action)?;
+            Ok((ip, op, if end { Status::StreamEnd } else { Status::Ok }))
+        })
     }
 }

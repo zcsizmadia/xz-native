@@ -95,6 +95,8 @@ enum DecoderKind {
 pub struct RawDecoder {
     inner: Box<DecoderKind>,
     done: bool,
+    /// The error that ended decoding; later calls return it.
+    error: Option<Error>,
 }
 
 impl RawDecoder {
@@ -118,6 +120,7 @@ impl RawDecoder {
         Ok(Self {
             inner: Box::new(inner),
             done: false,
+            error: None,
         })
     }
 
@@ -129,21 +132,28 @@ impl RawDecoder {
         output: &mut [u8],
         finish: bool,
     ) -> Result<(usize, usize, Status)> {
+        if let Some(e) = self.error {
+            return Err(e);
+        }
         if self.done {
             return Ok((0, 0, Status::StreamEnd));
         }
-        let (used, written, progress) = match &mut *self.inner {
-            DecoderKind::Lzma1(c) => c.decode(input, output)?,
-            DecoderKind::Lzma2(c) => c.decode(input, output)?,
+        let r = match &mut *self.inner {
+            DecoderKind::Lzma1(c) => c.decode(input, output),
+            DecoderKind::Lzma2(c) => c.decode(input, output),
         };
-        if progress == Progress::End {
-            self.done = true;
-            return Ok((used, written, Status::StreamEnd));
-        }
-        if finish && used == input.len() && written < output.len() {
-            return Err(Error::Truncated);
-        }
-        Ok((used, written, Status::Ok))
+        let (used, written, status) = match r {
+            Ok((u, w, Progress::End)) => {
+                self.done = true;
+                (u, w, Ok(Status::StreamEnd))
+            }
+            Ok((u, w, _)) if finish && u == input.len() && w < output.len() => {
+                (u, w, Err(Error::Truncated))
+            }
+            Ok((u, w, _)) => (u, w, Ok(Status::Ok)),
+            Err(e) => (0, 0, Err(e)),
+        };
+        crate::push::settle(&mut self.error, used, written, status)
     }
 }
 
@@ -158,7 +168,7 @@ enum EncoderKind {
 #[derive(Debug)]
 pub struct RawEncoder {
     inner: Box<EncoderKind>,
-    done: bool,
+    seq: crate::push::EncodeSeq,
 }
 
 impl RawEncoder {
@@ -176,7 +186,7 @@ impl RawEncoder {
         };
         Ok(Self {
             inner: Box::new(inner),
-            done: false,
+            seq: Default::default(),
         })
     }
 
@@ -198,9 +208,6 @@ impl RawEncoder {
         output: &mut [u8],
         action: Action,
     ) -> Result<(usize, usize, Status)> {
-        if self.done {
-            return Ok((0, 0, Status::StreamEnd));
-        }
         let mf_action = match (action, &*self.inner) {
             (Action::Run, _) => MfAction::Run,
             (Action::SyncFlush, EncoderKind::Lzma2(_)) => MfAction::SyncFlush,
@@ -208,18 +215,15 @@ impl RawEncoder {
             (Action::SyncFlush, _) => return Err(Error::InvalidOptions),
             _ => return Err(Error::Usage),
         };
-        let mut ip = 0;
-        let mut op = 0;
-        let end = match &mut *self.inner {
-            EncoderKind::Lzma1(lz) => lz.code(input, &mut ip, output, &mut op, mf_action)?,
-            EncoderKind::Lzma2(lz) => lz.code(input, &mut ip, output, &mut op, mf_action)?,
-        };
-        if !end {
-            return Ok((ip, op, Status::Ok));
-        }
-        if mf_action == MfAction::Finish {
-            self.done = true;
-        }
-        Ok((ip, op, Status::StreamEnd))
+        let inner = &mut *self.inner;
+        self.seq.run(input, action, |input| {
+            let mut ip = 0;
+            let mut op = 0;
+            let end = match inner {
+                EncoderKind::Lzma1(lz) => lz.code(input, &mut ip, output, &mut op, mf_action)?,
+                EncoderKind::Lzma2(lz) => lz.code(input, &mut ip, output, &mut op, mf_action)?,
+            };
+            Ok((ip, op, if end { Status::StreamEnd } else { Status::Ok }))
+        })
     }
 }

@@ -192,7 +192,18 @@ fn bad_powerpc_start_offset() {
         0x2c, 0x9c, 0xc1, 0x90, 0x42, 0x99, 0x0d, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x59, 0x5a,
     ];
     assert_eq!(decompress(&FILE), Err(Error::Options));
+    // The push decoder returns the progress (the Stream Header) first and
+    // the error from the next call, which then repeats it.
     let mut dec = xz_native::XzDecoder::new();
-    let r = dec.decode(&FILE, &mut [0u8; 64], true);
-    assert_eq!(r.map(|_| ()), Err(Error::Options));
+    let mut out = [0u8; 64];
+    let (used, _, _) = dec.decode(&FILE, &mut out, true).unwrap();
+    assert!(used > 0);
+    assert_eq!(
+        dec.decode(&FILE[used..], &mut out, true),
+        Err(Error::Options)
+    );
+    assert_eq!(
+        dec.decode(&FILE[used..], &mut out, true),
+        Err(Error::Options)
+    );
 }

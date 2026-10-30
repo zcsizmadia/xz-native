@@ -26,7 +26,7 @@
 //! ```
 
 use crate::alone::{LzmaDecoder, LzmaEncoder};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::lzip::LzipDecoder;
 use crate::raw::{RawDecoder, RawEncoder};
 use crate::xz::encoder::{Action, XzEncoder};
@@ -106,3 +106,81 @@ macro_rules! push_encoders {
 
 push_decoders!(XzDecoder, LzmaDecoder, LzipDecoder, RawDecoder);
 push_encoders!(XzEncoder, LzmaEncoder, RawEncoder);
+
+/// Ends a push decoder call the way liblzma's `lzma_code` does: the progress
+/// made before an error is returned first, as `Ok`, and the error comes
+/// from the next call. Errors are final: later calls return them again.
+/// The exceptions are [`Error::MemLimit`] (raise the limit and call again)
+/// and [`Error::Truncated`] (the caller may have more input after all).
+pub(crate) fn settle(
+    error: &mut Option<Error>,
+    ip: usize,
+    op: usize,
+    r: Result<Status>,
+) -> Result<(usize, usize, Status)> {
+    match r {
+        Ok(status) => Ok((ip, op, status)),
+        Err(e) => {
+            if !matches!(e, Error::MemLimit | Error::Truncated) {
+                *error = Some(e);
+            }
+            if ip > 0 || op > 0 {
+                Ok((ip, op, Status::Ok))
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
+/// liblzma's checks on an encoder's sequence of calls (`lzma_code`). Once a
+/// flush or [`Action::Finish`] has started, every call must pass the same
+/// action and the rest of the same input until it returns
+/// [`Status::StreamEnd`]; anything else is [`Error::Usage`]
+/// (`LZMA_PROG_ERROR`). After the end of the stream, calls return
+/// [`Status::StreamEnd`]. Errors are final, except [`Error::MemLimit`] and
+/// [`Error::Usage`] for an action the encoder rejects before doing
+/// anything.
+#[derive(Debug, Default)]
+pub(crate) struct EncodeSeq {
+    /// The flush or Finish in progress and the input length it has left.
+    pending: Option<(Action, usize)>,
+    ended: bool,
+    error: Option<Error>,
+}
+
+impl EncodeSeq {
+    /// Runs one encoder call, `code`, under the checks.
+    pub(crate) fn run(
+        &mut self,
+        input: &[u8],
+        action: Action,
+        code: impl FnOnce(&[u8]) -> Result<(usize, usize, Status)>,
+    ) -> Result<(usize, usize, Status)> {
+        if let Some(e) = self.error {
+            return Err(e);
+        }
+        if self.ended {
+            return Ok((0, 0, Status::StreamEnd));
+        }
+        if self
+            .pending
+            .is_some_and(|(a, left)| a != action || left != input.len())
+        {
+            return Err(Error::Usage);
+        }
+        let r = code(input);
+        match r {
+            Ok((_, _, Status::StreamEnd)) => {
+                self.pending = None;
+                self.ended = action == Action::Finish;
+            }
+            Ok((used, _, _)) => {
+                self.pending = (action != Action::Run).then_some((action, input.len() - used));
+            }
+            Err(Error::MemLimit | Error::Usage) => {}
+            Err(e) => self.error = Some(e),
+        }
+        r
+    }
+}
