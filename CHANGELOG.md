@@ -8,6 +8,14 @@ minor version may change the API.
 
 ## [Unreleased]
 
+### Added
+- Changing filters mid-stream like liblzma's `lzma_filters_update()`:
+  `XzEncoder::update_filters` sets the filter chain and LZMA2 options for
+  the next Block (after a full flush or barrier, or before any input),
+  and lc/lp/pb within a Block after a sync flush (single-threaded). The
+  output is byte-identical to liblzma for the same calls, single-threaded
+  and multithreaded (#97).
+
 ## [0.3.0+xz.5.8.4]
 
 Still compatible with xz/liblzma 5.8.4. New APIs that close gaps with

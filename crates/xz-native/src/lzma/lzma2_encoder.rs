@@ -4,7 +4,7 @@
 
 use super::encoder::{LZMA2_CHUNK_MAX, LzmaEncoder};
 use super::lz_encoder::{Mf, MfAction};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::filter::{ChainEncoder, Filter};
 use crate::options::LzmaOptions;
 
@@ -198,6 +198,31 @@ impl LzEncoder<Lzma2Encoder> {
 }
 
 impl LzEncoder<Lzma2Encoder> {
+    /// The LZMA2 options, with any lc/lp/pb change.
+    pub(crate) fn options(&self) -> &LzmaOptions {
+        &self.codec.opts
+    }
+
+    /// Replaces the filters before LZMA2; only before any input.
+    pub(crate) fn set_filters(&mut self, filters: &[Filter]) {
+        self.chain = ChainEncoder::new(filters);
+    }
+
+    /// Takes new lc/lp/pb from `o` for the next chunk; the rest of `o` is
+    /// ignored (`lzma2_encoder_options_update()`). Only between chunks.
+    pub(crate) fn update_lc_lp_pb(&mut self, o: &LzmaOptions) -> Result<()> {
+        let c = &mut self.codec;
+        if c.seq != Seq::Init {
+            return Err(Error::Usage);
+        }
+        if (c.opts.lc, c.opts.lp, c.opts.pb) != (o.lc, o.lp, o.pb) {
+            (c.opts.lc, c.opts.lp, c.opts.pb) = (o.lc, o.lp, o.pb);
+            c.need_properties = true;
+            c.need_state_reset = true;
+        }
+        Ok(())
+    }
+
     /// Starts with a preset dictionary; the first chunk then doesn't reset
     /// the dictionary (`lzma2_encoder_init()`). Must be called before any
     /// input; an empty one is no preset dictionary.

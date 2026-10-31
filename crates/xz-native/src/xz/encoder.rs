@@ -11,7 +11,7 @@ use crate::error::{Error, Result};
 use crate::filter::{FILTER_DELTA, FILTER_LZMA2, Filter};
 use crate::lzma::lz_encoder::MfAction;
 use crate::lzma::lzma2_encoder::{LzEncoder, Lzma2Encoder};
-use crate::options::EncoderOptions;
+use crate::options::{EncoderOptions, LzmaOptions};
 use crate::xz::stream::Status;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -261,6 +261,53 @@ impl XzEncoder {
             Inner::Multi(e) => e.encode(input, output, action),
         })
     }
+
+    /// Changes the filters and LZMA2 options mid-stream, like liblzma's
+    /// `lzma_filters_update()`; the check, Block size and threads stay.
+    ///
+    /// Between Blocks (before any input, or once [`Action::FullFlush`] or
+    /// [`Action::FullBarrier`] has returned [`Status::StreamEnd`]), the
+    /// next Block uses the new chain. Within a Block (one thread only),
+    /// the filters must be the same kinds in the same order: the new lc,
+    /// lp and pb apply from the next LZMA2 chunk, which is allowed at the
+    /// start of the Block or once [`Action::SyncFlush`] has returned
+    /// [`Status::StreamEnd`], and the whole chain applies from the next
+    /// Block. The multithreaded encoder takes changes only between Blocks.
+    ///
+    /// The output is liblzma's for the same calls. Invalid options are
+    /// [`Error::InvalidOptions`]; a change not allowed at this point (or
+    /// after the stream is finished) is [`Error::Usage`]. On an error the
+    /// encoder carries on with the options it had, with one exception from
+    /// liblzma: within a Block, new lc/lp/pb are taken before the filter
+    /// kinds are compared, so they apply to the rest of the Block even if
+    /// the filters differ.
+    ///
+    /// ```
+    /// use xz_native::{Action, BcjKind, Filter, LzmaOptions, Status, XzEncoder};
+    ///
+    /// let mut enc = XzEncoder::new(6)?;
+    /// let mut out = vec![0u8; 4096];
+    /// // A Block of text, then one of x86 code with the BCJ filter.
+    /// let (_, mut n, st) = enc.encode(b"some text", &mut out, Action::FullFlush)?;
+    /// assert_eq!(st, Status::StreamEnd);
+    /// let x86 = [Filter::Bcj { kind: BcjKind::X86, start_offset: 0 }];
+    /// enc.update_filters(&x86, LzmaOptions::preset(6)?)?;
+    /// let (_, w, st) = enc.encode(b"\xe8\0\0\0\0", &mut out[n..], Action::Finish)?;
+    /// assert_eq!(st, Status::StreamEnd);
+    /// n += w;
+    /// assert_eq!(xz_native::decompress(&out[..n])?, b"some text\xe8\0\0\0\0");
+    /// # Ok::<(), xz_native::Error>(())
+    /// ```
+    pub fn update_filters(&mut self, filters: &[Filter], lzma: LzmaOptions) -> Result<()> {
+        // `lzma_raw_encoder_memusage()` validates the chain first.
+        lzma.validate()?;
+        crate::options::validate_filters(filters)?;
+        match &mut self.inner {
+            Inner::Single(e) => e.update_filters(filters, lzma),
+            #[cfg(feature = "std")]
+            Inner::Multi(e) => e.update_filters(filters, lzma),
+        }
+    }
 }
 
 /// The single-threaded encoder.
@@ -302,6 +349,42 @@ impl SingleEncoder {
             uncompressed: 0,
             records: Vec::new(),
         })
+    }
+
+    /// [`XzEncoder::update_filters`] with validated options
+    /// (`stream_encoder_update()`).
+    fn update_filters(&mut self, filters: &[Filter], lzma: LzmaOptions) -> Result<()> {
+        match self.seq {
+            Seq::StreamHeader | Seq::BlockInit => {
+                // No Block is open: the next one starts with the new chain.
+                if self.lz_fresh {
+                    if *self.lz.options() == lzma {
+                        self.lz.set_filters(filters);
+                    } else {
+                        *self.lz = Lzma2Encoder::new_lz(&lzma, filters)?;
+                    }
+                }
+            }
+            Seq::BlockHeader | Seq::BlockEncode => {
+                // Within a Block only lc/lp/pb can change, and the filters
+                // must stay the same kinds (`lzma_next_filter_update()`).
+                // liblzma's LZ encoder takes lc/lp/pb before the filters
+                // after it are compared, so a mismatch still changes them.
+                self.lz.update_lc_lp_pb(&lzma)?;
+                if filters.len() != self.opts.filters.len()
+                    || filters
+                        .iter()
+                        .zip(&self.opts.filters)
+                        .any(|(a, b)| a.id() != b.id())
+                {
+                    return Err(Error::Usage);
+                }
+            }
+            _ => return Err(Error::Usage),
+        }
+        self.opts.filters = filters.to_vec();
+        self.opts.lzma = lzma;
+        Ok(())
     }
 
     /// Copies pending bytes from `buf`; true when all are written.
@@ -372,7 +455,13 @@ impl SingleEncoder {
                         continue;
                     }
                     if !self.lz_fresh {
-                        self.lz.restart(&self.opts.filters)?;
+                        if *self.lz.options() == self.opts.lzma {
+                            self.lz.restart(&self.opts.filters)?;
+                        } else {
+                            // The options changed since this encoder started.
+                            let lz = Lzma2Encoder::new_lz(&self.opts.lzma, &self.opts.filters)?;
+                            *self.lz = lz;
+                        }
                     }
                     self.lz_fresh = false;
                     self.check = CheckState::new(self.opts.check);
@@ -509,5 +598,62 @@ mod tests {
             }
         }
         assert_eq!(got, want);
+    }
+
+    /// Encodes `data` with `action` until it is used, or until the end
+    /// for the flushes and Finish.
+    fn feed(enc: &mut XzEncoder, data: &[u8], action: Action, out: &mut Vec<u8>) {
+        let mut ip = 0;
+        loop {
+            let mut buf = [0u8; 4096];
+            let (u, w, s) = enc.encode(&data[ip..], &mut buf, action).unwrap();
+            ip += u;
+            out.extend_from_slice(&buf[..w]);
+            if (action == Action::Run && ip == data.len()) || s == Status::StreamEnd {
+                return;
+            }
+        }
+    }
+
+    #[test]
+    fn update_filters() {
+        let data = sample(30_000);
+        let x86 = [Filter::Bcj {
+            kind: crate::BcjKind::X86,
+            start_offset: 0,
+        }];
+        let fast = LzmaOptions::preset(1).unwrap();
+        for threads in [1, 2] {
+            let opts = EncoderOptions {
+                threads,
+                ..EncoderOptions::preset(0).unwrap()
+            };
+            // Before any input: the same as starting with the new chain.
+            let mut enc = XzEncoder::with_options(opts.clone()).unwrap();
+            enc.update_filters(&x86, fast).unwrap();
+            let mut got = Vec::new();
+            feed(&mut enc, &data, Action::Finish, &mut got);
+            let direct = EncoderOptions {
+                filters: x86.to_vec(),
+                lzma: fast,
+                ..opts.clone()
+            };
+            assert_eq!(got, compress_with(&data, &direct), "threads {threads}");
+
+            let mut enc = XzEncoder::with_options(opts).unwrap();
+            let mut got = Vec::new();
+            feed(&mut enc, &data[..10_000], Action::Run, &mut got);
+            // A Block is open: other filter kinds aren't allowed.
+            assert_eq!(enc.update_filters(&x86, fast), Err(Error::Usage));
+            feed(&mut enc, &data[10_000..20_000], Action::FullFlush, &mut got);
+            let mut bad = fast;
+            bad.lc = 4;
+            bad.lp = 1;
+            assert_eq!(enc.update_filters(&x86, bad), Err(Error::InvalidOptions));
+            enc.update_filters(&x86, fast).unwrap();
+            feed(&mut enc, &data[20_000..], Action::Finish, &mut got);
+            assert_eq!(enc.update_filters(&[], fast), Err(Error::Usage));
+            assert_eq!(crate::decompress(&got).unwrap(), data);
+        }
     }
 }
