@@ -13,6 +13,11 @@ minor version may change the API.
   `RawEncoder::with_preset_dict` and `RawDecoder::with_preset_dict`
   (liblzma's `preset_dict`). Small inputs similar to the dictionary
   compress much better; the output is byte-identical with liblzma's (#95).
+- Encoder memory usage: `EncoderOptions::encoder_memusage` and
+  `RawOptions::encoder_memusage`, equal to liblzma's
+  `lzma_raw_encoder_memusage`, `lzma_easy_encoder_memusage` and, with
+  threads, `lzma_stream_encoder_mt_memusage` (64-bit figures), for
+  choosing a preset or thread count under a memory limit (#99).
 
 ## [0.2.0+xz.5.8.4]
 

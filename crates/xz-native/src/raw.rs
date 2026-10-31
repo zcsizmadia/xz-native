@@ -78,6 +78,15 @@ impl RawOptions {
             .sum::<u64>()
     }
 
+    /// Memory the encoder needs for these options, in bytes, as liblzma
+    /// reports it on 64-bit platforms (`lzma_raw_encoder_memusage()`). An
+    /// invalid option is [`Error::InvalidOptions`].
+    pub fn encoder_memusage(&self) -> Result<u64> {
+        validate_filters(&self.filters)?;
+        let lzma = crate::lzma::lzma_encoder_memusage(&self.lzma, self.method == RawMethod::Lzma2)?;
+        Ok(lzma + filters_memusage(&self.filters) + crate::lzma::MEMUSAGE_BASE)
+    }
+
     fn props(&self) -> Result<LzmaProps> {
         let o = &self.lzma;
         if o.lc > 4 || o.lp > 4 || o.lc + o.lp > 4 || o.pb > 4 {
@@ -89,6 +98,12 @@ impl RawOptions {
             pb: o.pb as u8,
         })
     }
+}
+
+/// Memory of the filters before LZMA, encoding or decoding: liblzma counts
+/// 1 KiB for BCJ filters and its coder struct for Delta.
+pub(crate) fn filters_memusage(filters: &[Filter]) -> u64 {
+    filters.iter().map(|f| f.decoder_mem_usage()).sum()
 }
 
 #[derive(Debug)]

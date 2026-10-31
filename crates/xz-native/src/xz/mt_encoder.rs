@@ -66,6 +66,36 @@ fn lzma2_bound(n: u64) -> u64 {
     n + n.div_ceil(LZMA2_CHUNK_MAX as u64) * 3 + 1
 }
 
+/// `sizeof(lzma_stream_coder)` of `stream_encoder_mt.c` on 64-bit
+/// platforms.
+const STREAM_CODER_STRUCT: u64 = 520;
+/// `sizeof(worker_thread)` plus two `sizeof(lzma_outbuf)` (the output
+/// queue holds two buffers per thread) on 64-bit platforms.
+const PER_THREAD_STRUCTS: u64 = 624;
+
+/// `lzma_stream_encoder_mt_memusage()`: `raw` is the filter chain's
+/// `lzma_raw_encoder_memusage()`. Sums that overflow are `u64::MAX`.
+pub(crate) fn memusage(opts: &EncoderOptions, raw: u64, threads: usize) -> Result<u64> {
+    if threads > THREADS_MAX {
+        return Err(Error::InvalidOptions);
+    }
+    let block_size = match opts.block_size {
+        0 => (u64::from(opts.lzma.dict_size) * 3).max(1 << 20),
+        n => n,
+    };
+    if block_size > BLOCK_SIZE_MAX {
+        return Err(Error::InvalidOptions);
+    }
+    let out_size = HEADERS_BOUND + ((lzma2_bound(block_size) + 3) & !3);
+    let t = threads as u64;
+    let per_thread = block_size
+        .saturating_add(raw)
+        .saturating_add(out_size.saturating_mul(2))
+        .saturating_add(PER_THREAD_STRUCTS);
+    Ok((crate::lzma::MEMUSAGE_BASE + STREAM_CODER_STRUCT)
+        .saturating_add(per_thread.saturating_mul(t)))
+}
+
 /// Settings shared by all Blocks.
 #[derive(Debug)]
 pub(crate) struct Params {

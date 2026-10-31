@@ -522,3 +522,50 @@ fn matches_xz_cli_multithreaded() {
         assert_eq!(b.split('\t').nth(12), Some("cu"), "{b}");
     }
 }
+
+/// Encoder memory usage (crates/xz-bench/tests/encoder_memusage.rs checks
+/// the exact figures against liblzma): invalid options are errors, and the
+/// figures grow with the dictionary, the threads and the filters.
+#[test]
+fn encoder_memusage() {
+    use xz_native::{BcjKind, EncoderOptions, Error, Filter, RawMethod, RawOptions};
+    let m = |p: u32| {
+        EncoderOptions::preset(p)
+            .unwrap()
+            .encoder_memusage()
+            .unwrap()
+    };
+    assert!(m(0) < m(6) && m(6) < m(9));
+    let six = EncoderOptions::preset(6).unwrap();
+    let mt = six.clone().threads(2).encoder_memusage().unwrap();
+    assert!(mt > 2 * m(6), "two encoders and their Blocks");
+    assert!(six.clone().threads(0).encoder_memusage().unwrap() >= m(6));
+    let bcj = six
+        .clone()
+        .filters(vec![Filter::Bcj {
+            kind: BcjKind::X86,
+            start_offset: 0,
+        }])
+        .encoder_memusage()
+        .unwrap();
+    assert_eq!(bcj, m(6) + 1024);
+    // LZMA2 adds its chunk state to LZMA1.
+    let lzma1 = RawOptions::preset(RawMethod::Lzma1, 6).unwrap();
+    let lzma2 = RawOptions::preset(RawMethod::Lzma2, 6).unwrap();
+    assert!(lzma2.encoder_memusage().unwrap() > lzma1.encoder_memusage().unwrap());
+    assert_eq!(lzma2.encoder_memusage().unwrap(), m(6));
+    // Invalid options.
+    let mut bad = six.clone();
+    bad.lzma.lc = 4;
+    bad.lzma.lp = 1;
+    assert_eq!(bad.encoder_memusage(), Err(Error::InvalidOptions));
+    let mut bad = lzma2.clone();
+    bad.lzma.dict_size = 100;
+    assert_eq!(bad.encoder_memusage(), Err(Error::InvalidOptions));
+    let bad = six.clone().filters(vec![Filter::Delta { distance: 0 }]);
+    assert_eq!(bad.encoder_memusage(), Err(Error::InvalidOptions));
+    assert_eq!(
+        six.clone().threads(16_385).encoder_memusage(),
+        Err(Error::InvalidOptions)
+    );
+}
