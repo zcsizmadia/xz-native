@@ -25,6 +25,9 @@ minor version may change the API.
   encoder). `xz-native` uses it instead of running two threads (#123).
 - `xz-native --list` (`-l`, `-v`, `-vv`, `--robot`): the same output as
   `xz --list`, from `XzSeekableReader`'s Stream and Block tables (#123).
+- `xz-native` custom filter chains: `--lzma1=`, `--lzma2=`, `--x86` and the
+  other BCJ filters, `--delta` and `--filters=` strings, with xz's rules
+  for presets and chains and its error messages (#123).
 
 ## [0.3.0+xz.5.8.4]
 
