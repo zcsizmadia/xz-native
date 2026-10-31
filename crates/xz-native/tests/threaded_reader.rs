@@ -645,3 +645,15 @@ fn memlimit_threading_limits_read_ahead() {
     let opts = threads(2).memlimit(1 << 10).memlimit_threading(u64::MAX);
     assert_eq!(read_xz(&c, opts, 8192, 3).1, Some(Error::MemLimit));
 }
+
+/// The default `memlimit_threading`: 2 GiB, 512 MiB on 32-bit targets.
+#[test]
+fn memlimit_threading_default() {
+    let expected: u64 = if usize::BITS >= 64 {
+        2 << 30
+    } else {
+        512 << 20
+    };
+    assert_eq!(DecoderOptions::default().memlimit_threading, expected);
+    assert_eq!(DecoderOptions::new().memlimit_threading, expected);
+}
