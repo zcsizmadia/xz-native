@@ -24,6 +24,11 @@ minor version may change the API.
   `lzma_raw_encoder_memusage`, `lzma_easy_encoder_memusage` and, with
   threads, `lzma_stream_encoder_mt_memusage` (64-bit figures), for
   choosing a preset or thread count under a memory limit (#99).
+- Filter properties as .7z and .zip store them: `Filter::id`,
+  `Filter::properties` and `Filter::from_properties`, and the 5-byte LZMA1
+  properties `LzmaOptions::lzma1_properties` and
+  `LzmaOptions::from_lzma1_properties`, equal to liblzma's
+  `lzma_properties_encode` and `lzma_properties_decode` (#101).
 
 ### Changed
 - `LzmaDecoder` checks the .lzma properties byte as soon as it arrives,

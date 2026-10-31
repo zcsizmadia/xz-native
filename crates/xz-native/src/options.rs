@@ -204,6 +204,55 @@ impl LzmaOptions {
         self.nice_len.max(self.mf.hash_bytes())
     }
 
+    /// The 5-byte LZMA1 properties that .7z and .zip store for an LZMA
+    /// stream: the lc/lp/pb byte, then the dictionary size as a 32-bit
+    /// little-endian integer (`lzma_properties_encode()` for
+    /// `LZMA_FILTER_LZMA1`). Unlike the .lzma header, the dictionary size
+    /// isn't rounded. lc + lp over 4 or pb over 4 is
+    /// [`Error::InvalidOptions`].
+    ///
+    /// ```
+    /// use xz_native::LzmaOptions;
+    ///
+    /// let o = LzmaOptions::preset(6)?;
+    /// let props = o.lzma1_properties()?;
+    /// assert_eq!(props, [0x5D, 0, 0, 0x80, 0]);
+    /// let back = LzmaOptions::from_lzma1_properties(&props)?;
+    /// assert_eq!((back.lc, back.lp, back.pb, back.dict_size), (3, 0, 2, 8 << 20));
+    /// # Ok::<(), xz_native::Error>(())
+    /// ```
+    pub fn lzma1_properties(&self) -> Result<[u8; 5]> {
+        if self.lc > 4 || self.lp > 4 || self.lc + self.lp > 4 || self.pb > 4 {
+            return Err(Error::InvalidOptions);
+        }
+        let mut p = [0u8; 5];
+        p[0] = self.props_byte();
+        p[1..].copy_from_slice(&self.dict_size.to_le_bytes());
+        Ok(p)
+    }
+
+    /// Options from 5-byte LZMA1 properties (`lzma_properties_decode()`
+    /// for `LZMA_FILTER_LZMA1`): lc, lp, pb and the dictionary size, the
+    /// rest from [`LzmaOptions::default`]. Not 5 bytes, or an invalid
+    /// lc/lp/pb byte, is [`Error::Options`]. The dictionary size is taken
+    /// as stored; decoders raise sizes under 4 KiB to 4 KiB.
+    pub fn from_lzma1_properties(props: &[u8]) -> Result<Self> {
+        let [b, d @ ..] = props else {
+            return Err(Error::Options);
+        };
+        let Ok(dict) = <[u8; 4]>::try_from(d) else {
+            return Err(Error::Options);
+        };
+        let p = crate::lzma::LzmaProps::from_byte(*b).ok_or(Error::Options)?;
+        Ok(Self {
+            lc: p.lc as u32,
+            lp: p.lp as u32,
+            pb: p.pb as u32,
+            dict_size: u32::from_le_bytes(dict),
+            ..Self::default()
+        })
+    }
+
     /// The lc/lp/pb properties byte.
     pub(crate) fn props_byte(&self) -> u8 {
         ((self.pb * 5 + self.lp) * 9 + self.lc) as u8
@@ -211,17 +260,7 @@ impl LzmaOptions {
 
     /// The LZMA2 dictionary size byte (`lzma_lzma2_props_encode()`).
     pub(crate) fn lzma2_dict_byte(&self) -> u8 {
-        let mut d = self.dict_size.max(DICT_SIZE_MIN) - 1;
-        d |= d >> 2;
-        d |= d >> 3;
-        d |= d >> 4;
-        d |= d >> 8;
-        d |= d >> 16;
-        if d == u32::MAX {
-            40
-        } else {
-            (crate::lzma::range_encoder::dist_slot(d + 1) - 24) as u8
-        }
+        lzma2_dict_byte(self.dict_size)
     }
 }
 
@@ -343,6 +382,22 @@ impl EncoderOptions {
             return Err(Error::InvalidOptions);
         }
         validate_filters(&self.filters)
+    }
+}
+
+/// The LZMA2 properties byte for a dictionary size, rounded up to the next
+/// 2^n or 2^n + 2^(n-1) (`lzma_lzma2_props_encode()`).
+pub(crate) fn lzma2_dict_byte(dict_size: u32) -> u8 {
+    let mut d = dict_size.max(DICT_SIZE_MIN) - 1;
+    d |= d >> 2;
+    d |= d >> 3;
+    d |= d >> 4;
+    d |= d >> 8;
+    d |= d >> 16;
+    if d == u32::MAX {
+        40
+    } else {
+        (crate::lzma::range_encoder::dist_slot(d + 1) - 24) as u8
     }
 }
 

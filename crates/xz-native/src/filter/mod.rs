@@ -40,6 +40,50 @@ pub enum Filter {
 }
 
 impl Filter {
+    /// The Filter ID (as in .xz Filter Flags and .7z coders).
+    pub fn id(&self) -> u64 {
+        match self {
+            Filter::Lzma2 { .. } => FILTER_LZMA2,
+            Filter::Delta { .. } => FILTER_DELTA,
+            Filter::Bcj { kind, .. } => kind.filter_id(),
+        }
+    }
+
+    /// The filter's properties, as stored in .xz Filter Flags and .7z
+    /// coders (`lzma_properties_encode()`): the dictionary size byte for
+    /// LZMA2 (the size rounded up to 2^n or 2^n + 2^(n-1)), the distance
+    /// minus one for Delta, and the start offset for BCJ (none when 0).
+    ///
+    /// ```
+    /// use xz_native::{BcjKind, Filter};
+    ///
+    /// let f = Filter::Lzma2 { dict_size: 8 << 20 };
+    /// assert_eq!((f.id(), f.properties()), (0x21, vec![22]));
+    /// let bcj = Filter::Bcj { kind: BcjKind::X86, start_offset: 0 };
+    /// assert!(bcj.properties().is_empty());
+    /// assert_eq!(Filter::from_properties(0x21, &[22])?, f);
+    /// # Ok::<(), xz_native::Error>(())
+    /// ```
+    pub fn properties(&self) -> Vec<u8> {
+        match *self {
+            Filter::Lzma2 { dict_size } => alloc::vec![crate::options::lzma2_dict_byte(dict_size)],
+            Filter::Delta { distance } => alloc::vec![(distance - 1) as u8],
+            Filter::Bcj {
+                start_offset: 0, ..
+            } => Vec::new(),
+            Filter::Bcj { start_offset, .. } => start_offset.to_le_bytes().to_vec(),
+        }
+    }
+
+    /// Decodes a filter from its ID and properties
+    /// (`lzma_properties_decode()`). An unknown ID or malformed properties
+    /// are [`Error::Options`], as is a BCJ start offset that isn't aligned
+    /// for its instruction set (which liblzma rejects when the coder
+    /// starts).
+    pub fn from_properties(id: u64, props: &[u8]) -> Result<Self> {
+        Self::from_props(id, props)
+    }
+
     /// Decodes a filter from its .xz ID and properties.
     pub(crate) fn from_props(id: u64, props: &[u8]) -> Result<Self> {
         if id >= FILTER_RESERVED_START {
