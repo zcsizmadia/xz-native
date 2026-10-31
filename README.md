@@ -181,6 +181,26 @@ use xz_native::compat::write::XzEncoder;
 liblzma's low-level `stream::Stream` and `MtStreamBuilder` have no direct
 equivalent; use `DecoderOptions` and `EncoderOptions` instead.
 
+### Command line tool
+
+`crates/xz-native-cli` builds `xz-native`, an `xz`-compatible command
+(named so that it doesn't shadow the system `xz`). For the options it
+supports it writes the same bytes as `xz` 5.8.4 and follows its defaults
+and file handling (multithreaded by default, memory limits, suffixes,
+`--keep`/`--force`/`--stdout`, `XZ_OPT`, exit statuses):
+
+```sh
+cargo install --path crates/xz-native-cli
+xz-native -9e -T0 big.tar          # big.tar -> big.tar.xz
+xz-native -dc big.tar.xz | tar x
+```
+
+It handles `-z`/`-d`/`-t`, presets and `-e`, `-T`, `-F auto|xz|lzma|lzip`,
+`-C`, `--block-size`, the `--memlimit` options, `-S`, `-k`, `-f`, `-c`,
+`--single-stream`, `--ignore-check`, `-q`/`-v`/`-Q`, and the `unxz`,
+`xzcat`, `lzma`, `unlzma` and `lzcat` names. Not yet: `--list`, raw
+format, custom filter chains, `--block-list`, `--robot`, `--files`.
+
 ## Supported
 
 | Feature | Decode | Encode |
