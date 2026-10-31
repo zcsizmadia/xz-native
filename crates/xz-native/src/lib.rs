@@ -97,6 +97,7 @@ extern crate std;
 mod alone;
 #[cfg(any(feature = "tokio", feature = "futures-io"))]
 mod async_core;
+mod auto;
 mod check;
 #[cfg(feature = "std")]
 pub mod compat;
@@ -120,17 +121,18 @@ pub mod tokio;
 mod xz;
 
 pub use alone::{LzmaDecoder, LzmaEncoder};
+pub use auto::{AutoDecoder, Format};
 pub use check::{Check, Sha256, crc32, crc64};
 pub use error::{Error, Result};
 pub use filter::{BcjKind, Filter};
 #[cfg(feature = "std")]
-pub use io::{LzipReader, LzmaReader, LzmaWriter, XzReader, XzWriter};
+pub use io::{AutoReader, LzipReader, LzmaReader, LzmaWriter, XzReader, XzWriter};
 pub use lzip::LzipDecoder;
 pub use oneshot::{
     compress, compress_lzma, compress_lzma_with_options, compress_raw, compress_with_options,
-    decompress, decompress_into, decompress_lzip, decompress_lzip_with_options, decompress_lzma,
-    decompress_lzma_with_options, decompress_raw, decompress_streaming, decompress_with_options,
-    decompress_with_options_into,
+    decompress, decompress_auto, decompress_auto_with_options, decompress_into, decompress_lzip,
+    decompress_lzip_with_options, decompress_lzma, decompress_lzma_with_options, decompress_raw,
+    decompress_streaming, decompress_with_options, decompress_with_options_into,
 };
 pub use options::{
     DICT_SIZE_MAX, DICT_SIZE_MIN, EncoderOptions, LzmaOptions, MatchFinder, Mode, PRESET_DEFAULT,

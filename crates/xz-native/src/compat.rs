@@ -32,8 +32,7 @@
 //! [`crate::DecoderOptions`] and [`crate::EncoderOptions`] instead.
 
 use crate::{
-    Action, DecoderOptions, LzipDecoder, LzmaDecoder, Status, XzDecoder as PushDecoder,
-    XzEncoder as PushEncoder,
+    Action, AutoDecoder, DecoderOptions, Status, XzDecoder as PushDecoder, XzEncoder as PushEncoder,
 };
 use alloc::vec;
 use alloc::vec::Vec;
@@ -58,10 +57,8 @@ fn push_encoder(level: u32) -> PushEncoder {
 // Like the std readers, the .xz decoder stays inline.
 #[allow(clippy::large_enum_variant)]
 enum Decoder {
-    Auto,
     Xz(PushDecoder),
-    Lzma(LzmaDecoder),
-    Lzip(LzipDecoder),
+    Auto(AutoDecoder),
 }
 
 impl Decoder {
@@ -71,21 +68,9 @@ impl Decoder {
         out: &mut [u8],
         finish: bool,
     ) -> crate::Result<(usize, usize, Status)> {
-        if let Decoder::Auto = self {
-            let opts = DecoderOptions::default();
-            *self = match input.first() {
-                None if finish => return Err(crate::Error::Truncated),
-                None => return Ok((0, 0, Status::Ok)),
-                Some(0xFD) => Decoder::Xz(PushDecoder::with_options(opts)),
-                Some(b'L') => Decoder::Lzip(LzipDecoder::with_options(opts)),
-                Some(_) => Decoder::Lzma(LzmaDecoder::with_options(opts)),
-            };
-        }
         match self {
-            Decoder::Auto => unreachable!(),
             Decoder::Xz(d) => d.decode(input, out, finish),
-            Decoder::Lzma(d) => d.decode(input, out, finish),
-            Decoder::Lzip(d) => d.decode(input, out, finish),
+            Decoder::Auto(d) => d.decode(input, out, finish),
         }
     }
 }
@@ -114,7 +99,7 @@ pub mod bufread {
         /// .lzma or .lz, detected from the first byte (`xz2` uses
         /// liblzma's auto decoder here).
         pub fn new_multi_decoder(inner: R) -> Self {
-            Self::with_decoder(inner, Decoder::Auto)
+            Self::with_decoder(inner, Decoder::Auto(AutoDecoder::new()))
         }
 
         fn with_decoder(inner: R, dec: Decoder) -> Self {

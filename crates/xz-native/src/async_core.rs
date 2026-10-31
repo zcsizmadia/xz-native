@@ -162,6 +162,7 @@ macro_rules! adapters {
     () => {
         use crate::alone::{LzmaDecoder, LzmaEncoder};
         use crate::async_core::{ReadCore, WriteCore};
+        use crate::auto::AutoDecoder;
         use crate::lzip::LzipDecoder;
         use crate::options::{EncoderOptions, LzmaOptions};
         use crate::push::{PushDecoder, PushEncoder};
@@ -196,6 +197,9 @@ macro_rules! adapters {
         pub type LzmaReader<R> = Reader<R, LzmaDecoder>;
         /// .lz (lzip) decompressing reader.
         pub type LzipReader<R> = Reader<R, LzipDecoder>;
+        /// Decompressing reader for .xz, .lzma or .lz, detected from the first
+        /// byte (see [`AutoDecoder`]).
+        pub type AutoReader<R> = Reader<R, AutoDecoder>;
 
         impl<R, D: PushDecoder> Reader<R, D> {
             /// Creates a reader that decodes with `dec`.
@@ -270,6 +274,18 @@ macro_rules! adapters {
             /// [`LzipDecoder::with_options`]).
             pub fn with_options(inner: R, opts: DecoderOptions) -> Self {
                 Self::with_decoder(inner, LzipDecoder::with_options(opts))
+            }
+        }
+
+        impl<R> AutoReader<R> {
+            /// Creates a reader with default options.
+            pub fn new(inner: R) -> Self {
+                Self::with_options(inner, DecoderOptions::default())
+            }
+
+            /// Creates a reader with options (see [`AutoDecoder`]).
+            pub fn with_options(inner: R, opts: DecoderOptions) -> Self {
+                Self::with_decoder(inner, AutoDecoder::with_options(opts))
             }
         }
 

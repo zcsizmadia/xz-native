@@ -26,6 +26,7 @@
 //! ```
 
 use crate::alone::{LzmaDecoder, LzmaEncoder};
+use crate::auto::AutoDecoder;
 use crate::error::{Error, Result};
 use crate::lzip::LzipDecoder;
 use crate::raw::{RawDecoder, RawEncoder};
@@ -104,7 +105,7 @@ macro_rules! push_encoders {
     )*};
 }
 
-push_decoders!(XzDecoder, LzmaDecoder, LzipDecoder, RawDecoder);
+push_decoders!(XzDecoder, LzmaDecoder, LzipDecoder, RawDecoder, AutoDecoder);
 push_encoders!(XzEncoder, LzmaEncoder, RawEncoder);
 
 /// Ends a push decoder call the way liblzma's `lzma_code` does: the progress

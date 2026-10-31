@@ -9,10 +9,24 @@ minor version may change the API.
 ## [Unreleased]
 
 ### Added
+- Format detection like liblzma's `lzma_auto_decoder`: `AutoDecoder`
+  (push), `AutoReader` (`std::io` and async) and
+  `decompress_auto[_with_options]` decode .xz, .lzma or .lz with
+  `DecoderOptions` (memory limit, threads for .xz, concatenation), and
+  report the `Format`. The `compat` readers' `new_multi_decoder` uses it
+  (#100).
 - Preset dictionaries for raw LZMA1/LZMA2 streams:
   `RawEncoder::with_preset_dict` and `RawDecoder::with_preset_dict`
   (liblzma's `preset_dict`). Small inputs similar to the dictionary
   compress much better; the output is byte-identical with liblzma's (#95).
+
+### Changed
+- `LzmaDecoder` checks the .lzma properties byte as soon as it arrives,
+  like liblzma: a short input that isn't .lzma is `Error::Format` instead
+  of `Error::Truncated` (#100).
+- The C liblzma reference in xz-bench is built with its lzip decoder in
+  `lzma_auto_decoder` (`HAVE_LZIP_DECODER`, on in liblzma's own builds;
+  `liblzma-sys` leaves it out) (#100).
 
 ## [0.2.0+xz.5.8.4]
 
