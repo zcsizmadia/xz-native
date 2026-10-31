@@ -36,11 +36,11 @@ use super::mt::thread_count;
 use super::stream::Status;
 use crate::check::CheckState;
 use crate::error::{Error, Result};
-use crate::filter::FILTER_LZMA2;
+use crate::filter::{FILTER_LZMA2, Filter};
 use crate::lzma::encoder::LZMA2_CHUNK_MAX;
 use crate::lzma::lz_encoder::MfAction;
 use crate::lzma::lzma2_encoder::{LzEncoder, Lzma2Encoder};
-use crate::options::EncoderOptions;
+use crate::options::{EncoderOptions, LzmaOptions};
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -148,6 +148,25 @@ impl Params {
             flags,
         })
     }
+
+    /// The same sizes with another filter chain: the Block size and its
+    /// output bound stay those worked out at the start, as in liblzma.
+    fn with_filters(&self, filters: &[Filter], lzma: LzmaOptions) -> Self {
+        let mut opts = self.opts.clone();
+        opts.filters = filters.to_vec();
+        opts.lzma = lzma;
+        let flags = filter_flags(&opts);
+        let header_size = block_header_size(
+            flags.len(),
+            Some((self.out_size as u64, self.block_size as u64)),
+        );
+        Self {
+            opts,
+            header_size,
+            flags,
+            ..*self
+        }
+    }
 }
 
 /// A Block's bytes, `data[..len]`. `data` keeps its length between Blocks,
@@ -189,11 +208,11 @@ impl BlockCoder {
     ) -> Result<Option<(u64, u64)>> {
         debug_assert!(!input.is_empty() && input.len() <= p.block_size);
         let lz = match &mut self.lz {
-            Some(lz) => {
+            Some(lz) if *lz.options() == p.opts.lzma => {
                 lz.restart(&p.opts.filters)?;
                 lz
             }
-            None => self.lz.insert(Box::new(Lzma2Encoder::new_lz(
+            _ => self.lz.insert(Box::new(Lzma2Encoder::new_lz(
                 &p.opts.lzma,
                 &p.opts.filters,
             )?)),
@@ -419,6 +438,8 @@ impl Ordered {
 /// A Block for a worker.
 struct Job {
     id: u64,
+    /// The options when the Block started.
+    params: Arc<Params>,
     input: Vec<u8>,
     /// Reused output buffer.
     out: BlockBuf,
@@ -432,7 +453,7 @@ struct Done {
     panic: Option<Box<dyn Any + Send>>,
 }
 
-fn worker(p: &Params, jobs: &Mutex<Receiver<Job>>, done: &Sender<Done>, stop: &AtomicBool) {
+fn worker(jobs: &Mutex<Receiver<Job>>, done: &Sender<Done>, stop: &AtomicBool) {
     let mut coder = BlockCoder::default();
     loop {
         let Ok(rx) = jobs.lock() else { return };
@@ -442,7 +463,7 @@ fn worker(p: &Params, jobs: &Mutex<Receiver<Job>>, done: &Sender<Done>, stop: &A
             continue;
         }
         let (result, panic) = match catch_unwind(AssertUnwindSafe(|| {
-            coder.encode(p, &job.input, &mut job.out, Some(stop))
+            coder.encode(&job.params, &job.input, &mut job.out, Some(stop))
         })) {
             Ok(r) => (r, None),
             Err(panic) => (Ok(None), Some(panic)),
@@ -468,12 +489,11 @@ struct Pool {
     done_tx: Sender<Done>,
     done: Mutex<Receiver<Done>>,
     stop: Arc<AtomicBool>,
-    params: Arc<Params>,
     handles: Vec<JoinHandle<()>>,
 }
 
 impl Pool {
-    fn new(params: Arc<Params>) -> Self {
+    fn new() -> Self {
         let (jobs, jobs_rx) = channel();
         let (done_tx, done) = channel();
         Self {
@@ -482,22 +502,20 @@ impl Pool {
             done_tx,
             done: Mutex::new(done),
             stop: Arc::new(AtomicBool::new(false)),
-            params,
             handles: Vec::new(),
         }
     }
 
     /// Starts a worker; false if the OS refuses a new thread.
     fn spawn(&mut self) -> bool {
-        let (p, jobs, done, stop) = (
-            self.params.clone(),
+        let (jobs, done, stop) = (
             self.jobs_rx.clone(),
             self.done_tx.clone(),
             self.stop.clone(),
         );
         let spawned = std::thread::Builder::new()
             .name("xz-native-encoder".into())
-            .spawn(move || worker(&p, &jobs, &done, &stop));
+            .spawn(move || worker(&jobs, &done, &stop));
         match spawned {
             Ok(handle) => {
                 self.handles.push(handle);
@@ -680,6 +698,17 @@ impl MtEncoder {
         }
     }
 
+    /// [`crate::XzEncoder::update_filters`] with validated options
+    /// (`stream_encoder_mt_update()`): only between Blocks. Blocks already
+    /// given to workers keep their options.
+    pub(crate) fn update_filters(&mut self, filters: &[Filter], lzma: LzmaOptions) -> Result<()> {
+        if !matches!(self.seq, Seq::StreamHeader | Seq::Blocks) || !self.cur.is_empty() {
+            return Err(Error::Usage);
+        }
+        self.params = Arc::new(self.params.with_filters(filters, lzma));
+        Ok(())
+    }
+
     /// Copies input into Blocks while a worker and room in the queue are
     /// free; a full Block, or the last one before a flush, goes to a worker.
     fn take_input(&mut self, input: &[u8], ip: &mut usize, action: Action) -> Result<()> {
@@ -705,9 +734,7 @@ impl MtEncoder {
     }
 
     fn dispatch(&mut self) -> Result<()> {
-        let pool = self
-            .pool
-            .get_or_insert_with(|| Pool::new(self.params.clone()));
+        let pool = self.pool.get_or_insert_with(Pool::new);
         // Start a worker when all the others are busy. If the OS refuses,
         // the workers there are carry on; without any, it is liblzma's
         // LZMA_MEM_ERROR.
@@ -719,6 +746,7 @@ impl MtEncoder {
         self.next_id += 1;
         let job = Job {
             id,
+            params: self.params.clone(),
             input: core::mem::take(&mut self.cur),
             out: self.free_out.pop().unwrap_or_default(),
         };
