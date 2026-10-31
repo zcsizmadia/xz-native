@@ -65,6 +65,9 @@ pub struct AutoDecoder {
     finishing: bool,
     /// The error that ended decoding; later calls return it.
     error: Option<Error>,
+    /// Bytes consumed from the input and written to the output so far.
+    total_in: u64,
+    total_out: u64,
 }
 
 impl Default for AutoDecoder {
@@ -86,6 +89,8 @@ impl AutoDecoder {
             inner: Inner::Detect,
             finishing: false,
             error: None,
+            total_in: 0,
+            total_out: 0,
         }
     }
 
@@ -144,6 +149,44 @@ impl AutoDecoder {
     /// With empty input and `finish`, before the format is known, it is
     /// [`Error::Truncated`].
     pub fn decode(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+    ) -> Result<(usize, usize, Status)> {
+        let r = self.decode_inner(input, output, finish);
+        if let Ok((used, written, _)) = r {
+            self.total_in += used as u64;
+            self.total_out += written as u64;
+        }
+        r
+    }
+
+    /// Compressed bytes consumed from the input so far.
+    pub fn total_in(&self) -> u64 {
+        self.total_in
+    }
+
+    /// Uncompressed bytes written to the output so far.
+    pub fn total_out(&self) -> u64 {
+        self.total_out
+    }
+
+    /// Progress like liblzma's `lzma_get_progress()`; see
+    /// [`XzDecoder::progress`]. Only .xz with threads differs from
+    /// [`total_in`](Self::total_in) and [`total_out`](Self::total_out).
+    pub fn progress(&self) -> (u64, u64) {
+        match &self.inner {
+            Inner::Xz(d) => {
+                let (i, o) = d.progress();
+                // Plus what this decoder consumed itself after the end.
+                (i + (self.total_in - d.total_in()), o)
+            }
+            _ => (self.total_in, self.total_out),
+        }
+    }
+
+    fn decode_inner(
         &mut self,
         input: &[u8],
         output: &mut [u8],

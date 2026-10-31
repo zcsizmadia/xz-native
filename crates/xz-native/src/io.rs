@@ -109,6 +109,16 @@ impl<R: BufRead> XzReader<R> {
         }
     }
 
+    /// Progress like liblzma's `lzma_get_progress()`: `(compressed bytes
+    /// decoded, uncompressed bytes produced)`, including data read ahead
+    /// and not yet returned; see [`XzDecoder::progress`].
+    pub fn progress(&self) -> (u64, u64) {
+        match &self.dec {
+            Engine::Single(dec) => dec.progress(),
+            Engine::Threads(dec) => dec.progress(),
+        }
+    }
+
     /// Returns a reference to the inner reader.
     pub fn get_ref(&self) -> &R {
         &self.inner
@@ -283,6 +293,12 @@ impl<R: BufRead> AutoReader<R> {
         self.dec.memusage()
     }
 
+    /// Progress like liblzma's `lzma_get_progress()` (see
+    /// [`AutoDecoder::progress`]).
+    pub fn progress(&self) -> (u64, u64) {
+        self.dec.progress()
+    }
+
     /// Returns a reference to the inner reader.
     pub fn get_ref(&self) -> &R {
         &self.inner
@@ -445,6 +461,13 @@ impl<W: Write> XzWriter<W> {
     /// Compressed bytes written to the inner writer so far.
     pub fn total_out(&self) -> u64 {
         self.core.total_out
+    }
+
+    /// Progress like liblzma's `lzma_get_progress()`: `(uncompressed bytes
+    /// encoded, compressed bytes produced)`, including output not yet
+    /// written to the inner writer; see [`XzEncoder::progress`].
+    pub fn progress(&self) -> (u64, u64) {
+        self.core.enc.progress()
     }
 }
 

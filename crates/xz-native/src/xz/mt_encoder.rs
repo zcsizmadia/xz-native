@@ -32,6 +32,7 @@ use super::encoder::{
     Action, block_header_size, encode_index, encode_stream_footer, encode_stream_header,
     filter_flags, write_block_header,
 };
+use super::format::STREAM_HEADER_SIZE;
 use super::mt::thread_count;
 use super::stream::Status;
 use crate::check::CheckState;
@@ -46,7 +47,7 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::any::Any;
 use core::fmt;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
@@ -60,6 +61,21 @@ const HEADERS_BOUND: u64 = (1 + 1 + 2 * 9 + 3 + 4 + 64 + 3) & !3;
 /// Input per encoder call in the streaming workers, between checks for
 /// cancellation.
 const STEP: usize = 64 << 10;
+
+/// Where a worker is in its Block: input encoded and output written so far
+/// (`worker_thread.progress_in`, `progress_out`).
+#[derive(Debug, Default)]
+pub(crate) struct Progress {
+    input: AtomicU64,
+    output: AtomicU64,
+}
+
+impl Progress {
+    fn set(&self, input: usize, output: usize) {
+        self.input.store(input as u64, Ordering::Relaxed);
+        self.output.store(output as u64, Ordering::Relaxed);
+    }
+}
 
 /// Size of `n` bytes in LZMA2 uncompressed chunks (`lzma2_bound()`).
 fn lzma2_bound(n: u64) -> u64 {
@@ -198,13 +214,14 @@ pub(crate) struct BlockCoder {
 impl BlockCoder {
     /// Encodes `input` (1 to `block_size` bytes) as one Block into `out`.
     /// Returns its Index record `(unpadded, uncompressed)`, or None if
-    /// `stop` was set.
+    /// `stop` was set. `progress` gets the position after each step.
     pub(crate) fn encode(
         &mut self,
         p: &Params,
         input: &[u8],
         out: &mut BlockBuf,
         stop: Option<&AtomicBool>,
+        progress: Option<&Progress>,
     ) -> Result<Option<(u64, u64)>> {
         debug_assert!(!input.is_empty() && input.len() <= p.block_size);
         let lz = match &mut self.lz {
@@ -240,6 +257,9 @@ impl BlockCoder {
                 action,
             )? {
                 break;
+            }
+            if let Some(pr) = progress {
+                pr.set(ip, op);
             }
             if op == cap {
                 if cap == p.out_size {
@@ -330,7 +350,7 @@ pub(crate) fn compress(data: &[u8], opts: &EncoderOptions) -> Result<Vec<u8>> {
         let mut coder = BlockCoder::default();
         let mut buf = BlockBuf::default();
         for i in 0..blocks {
-            let r = coder.encode(&p, block(i), &mut buf, None)?;
+            let r = coder.encode(&p, block(i), &mut buf, None, None)?;
             out.extend_from_slice(buf.bytes());
             records.push(r.expect("not stopped"));
         }
@@ -366,7 +386,7 @@ pub(crate) fn compress(data: &[u8], opts: &EncoderOptions) -> Result<Vec<u8>> {
                         let mut buf = st.free.pop().unwrap_or_default();
                         drop(st);
                         let r = catch_unwind(AssertUnwindSafe(|| {
-                            coder.encode(&p, block(i), &mut buf, None)
+                            coder.encode(&p, block(i), &mut buf, None, None)
                         }));
                         st = state.lock().unwrap();
                         match r {
@@ -438,6 +458,8 @@ impl Ordered {
 /// A Block for a worker.
 struct Job {
     id: u64,
+    /// Where the worker is in the Block.
+    progress: Arc<Progress>,
     /// The options when the Block started.
     params: Arc<Params>,
     input: Vec<u8>,
@@ -463,7 +485,13 @@ fn worker(jobs: &Mutex<Receiver<Job>>, done: &Sender<Done>, stop: &AtomicBool) {
             continue;
         }
         let (result, panic) = match catch_unwind(AssertUnwindSafe(|| {
-            coder.encode(&job.params, &job.input, &mut job.out, Some(stop))
+            coder.encode(
+                &job.params,
+                &job.input,
+                &mut job.out,
+                Some(stop),
+                Some(&job.progress),
+            )
         })) {
             Ok(r) => (r, None),
             Err(panic) => (Ok(None), Some(panic)),
@@ -575,6 +603,16 @@ pub(crate) struct MtEncoder {
     records: Vec<(u64, u64)>,
     next_id: u64,
     error: Option<Error>,
+    /// The Blocks with workers and where each is.
+    active: Vec<(u64, Arc<Progress>)>,
+    /// Input and output of the finished Blocks, with the Stream Header,
+    /// and the Index and Stream Footer once written (`progress_in`,
+    /// `progress_out`).
+    done_in: u64,
+    done_out: u64,
+    /// The largest progress reported, so that it never goes down (a Block
+    /// stored uncompressed can end below where its worker was).
+    reported: [AtomicU64; 2],
 }
 
 impl fmt::Debug for MtEncoder {
@@ -606,6 +644,10 @@ impl MtEncoder {
             records: Vec::new(),
             next_id: 0,
             error: None,
+            active: Vec::new(),
+            done_in: 0,
+            done_out: STREAM_HEADER_SIZE as u64,
+            reported: Default::default(),
         })
     }
 
@@ -680,6 +722,7 @@ impl MtEncoder {
                             Action::FullFlush => return Ok((ip, op, Status::StreamEnd)),
                             _ => {
                                 self.buf = encode_index(&self.records);
+                                self.done_out += (self.buf.len() + STREAM_HEADER_SIZE) as u64;
                                 self.seq = Seq::Index;
                                 continue;
                             }
@@ -707,6 +750,19 @@ impl MtEncoder {
         }
         self.params = Arc::new(self.params.with_filters(filters, lzma));
         Ok(())
+    }
+
+    /// [`crate::XzEncoder::progress`] (`get_progress()`): the finished Blocks
+    /// plus where the workers are.
+    pub(crate) fn progress(&self) -> (u64, u64) {
+        let (mut i, mut o) = (self.done_in, self.done_out);
+        for (_, p) in &self.active {
+            i += p.input.load(Ordering::Relaxed);
+            o += p.output.load(Ordering::Relaxed);
+        }
+        let i = self.reported[0].fetch_max(i, Ordering::Relaxed).max(i);
+        let o = self.reported[1].fetch_max(o, Ordering::Relaxed).max(o);
+        (i, o)
     }
 
     /// Copies input into Blocks while a worker and room in the queue are
@@ -744,8 +800,11 @@ impl MtEncoder {
         self.busy += 1;
         let id = self.next_id;
         self.next_id += 1;
+        let progress = Arc::new(Progress::default());
+        self.active.push((id, progress.clone()));
         let job = Job {
             id,
+            progress,
             params: self.params.clone(),
             input: core::mem::take(&mut self.cur),
             out: self.free_out.pop().unwrap_or_default(),
@@ -786,10 +845,14 @@ impl MtEncoder {
                 resume_unwind(panic);
             }
             self.busy -= 1;
+            self.active.retain(|(id, _)| *id != d.id);
             let mut input = d.input;
+            let input_len = input.len() as u64;
             input.clear();
             self.free_in.push(input);
             let rec = d.result?.ok_or(Error::Data)?;
+            self.done_in += input_len;
+            self.done_out += d.out.len as u64;
             if let Some(slot) = self.queue.iter_mut().find(|s| s.id == d.id) {
                 slot.done = Some((d.out, rec));
             }

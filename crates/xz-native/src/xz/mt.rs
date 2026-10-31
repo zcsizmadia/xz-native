@@ -287,6 +287,31 @@ impl Buffers {
     }
 }
 
+/// A reader that counts the bytes consumed.
+struct Counting<'a, R> {
+    inner: &'a mut R,
+    consumed: u64,
+}
+
+impl<R: BufRead> io::Read for Counting<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.consumed += n as u64;
+        Ok(n)
+    }
+}
+
+impl<R: BufRead> BufRead for Counting<'_, R> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        self.inner.fill_buf()
+    }
+
+    fn consume(&mut self, n: usize) {
+        self.inner.consume(n);
+        self.consumed += n as u64;
+    }
+}
+
 /// Output queue entry, in stream order.
 enum Item {
     /// A Block given to a worker: `(data, error after it)` once decoded.
@@ -434,6 +459,11 @@ pub(crate) struct MtDecoder {
     failed: Option<Error>,
     /// Memory the last parsed Block needs (`XzReader::memusage`).
     memusage: u64,
+    /// Input consumed and output decoded so far, and the input of the
+    /// Blocks still with workers (`progress_in`, `progress_out`).
+    consumed: u64,
+    decoded: u64,
+    with_workers: u64,
 }
 
 impl fmt::Debug for MtDecoder {
@@ -470,6 +500,9 @@ impl MtDecoder {
             // Like lzma_stream_decoder_mt, too many threads is an error.
             failed: (threads > THREADS_MAX).then_some(Error::Options),
             memusage: 0,
+            consumed: 0,
+            decoded: 0,
+            with_workers: 0,
         }
     }
 
@@ -517,9 +550,10 @@ impl MtDecoder {
         let r = if output.is_empty() {
             self.pump(&mut src).map(|()| 0)
         } else {
-            self.read(&mut src, output)
+            self.read_from(&mut src, output)
         };
         *ip = src.pos;
+        self.consumed += src.pos as u64;
         match r {
             Ok(n) => {
                 *op = n;
@@ -734,6 +768,7 @@ impl MtDecoder {
         };
         if pool.handles.is_empty() {
             let error = decode_job(&mut job, &self.opts);
+            self.decoded += job.out.len() as u64;
             self.queue.push_back(Item::Block {
                 id,
                 cost,
@@ -743,6 +778,7 @@ impl MtDecoder {
             return;
         }
         self.pending += 1;
+        self.with_workers += job.input.len() as u64;
         // If the workers are gone, `collect` reports it.
         let _ = pool.jobs.as_ref().unwrap().send(job);
         self.queue.push_back(Item::Block {
@@ -778,6 +814,8 @@ impl MtDecoder {
                 resume_unwind(p);
             }
             self.pending -= 1;
+            self.with_workers -= d.input.len() as u64;
+            self.decoded += d.out.len() as u64;
             let room = self
                 .budget
                 .saturating_sub(self.in_flight_bytes + self.inputs.bytes + self.outputs.bytes);
@@ -810,6 +848,24 @@ impl MtDecoder {
 
     /// [`std::io::Read::read`] of the decoded data.
     pub(crate) fn read<R: BufRead>(&mut self, inner: &mut R, out: &mut [u8]) -> io::Result<usize> {
+        let mut counted = Counting { inner, consumed: 0 };
+        let r = self.read_from(&mut counted, out);
+        self.consumed += counted.consumed;
+        r
+    }
+
+    /// [`crate::XzDecoder::progress`] with threads (`get_progress()`):
+    /// the input parsed and the Blocks decoded, by whole Blocks (workers
+    /// decode a Block in one go).
+    pub(crate) fn progress(&self) -> (u64, u64) {
+        let reading = match &self.parse {
+            Parse::BlockData(_, buf, _) => buf.len() as u64,
+            _ => 0,
+        };
+        (self.consumed - self.with_workers - reading, self.decoded)
+    }
+
+    fn read_from<R: BufRead>(&mut self, inner: &mut R, out: &mut [u8]) -> io::Result<usize> {
         if let Some(e) = self.failed {
             return Err(e.into());
         }
@@ -879,6 +935,7 @@ impl MtDecoder {
                     let r = dec.decode_partial(input, &mut out[written..], &mut ip, &mut op);
                     inner.consume(ip);
                     written += op;
+                    self.decoded += op as u64;
                     match r {
                         Err(e) => return self.fail(e, written),
                         Ok(true) => {
