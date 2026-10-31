@@ -15,6 +15,11 @@ minor version may change the API.
   `DecoderOptions` (memory limit, threads for .xz, concatenation), and
   report the `Format`. The `compat` readers' `new_multi_decoder` uses it
   (#100).
+- Filter properties as .7z and .zip store them: `Filter::id`,
+  `Filter::properties` and `Filter::from_properties`, and the 5-byte LZMA1
+  properties `LzmaOptions::lzma1_properties` and
+  `LzmaOptions::from_lzma1_properties`, equal to liblzma's
+  `lzma_properties_encode` and `lzma_properties_decode` (#101).
 - Preset dictionaries for raw LZMA1/LZMA2 streams:
   `RawEncoder::with_preset_dict` and `RawDecoder::with_preset_dict`
   (liblzma's `preset_dict`). Small inputs similar to the dictionary
@@ -24,11 +29,9 @@ minor version may change the API.
   `lzma_raw_encoder_memusage`, `lzma_easy_encoder_memusage` and, with
   threads, `lzma_stream_encoder_mt_memusage` (64-bit figures), for
   choosing a preset or thread count under a memory limit (#99).
-- Filter properties as .7z and .zip store them: `Filter::id`,
-  `Filter::properties` and `Filter::from_properties`, and the 5-byte LZMA1
-  properties `LzmaOptions::lzma1_properties` and
-  `LzmaOptions::from_lzma1_properties`, equal to liblzma's
-  `lzma_properties_encode` and `lzma_properties_decode` (#101).
+- `RawMethod::Lzma1Ext`: LZMA1 with a known size and an optional end
+  marker, like liblzma's `LZMA_FILTER_LZMA1EXT` (.7z and .zip payloads),
+  byte-identical with it (#102).
 
 ### Changed
 - `LzmaDecoder` checks the .lzma properties byte as soon as it arrives,
@@ -37,6 +40,10 @@ minor version may change the API.
 - The C liblzma reference in xz-bench is built with its lzip decoder in
   `lzma_auto_decoder` (`HAVE_LZIP_DECODER`, on in liblzma's own builds;
   `liblzma-sys` leaves it out) (#100).
+- Compression at presets 6-9e is 4-7% faster on the EPYC 7543 (and 10-18%
+  on a laptop i7): the match finders prefetch the next position's hash
+  bucket, as proposed upstream in tukaani-project/xz#247. The output is
+  unchanged (#94).
 
 ## [0.2.0+xz.5.8.4]
 
