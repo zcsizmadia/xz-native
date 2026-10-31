@@ -14,6 +14,9 @@ use xz_native::DecoderOptions;
 const STDIN_NAME: &str = "(stdin)";
 
 pub fn run(ctx: &mut Ctx) -> Result<(), String> {
+    if ctx.o.mode == Mode::List {
+        return crate::list::run(ctx);
+    }
     let o = &mut ctx.o;
     if o.files.is_empty() {
         o.files.push("-".into());
@@ -134,8 +137,17 @@ fn report(ctx: &mut Ctx, job: &Job, name: &str, f: Failure) {
     }
 }
 
-/// The OS error text without Rust's " (os error N)".
-fn os_error(e: &io::Error) -> String {
+/// The OS error text without Rust's " (os error N)". On Windows the
+/// common ones read as xz's C library prints them.
+pub fn os_error(e: &io::Error) -> String {
+    if cfg!(windows) {
+        match e.kind() {
+            io::ErrorKind::NotFound => return "No such file or directory".into(),
+            io::ErrorKind::PermissionDenied => return "Permission denied".into(),
+            io::ErrorKind::AlreadyExists => return "File exists".into(),
+            _ => {}
+        }
+    }
     let s = e.to_string();
     match s.find(" (os error") {
         Some(i) => s[..i].to_owned(),
