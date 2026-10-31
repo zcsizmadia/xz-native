@@ -55,9 +55,10 @@ fn read_with<D: PushDecoder, R: BufRead>(
 /// all Blocks before the bad one, then that Block up to the error. I/O
 /// errors of the inner reader can come earlier because of the read-ahead;
 /// they can be retried. At most `2 * threads` Blocks are buffered,
-/// using at most `memlimit` (capped at 2 GiB, 512 MiB on 32-bit platforms)
-/// for their compressed and decompressed data; other Blocks are decoded on
-/// the calling thread. Dropping the reader stops and joins the threads:
+/// using at most `memlimit` and
+/// [`DecoderOptions::memlimit_threading`] for their compressed and
+/// decompressed data; other Blocks are decoded on the calling thread.
+/// Dropping the reader stops and joins the threads:
 /// Blocks not started yet are skipped, but the ones being decoded are
 /// finished first, so it can take as long as decoding a Block. If the OS
 /// refuses to start more threads, the ones already running do the work.

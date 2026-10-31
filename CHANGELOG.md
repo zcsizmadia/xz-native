@@ -24,6 +24,10 @@ minor version may change the API.
   `lzma_raw_encoder_memusage`, `lzma_easy_encoder_memusage` and, with
   threads, `lzma_stream_encoder_mt_memusage` (64-bit figures), for
   choosing a preset or thread count under a memory limit (#99).
+- `DecoderOptions::memlimit_threading`, like liblzma's `memlimit_threading`:
+  the memory decoding with threads may use (default 2 GiB, 512 MiB on
+  32-bit); above it, fewer threads, down to one, never an error.
+  `memlimit` stays the limit that fails (#104).
 
 ### Changed
 - `LzmaDecoder` checks the .lzma properties byte as soon as it arrives,

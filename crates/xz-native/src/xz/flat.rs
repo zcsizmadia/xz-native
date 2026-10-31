@@ -382,6 +382,20 @@ pub(crate) fn decompress_threads_into(
     {
         return decompress_into(input, opts, out);
     }
+    // Each worker decodes a Block into its own buffer before copying it
+    // out: as many workers as fit in memlimit_threading (and memlimit),
+    // and one thread if that's one.
+    let largest = blocks
+        .iter()
+        .map(|b| b.uncompressed_size)
+        .max()
+        .unwrap_or(0);
+    let room = opts.memlimit_threading.min(opts.memlimit);
+    let fit = usize::try_from(room / largest.max(1)).unwrap_or(usize::MAX);
+    let threads = threads.min(fit);
+    if threads < 2 {
+        return decompress_into(input, opts, out);
+    }
     let total = blocks
         .last()
         .map_or(0, |b| b.uncompressed_offset + b.uncompressed_size);
