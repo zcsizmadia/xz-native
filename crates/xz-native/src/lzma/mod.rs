@@ -83,6 +83,28 @@ pub(crate) fn lzma2_decoder_memusage(dict_size: u32) -> u64 {
     dict_size as u64 + 66_168 + LZ_DICT_EXTRA
 }
 
+/// `LZMA_MEMUSAGE_BASE`: what liblzma adds to every coder chain.
+pub(crate) const MEMUSAGE_BASE: u64 = 1 << 15;
+
+/// `sizeof(lzma_coder)` of `lz_encoder.c` plus `sizeof(lzma_lzma1_encoder)`
+/// on 64-bit platforms.
+const LZMA1_ENCODER_STRUCTS: u64 = 249_792;
+/// `sizeof(lzma_lzma2_coder)` on 64-bit platforms.
+const LZMA2_ENCODER_STRUCT: u64 = 65_704;
+
+/// Memory of an LZMA1 or LZMA2 encoder, as liblzma reports it on 64-bit
+/// platforms (`lzma_lzma_encoder_memusage`, `lzma_lzma2_encoder_memusage`),
+/// without [`MEMUSAGE_BASE`]: the window, the match finder's tables and
+/// the encoder state.
+pub(crate) fn lzma_encoder_memusage(
+    o: &crate::options::LzmaOptions,
+    lzma2: bool,
+) -> crate::error::Result<u64> {
+    o.validate()?;
+    let lz = lz_encoder::Mf::memusage(&encoder::lz_options(o))?;
+    Ok(lz + LZMA1_ENCODER_STRUCTS + if lzma2 { LZMA2_ENCODER_STRUCT } else { 0 })
+}
+
 /// Runs an [`LzCodec`] and copies the dictionary output to the caller's
 /// buffer (liblzma `lz_decoder.c`).
 #[derive(Debug)]

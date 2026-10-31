@@ -338,16 +338,7 @@ impl LzmaEncoder {
             opts: vec![Optimal::default(); OPTS],
         };
         enc.reset(o)?;
-        let lz = LzOptions {
-            before_size: OPTS as u32,
-            dict_size: o.dict_size,
-            after_size: LOOP_INPUT_MAX,
-            match_len_max: MATCH_LEN_MAX,
-            nice_len,
-            mf: o.mf,
-            depth: o.depth,
-        };
-        Ok((enc, lz))
+        Ok((enc, lz_options(o)))
     }
 
     /// After a preset dictionary, the first byte is encoded like the others
@@ -1413,5 +1404,18 @@ impl LzmaEncoder {
             cur += 1;
         }
         self.backward(cur)
+    }
+}
+
+/// The LZ encoder options for LZMA options (`set_lz_options()`).
+pub(crate) fn lz_options(o: &LzmaOptions) -> LzOptions {
+    LzOptions {
+        before_size: OPTS as u32,
+        dict_size: o.dict_size,
+        after_size: LOOP_INPUT_MAX,
+        match_len_max: MATCH_LEN_MAX,
+        nice_len: o.effective_nice_len(),
+        mf: o.mf,
+        depth: o.depth,
     }
 }

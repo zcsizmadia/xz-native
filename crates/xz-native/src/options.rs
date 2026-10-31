@@ -303,6 +303,36 @@ impl EncoderOptions {
         })
     }
 
+    /// Memory the .xz encoder needs for these options, in bytes, as
+    /// liblzma reports it on 64-bit platforms: `lzma_raw_encoder_memusage()`
+    /// of the filter chain with one thread (what `lzma_easy_encoder_memusage`
+    /// gives for a preset), and `lzma_stream_encoder_mt_memusage()` with
+    /// threads (`threads` encoders, Blocks of input and output). With
+    /// `threads == 0`, it is for one thread per CPU on this machine. An
+    /// invalid option is [`Error::InvalidOptions`].
+    ///
+    /// ```
+    /// use xz_native::EncoderOptions;
+    ///
+    /// // `xz -6` needs about 94 MiB, `xz -6 -T4` about 660 MiB.
+    /// let one = EncoderOptions::preset(6)?.encoder_memusage()?;
+    /// let four = EncoderOptions::preset(6)?.threads(4).encoder_memusage()?;
+    /// assert!(one < 100 << 20 && four > 600 << 20);
+    /// # Ok::<(), xz_native::Error>(())
+    /// ```
+    pub fn encoder_memusage(&self) -> Result<u64> {
+        self.validate()?;
+        let raw = crate::lzma::lzma_encoder_memusage(&self.lzma, true)?
+            + crate::raw::filters_memusage(&self.filters)
+            + crate::lzma::MEMUSAGE_BASE;
+        #[cfg(feature = "std")]
+        if self.threads != 1 {
+            let threads = crate::xz::mt::thread_count(self.threads);
+            return crate::xz::mt_encoder::memusage(self, raw, threads);
+        }
+        Ok(raw)
+    }
+
     /// Validates the options and the filter chain.
     pub(crate) fn validate(&self) -> Result<()> {
         self.lzma.validate()?;

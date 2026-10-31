@@ -158,9 +158,20 @@ pub(crate) struct Mf {
     pub(crate) action: MfAction,
 }
 
-impl Mf {
-    /// `lz_encoder_prepare()` + `lz_encoder_init()`.
-    pub(crate) fn new(o: &LzOptions) -> Result<Self> {
+/// The sizes `lz_encoder_prepare()` works out for the options.
+struct Layout {
+    keep_size_before: u32,
+    keep_size_after: u32,
+    /// Window size.
+    size: u32,
+    cyclic_size: u32,
+    hash_mask: u32,
+    hash_count: u32,
+    sons_count: u32,
+}
+
+impl Layout {
+    fn new(o: &LzOptions) -> Result<Self> {
         if !(DICT_SIZE_MIN..=DICT_SIZE_MAX).contains(&o.dict_size) || o.nice_len > o.match_len_max {
             return Err(Error::InvalidOptions);
         }
@@ -205,6 +216,38 @@ impl Mf {
             hs += HASH_3_SIZE;
         }
         let sons_count = if is_bt { cyclic_size * 2 } else { cyclic_size };
+        Ok(Self {
+            keep_size_before,
+            keep_size_after,
+            size,
+            cyclic_size,
+            hash_mask,
+            hash_count: hs,
+            sons_count,
+        })
+    }
+}
+
+impl Mf {
+    /// Memory the window and the match finder's tables take, in bytes
+    /// (`lzma_lz_encoder_memusage()` without its coder struct).
+    pub(crate) fn memusage(o: &LzOptions) -> Result<u64> {
+        let l = Layout::new(o)?;
+        Ok((u64::from(l.hash_count) + u64::from(l.sons_count)) * 4 + u64::from(l.size))
+    }
+
+    /// `lz_encoder_prepare()` + `lz_encoder_init()`.
+    pub(crate) fn new(o: &LzOptions) -> Result<Self> {
+        let Layout {
+            keep_size_before,
+            keep_size_after,
+            size,
+            cyclic_size,
+            hash_mask,
+            hash_count: hs,
+            sons_count,
+        } = Layout::new(o)?;
+        let is_bt = o.mf.is_bt();
         let depth = if o.depth != 0 {
             o.depth
         } else if is_bt {
