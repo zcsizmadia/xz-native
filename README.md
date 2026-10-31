@@ -42,10 +42,10 @@ build scripts or the memory-safety risk. Sibling of the C# library
 
   | xz-native speed / C liblzma 5.8.4 (1.25x = 25% faster) | vs liblzma's own configuration | vs `liblzma-sys` (`xz2`, `liblzma` crates) |
   |---|---|---|
-  | Compression, single thread, Linux, presets 0-1 | 1.32-1.51x | 1.37-1.58x |
-  | Compression, single thread, Linux, presets 6-9e | 0.93-1.29x | 1.01-1.29x |
+  | Compression, single thread, Linux, presets 0-1 | 1.32-1.56x | 1.37-1.61x |
+  | Compression, single thread, Linux, presets 6-9e | 0.97-1.25x | 1.04-1.25x |
   | Compression, multithreaded, Linux | | 1.30-1.48x at preset 1, 1.04-1.13x at 6 |
-  | Decompression, single thread, Linux (streaming) | 0.97-1.01x | 1.03-1.12x |
+  | Decompression, single thread, Linux (streaming) | 0.99-1.02x | 1.05-1.13x |
   | Decompression, single thread, Windows (MSVC) | | 1.3-1.4x |
   | Decompression, multithreaded, Linux | | 1.04-1.06x at 1-8 threads, 1.10-1.50x at 16-32 |
   | Decompression of incompressible data, Linux | 2.4x | 14x |
