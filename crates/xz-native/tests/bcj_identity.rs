@@ -180,7 +180,7 @@ fn bcj_data_triggers_conversions() {
 /// be converted.
 #[test]
 fn single_instruction_matches_xz() {
-    let cases: [(BcjKind, &str, &[u8]); 7] = [
+    let cases: [(BcjKind, &str, &[u8]); 8] = [
         (BcjKind::X86, "x86", &[0xE8, 0x12, 0x34, 0x00, 0x00]),
         (BcjKind::PowerPc, "powerpc", &[0x48, 0x00, 0x10, 0x01]),
         (BcjKind::Arm, "arm", &[0x12, 0x34, 0x00, 0xEB]),
@@ -188,6 +188,12 @@ fn single_instruction_matches_xz() {
         (BcjKind::Sparc, "sparc", &[0x40, 0x00, 0x10, 0x00]),
         (BcjKind::Arm64, "arm64", &[0x10, 0x00, 0x00, 0x94]),
         (BcjKind::RiscV, "riscv", &[0xEF, 0x00, 0x40, 0x00]),
+        // RISC-V converts only with 8 bytes in the buffer.
+        (
+            BcjKind::RiscV,
+            "riscv",
+            &[0xEF, 0x00, 0x40, 0x00, 0x13, 0x00, 0x00, 0x00],
+        ),
     ];
     for (kind, name, data) in cases {
         let opts = EncoderOptions::default()
@@ -204,4 +210,32 @@ fn single_instruction_matches_xz() {
         assert!(ours == theirs, "{name}: differs from xz");
         assert_eq!(decompress(&theirs).unwrap(), data, "{name}");
     }
+}
+
+/// RISC-V AUIPC pairs at the edge of the "special" AUIPC check
+/// (`not_special_auipc`): low 14 bits 0x3117 (rd = x2) followed by an
+/// instruction for every rs1, and their neighbours.
+#[test]
+fn riscv_special_auipc_matches_xz() {
+    let mut data = Vec::new();
+    for low in [0x3117u32, 0x3097, 0x3197, 0x2117] {
+        for rs1 in 0..32u32 {
+            let auipc = low | (rs1 * 0x0004_1000 & 0xFFFF_C000);
+            let inst2 = 0x0000_0067 | (rs1 << 15) | (rs1 << 20);
+            data.extend_from_slice(&auipc.to_le_bytes());
+            data.extend_from_slice(&inst2.to_le_bytes());
+        }
+    }
+    let opts = EncoderOptions::default()
+        .lzma(LzmaOptions::preset(0).unwrap())
+        .filters(vec![Filter::Bcj {
+            kind: BcjKind::RiscV,
+            start_offset: 0,
+        }]);
+    let ours = compress_with_options(&data, &opts).unwrap();
+    let Some(theirs) = xz(&["-zc", "-T1", "--riscv", "--lzma2=preset=0"], &data) else {
+        return;
+    };
+    assert!(ours == theirs, "differs from xz");
+    assert_eq!(decompress(&theirs).unwrap(), data);
 }
