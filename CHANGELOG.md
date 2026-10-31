@@ -77,6 +77,8 @@ minor version may change the API.
 - One-shot decoding with `concatenated(false)` ignores the input after the
   first Stream, like `xz --single-stream` and the readers; it was an error
   (#73).
+- Decoding on x86-64 is 2-3% faster: the align bits of long distances
+  use a port of liblzma's `rc_bittree_rev4` assembly (#81).
 
 ### Fixed
 - One-shot decoding (`decompress`, `decompress_into`, the threaded
