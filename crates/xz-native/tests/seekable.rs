@@ -809,3 +809,54 @@ fn chunk_header_split_by_the_input_buffer() {
     assert!(read_all(&mut r).unwrap() == data[first.len()..]);
     check_random_access("chunk headers", &packed, &data, 12);
 }
+
+/// Damage to a file with one empty Block: reading from the start verifies
+/// the empty Block, so it fails exactly when the streaming decoder does,
+/// with its error or, for a Block longer than the Index says, a data error
+/// (see [`KIND_EXCEPTIONS`]).
+#[test]
+fn damaged_empty_block() {
+    let file = fs::read(files_dir().join("good-1-empty-bcj-lzma2.xz")).unwrap();
+    for i in 0..file.len() {
+        for bit in [0x01, 0x80] {
+            let mut bad = file.clone();
+            bad[i] ^= bit;
+            let what = format!("byte {i} ^ {bit:#x}");
+            match both(&bad) {
+                (Ok(a), Ok(b)) => assert_eq!(a, b, "{what}"),
+                (Err(a), Err(b)) => assert!(b == a || b == Error::Data, "{what}: {a:?} vs {b:?}"),
+                (a, b) => panic!("{what}: streaming {a:?}, seekable {b:?}"),
+            }
+        }
+    }
+}
+
+/// A Block Header whose Compressed or Uncompressed Size disagrees with the
+/// Index (with a valid header CRC32) fails when the Block is opened, before
+/// any of its data is returned.
+#[test]
+fn block_header_sizes_must_match_the_index() {
+    let data = text(40_000, 13);
+    let Some(c) = xz(&["-c", "-T2", "--block-size=10000"], &data) else {
+        return;
+    };
+    let off = find_block(&c, 1);
+    let size = (c[off] as usize + 1) * 4;
+    assert_eq!(c[off + 1] & 0xC0, 0xC0, "both sizes in the header");
+    // The Compressed Size VLI, then the Uncompressed Size VLI.
+    let mut uncompressed = off + 2;
+    while c[uncompressed] & 0x80 != 0 {
+        uncompressed += 1;
+    }
+    uncompressed += 1;
+    for field in [off + 2, uncompressed] {
+        let mut bad = c.clone();
+        bad[field] ^= 1;
+        let crc = xz_native::crc32(&bad[off..off + size - 4], 0);
+        bad[off + size - 4..off + size].copy_from_slice(&crc.to_le_bytes());
+        let mut r = open(&bad).unwrap();
+        r.seek(SeekFrom::Start(10_000)).unwrap();
+        let e = r.read(&mut [0; 1]).map_err(xz_error);
+        assert_eq!(e.err(), Some(Error::Data), "field at {field}");
+    }
+}
