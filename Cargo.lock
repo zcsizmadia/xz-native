@@ -677,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "xz-bench"
-version = "0.2.0+xz.5.8.4"
+version = "0.3.0+xz.5.8.4"
 dependencies = [
  "criterion",
  "liblzma",
@@ -689,7 +689,7 @@ dependencies = [
 
 [[package]]
 name = "xz-native"
-version = "0.2.0+xz.5.8.4"
+version = "0.3.0+xz.5.8.4"
 dependencies = [
  "futures",
  "futures-io",

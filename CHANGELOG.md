@@ -8,6 +8,15 @@ minor version may change the API.
 
 ## [Unreleased]
 
+## [0.3.0+xz.5.8.4]
+
+Still compatible with xz/liblzma 5.8.4. New APIs that close gaps with
+liblzma (format detection, preset dictionaries, LZMA1EXT, filter
+properties, fixed buffers, encoder memory usage, a threading memory limit)
+and faster compression at presets 6-9e. One change is visible to callers:
+`LzmaDecoder` reports a short non-.lzma input as `Error::Format` (see
+Changed).
+
 ### Added
 - Format detection like liblzma's `lzma_auto_decoder`: `AutoDecoder`
   (push), `AutoReader` (`std::io` and async) and
@@ -216,6 +225,7 @@ First release. Compatible with xz/liblzma 5.8.4.
   the `portable` feature disables them.
 - `no_std` + `alloc` without the default `std` feature. MSRV 1.89.
 
-[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v0.3.0...HEAD
+[0.3.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.2.0...v0.3.0
 [0.2.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.1.0...v0.2.0
 [0.1.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/releases/tag/v0.1.0
