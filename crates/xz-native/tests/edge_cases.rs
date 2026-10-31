@@ -646,3 +646,23 @@ fn lzip_dictionary_size_fractions() {
         assert_eq!(dec.memusage(), dict_mem(dict), "2^{b2log} - {frac}/16");
     }
 }
+
+/// .lz decoding one byte of input at a time without `finish`, and a call
+/// without output space at the end of the input: neither is truncation.
+#[test]
+fn lzip_steps_are_not_truncation() {
+    let packed = test_file("good-2-v1-v1.lz");
+    let expected = decompress_lzip(&packed).unwrap();
+    let mut d = LzipDecoder::new();
+    let out = stream(&packed, &[1], &[4096], false, |i, o, f| d.decode(i, o, f)).unwrap();
+    assert!(out == expected);
+
+    let mut d = LzipDecoder::new();
+    let mut buf = vec![0u8; expected.len() + 1];
+    let (u, w, _) = d.decode(&packed[..20], &mut buf, false).unwrap();
+    assert_eq!(u, 20);
+    assert_eq!(d.decode(&[], &mut [], true), Ok((0, 0, Status::Ok)));
+    let (_, w2, s) = d.decode(&packed[20..], &mut buf[w..], true).unwrap();
+    assert_eq!(s, Status::StreamEnd);
+    assert!(buf[..w + w2] == expected);
+}
