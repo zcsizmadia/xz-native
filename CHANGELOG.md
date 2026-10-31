@@ -8,9 +8,11 @@ minor version may change the API.
 
 ## [Unreleased]
 
-The changes below change behavior that callers can see (which errors are
-returned and when, constructor return types, removed exports), so the next
-release is 0.2.0.
+## [0.2.0+xz.5.8.4]
+
+Still compatible with xz/liblzma 5.8.4. Some changes below change behavior
+that callers can see (which errors are returned and when, constructor
+return types, removed exports), hence a minor version.
 
 ### Added
 - `XzDecoder` decodes with threads: `DecoderOptions::threads` now applies
@@ -168,5 +170,6 @@ First release. Compatible with xz/liblzma 5.8.4.
   the `portable` feature disables them.
 - `no_std` + `alloc` without the default `std` feature. MSRV 1.89.
 
-[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v0.2.0...HEAD
+[0.2.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.1.0...v0.2.0
 [0.1.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/releases/tag/v0.1.0

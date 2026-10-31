@@ -208,7 +208,7 @@ runs weekly and on demand on all CI platforms.
 | M2 | Range encoder, match finders, presets 0-9/extreme, byte-identical `.xz` output | done |
 | M3 | Seekable reader, lzip decoding, raw LZMA1/LZMA2 API, filter encoders | done |
 | M4 | Decoder and check tuning (decode into the caller's buffer, VPCLMULQDQ CRC, branchless bits, x86-64 asm) | done; incompressible one-shot on Windows (#34) open |
-| M5 | Multithreaded encode/decode, async adapters, CLI; first release `0.1.0+xz.5.8.4`, 1.0 once the API is settled | multithreaded encode and decode, async adapters (tokio, futures-io) and 0.1.0 done; CLI (#14) and threaded push decoding (#58) open |
+| M5 | Multithreaded encode/decode, async adapters, CLI; first release `0.1.0+xz.5.8.4`, 1.0 once the API is settled | multithreaded encode and decode (also in the push API, #58), async adapters (tokio, futures-io), 0.1.0 and 0.2.0 done; CLI (#14) open |
 
 ## Decisions
 
