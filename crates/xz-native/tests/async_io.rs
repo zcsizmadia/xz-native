@@ -185,18 +185,28 @@ mod tokio_tests {
             let xz = w.into_inner().inner;
             assert!(xz_native::decompress(&xz).unwrap() == data);
 
-            let mut tail = xz.clone();
-            tail.extend_from_slice(b"after");
-            let mut r = XzReader::with_options(
-                Trickle::new(tail),
-                xz_native::DecoderOptions::new().concatenated(false),
-            );
-            let mut out = Vec::new();
-            r.read_to_end(&mut out).await.unwrap();
-            assert!(out == data);
-            // Data after the stream stays in the inner reader.
-            let inner = r.into_inner();
-            assert_eq!(&inner.inner[inner.pos..], b"after");
+            // Blocks with sizes, for the decoder with threads.
+            let opts = xz_native::EncoderOptions::preset(6)
+                .unwrap()
+                .threads(2)
+                .block_size(5000);
+            let blocks = xz_native::compress_with_options(data, &opts).unwrap();
+            for (xz, threads) in [(&xz, 1), (&blocks, 1), (&blocks, 3)] {
+                let mut tail = xz.clone();
+                tail.extend_from_slice(b"after");
+                let mut r = XzReader::with_options(
+                    Trickle::new(tail),
+                    xz_native::DecoderOptions::new()
+                        .concatenated(false)
+                        .threads(threads),
+                );
+                let mut out = Vec::new();
+                r.read_to_end(&mut out).await.unwrap();
+                assert!(out == data, "threads {threads}");
+                // Data after the stream stays in the inner reader.
+                let inner = r.into_inner();
+                assert_eq!(&inner.inner[inner.pos..], b"after");
+            }
         });
     }
 

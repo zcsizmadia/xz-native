@@ -195,6 +195,42 @@ pub fn read_xz(
     }
 }
 
+/// Decodes `input` with [`xz_native::XzDecoder`], passing the input in
+/// chunks and taking the output in amounts of random sizes, like
+/// [`read_xz`]. More input is passed only when a call makes no progress.
+pub fn push_xz(
+    input: &[u8],
+    opts: xz_native::DecoderOptions,
+    seed: u64,
+) -> (Vec<u8>, Option<xz_native::Error>) {
+    let mut dec = xz_native::XzDecoder::with_options(opts);
+    let mut r = Rng(seed | 1);
+    let sizes = [1usize, 7, 100, 4096, 65536, 1 << 20];
+    let mut buf = vec![0u8; 1 << 20];
+    let mut out = Vec::new();
+    let (mut pos, mut end, mut stuck) = (0, 0, false);
+    loop {
+        if end == pos || stuck {
+            assert!(end < input.len() || !stuck, "no progress at the end");
+            end = input
+                .len()
+                .min(end + sizes[r.below(sizes.len() as u64) as usize]);
+        }
+        let n = sizes[r.below(sizes.len() as u64) as usize];
+        match dec.decode(&input[pos..end], &mut buf[..n], end == input.len()) {
+            Ok((used, written, status)) => {
+                pos += used;
+                out.extend_from_slice(&buf[..written]);
+                if status == xz_native::Status::StreamEnd {
+                    return (out, None);
+                }
+                stuck = used == 0 && written == 0;
+            }
+            Err(e) => return (out, Some(e)),
+        }
+    }
+}
+
 /// [`xz_native::DecoderOptions`] with `threads`.
 pub fn threads(threads: usize) -> xz_native::DecoderOptions {
     xz_native::DecoderOptions::default().threads(threads)

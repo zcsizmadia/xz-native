@@ -1,12 +1,13 @@
-//! `XzReader` with threads: the same output, the same errors and at least
-//! the same data before an error as without threads, on multi-Block, mixed
-//! (Blocks with and without sizes in their headers) and damaged files.
+//! `XzReader` and `XzDecoder` with threads: the same output, the same
+//! errors and at least the same data before an error as without threads, on
+//! multi-Block, mixed (Blocks with and without sizes in their headers) and
+//! damaged files.
 
 mod common;
 
-use common::{Rng, read_xz, threads, xz};
+use common::{Rng, push_xz, read_xz, threads, xz};
 use std::io::{BufRead, BufReader, Read};
-use xz_native::{DecoderOptions, Error, XzReader};
+use xz_native::{DecoderOptions, Error, Status, XzDecoder, XzReader};
 
 fn text(n: usize, seed: u64) -> Vec<u8> {
     let words = [
@@ -94,14 +95,31 @@ fn same_output(label: &str, input: &[u8], expected: &[u8]) {
                 "{label}: threads {t}, capacity {cap}: data differs"
             );
         }
+        let (out, err) = push_xz(input, threads(t), i as u64);
+        assert_eq!(err, None, "{label}: XzDecoder, threads {t}");
+        assert!(
+            out == expected,
+            "{label}: XzDecoder, threads {t}: data differs"
+        );
     }
 }
 
 /// Threaded readers must report the error of the single-threaded reader,
 /// after at least the same data. `good` bytes of output come before the
-/// damage: threaded readers return all of them.
+/// damage: threaded readers return all of them. `XzDecoder` with threads
+/// returns the same error after the `good` bytes; how much of a damaged
+/// Block it returns depends on the sizes of its calls, as without threads.
 fn same_error(label: &str, input: &[u8], good: usize) {
     let mut first: Option<Vec<u8>> = None;
+    let mut same_data = |what: &str, out: &[u8]| {
+        // Damaged data may decode to garbage before the error is found;
+        // every decoder must return the same garbage.
+        let first = first.get_or_insert_with(|| out.to_vec());
+        assert!(
+            first.starts_with(out) || out.starts_with(first),
+            "{what}: data before the error differs"
+        );
+    };
     for (cap, seed) in [(1, 1), (8192, 2)] {
         let (single, error) = read_xz(input, threads(1), cap, seed);
         assert!(error.is_some(), "{label}: no error");
@@ -116,13 +134,20 @@ fn same_error(label: &str, input: &[u8], good: usize) {
                 single.len()
             );
             assert!(out.starts_with(&single), "{what}: data differs");
-            // Damaged data may decode to garbage before the error is found;
-            // every reader must return the same garbage.
-            let first = first.get_or_insert_with(|| out.clone());
-            assert!(
-                first.starts_with(&out) || out.starts_with(first),
-                "{what}: data before the error differs"
-            );
+            same_data(&what, &out);
+        }
+        for t in [1, 2, 4, 0] {
+            let (out, err) = push_xz(input, threads(t), seed);
+            let what = format!("{label}: XzDecoder, threads {t}");
+            assert_eq!(err, error, "{what}: error");
+            if t != 1 {
+                assert!(
+                    out.len() >= good,
+                    "{what}: {} bytes, good {good}",
+                    out.len()
+                );
+            }
+            same_data(&what, &out);
         }
     }
 }
@@ -195,6 +220,19 @@ fn not_concatenated_leaves_the_rest() {
         let mut rest = Vec::new();
         inner.read_to_end(&mut rest).unwrap();
         assert_eq!(rest, b"\0\0\0\0trailing", "threads {t}");
+
+        let mut dec = XzDecoder::with_options(opts);
+        let (mut pos, mut out, mut buf) = (0, Vec::new(), vec![0u8; 10_000]);
+        loop {
+            let (used, n, status) = dec.decode(&cat[pos..], &mut buf, true).unwrap();
+            pos += used;
+            out.extend_from_slice(&buf[..n]);
+            if status == Status::StreamEnd {
+                break;
+            }
+        }
+        assert!(out == data, "XzDecoder, threads {t}");
+        assert_eq!(pos, a.len(), "XzDecoder, threads {t}");
     }
     // Trailing garbage is an error after all the data, as without threads.
     same_error("trailing garbage", &cat, data.len());
@@ -220,6 +258,47 @@ fn memory_limits() {
         let opts = DecoderOptions::default().memlimit(1 << 20).threads(t);
         let (out, err) = read_xz(&c, opts, 8192, 5);
         assert_eq!((out.len(), err), (0, Some(Error::MemLimit)), "threads {t}");
+    }
+
+    // XzDecoder returns the data before a Block over the limit, and goes on
+    // after the limit is raised.
+    let Some(small) = multi_block(&data[..300_000], &["-0", "--block-size=50000"]) else {
+        return;
+    };
+    let mut cat = small;
+    cat.extend_from_slice(&c);
+    let mut expected = data[..300_000].to_vec();
+    expected.extend_from_slice(&data);
+    for t in [1, 4] {
+        let opts = DecoderOptions::default().memlimit(1 << 20).threads(t);
+        let mut dec = XzDecoder::with_options(opts);
+        let (mut pos, mut out, mut buf) = (0, Vec::new(), vec![0u8; 1 << 16]);
+        let mut hit = None;
+        loop {
+            match dec.decode(&cat[pos..], &mut buf, true) {
+                Ok((used, n, status)) => {
+                    pos += used;
+                    out.extend_from_slice(&buf[..n]);
+                    if status == Status::StreamEnd {
+                        break;
+                    }
+                }
+                Err(Error::MemLimit) => {
+                    assert_eq!(hit, None, "threads {t}: second MemLimit");
+                    assert!(dec.memusage() > 1 << 20);
+                    // Calling again with the same limit fails again.
+                    assert_eq!(
+                        dec.decode(&cat[pos..], &mut buf, true).err(),
+                        Some(Error::MemLimit)
+                    );
+                    hit = Some(out.len());
+                    dec.set_memlimit(u64::MAX);
+                }
+                Err(e) => panic!("threads {t}: {e}"),
+            }
+        }
+        assert_eq!(hit, Some(300_000), "threads {t}");
+        assert!(out == expected, "threads {t}");
     }
 }
 
@@ -408,6 +487,28 @@ fn drop_mid_stream() {
 fn reader_is_send_and_sync() {
     fn check<T: Send + Sync>() {}
     check::<XzReader<&[u8]>>();
+    check::<XzDecoder>();
+}
+
+/// `XzDecoder` with threads reads Blocks ahead of its output, at most
+/// `2 * threads`, and dropping it mid-stream joins its threads.
+#[test]
+fn push_decoder_reads_ahead() {
+    let data = text(2_000_000, 10);
+    let Some(c) = multi_block(&data, &["--block-size=100000"]) else {
+        return;
+    };
+    let bl = blocks(&c, 0);
+    for t in [1, 2] {
+        let mut dec = XzDecoder::with_options(threads(t));
+        let mut buf = [0u8; 1000];
+        let (used, n, _) = dec.decode(&c, &mut buf, true).unwrap();
+        assert!(n > 0 && buf[..n] == data[..n], "threads {t}");
+        let ahead = bl.iter().filter(|b| b.0 + b.2 <= used).count();
+        let expected = if t == 1 { 0 } else { 2 * t };
+        assert_eq!(ahead, expected, "threads {t}: Blocks read");
+        drop(dec);
+    }
 }
 
 /// Input that fails once at each of some positions.

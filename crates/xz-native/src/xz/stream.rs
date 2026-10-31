@@ -45,11 +45,11 @@ pub struct DecoderOptions {
     /// verify (default: false; the check is skipped, as liblzma does).
     pub fail_on_unsupported_check: bool,
     /// Threads for decoding multi-Block .xz data with
-    /// [`crate::decompress_with_options`] and `XzReader` (default: 1; 0 =
-    /// one per CPU). Blocks are decoded in parallel; results and errors are
-    /// identical to single-threaded decoding. More than 16384
-    /// (`LZMA_THREADS_MAX`) is [`Error::Options`]. [`XzDecoder`] ignores it,
-    /// and so does everything without the `std` feature.
+    /// [`crate::decompress_with_options`], `XzReader` and [`XzDecoder`]
+    /// (default: 1; 0 = one per CPU). Blocks are decoded in parallel;
+    /// results and errors are identical to single-threaded decoding. More
+    /// than 16384 (`LZMA_THREADS_MAX`) is [`Error::Options`]. Without the
+    /// `std` feature, it is ignored.
     pub threads: usize,
 }
 
@@ -463,6 +463,17 @@ enum Seq {
 }
 
 /// Streaming .xz decoder with a push interface similar to `lzma_code`.
+///
+/// With [`DecoderOptions::threads`] other than 1, it decodes like
+/// `lzma_stream_decoder_mt`: Blocks whose headers store their sizes (as
+/// `xz -T` and liblzma's multithreaded encoder write them) are copied from
+/// the input and decoded in parallel by worker threads, and the output is
+/// the same as without threads. A call then returns the decoded data of the
+/// Blocks that are done, and when none is and there is output space, it
+/// waits for one (it does not wait for more input). The input consumed runs
+/// ahead of the output by up to `2 * threads` Blocks, within
+/// `min(memlimit, 2 GiB)` bytes of Blocks in flight (512 MiB on 32-bit
+/// targets).
 #[derive(Debug)]
 pub struct XzDecoder {
     opts: DecoderOptions,
@@ -479,6 +490,10 @@ pub struct XzDecoder {
     memusage: u64,
     /// The error that ended decoding; later calls return it.
     error: Option<Error>,
+    /// The multithreaded engine, with [`DecoderOptions::threads`]; it does
+    /// all the work then.
+    #[cfg(feature = "std")]
+    mt: Option<Box<super::mt::MtDecoder>>,
 }
 
 impl Default for XzDecoder {
@@ -509,19 +524,33 @@ impl XzDecoder {
             padding: 0,
             memusage: 0,
             error: None,
+            #[cfg(feature = "std")]
+            mt: match super::mt::thread_count(opts.threads) {
+                1 => None,
+                threads => Some(Box::new(super::mt::MtDecoder::new(opts, threads))),
+            },
         }
     }
 
     /// Memory the current Block needs: the figure compared with the memory
     /// limit, so after [`Error::MemLimit`] the amount that would have been
     /// needed. 0 before the first Block Header. Like `lzma_memusage`, without
-    /// liblzma's fixed overhead.
+    /// liblzma's fixed overhead. With threads, it is for the last Block
+    /// Header read, which can be ahead of the output.
     pub fn memusage(&self) -> u64 {
+        #[cfg(feature = "std")]
+        if let Some(mt) = &self.mt {
+            return mt.memusage();
+        }
         self.memusage
     }
 
     /// The memory limit ([`DecoderOptions::memlimit`]).
     pub fn memlimit(&self) -> u64 {
+        #[cfg(feature = "std")]
+        if let Some(mt) = &self.mt {
+            return mt.memlimit();
+        }
         self.opts.memlimit
     }
 
@@ -530,11 +559,21 @@ impl XzDecoder {
     /// [`decode`](Self::decode) again with the same remaining input to
     /// continue.
     pub fn set_memlimit(&mut self, memlimit: u64) {
+        #[cfg(feature = "std")]
+        if let Some(mt) = &mut self.mt {
+            mt.set_memlimit(memlimit);
+        }
         self.opts.memlimit = memlimit;
     }
 
     /// Check type of the current stream, once its header has been read.
+    /// With threads, it is that of the Stream being read, which can be
+    /// ahead of the output.
     pub fn check(&self) -> Option<Check> {
+        #[cfg(feature = "std")]
+        if let Some(mt) = &self.mt {
+            return mt.check();
+        }
         self.flags.map(|f| f.check)
     }
 
@@ -561,7 +600,8 @@ impl XzDecoder {
     /// returned first, as `Ok`, and the next call returns the error. After
     /// that, every call returns it again, except for [`Error::MemLimit`]
     /// (raise the limit with [`set_memlimit`](Self::set_memlimit) and call
-    /// again) and [`Error::Truncated`] (more input can still be passed).
+    /// again) and [`Error::Truncated`] (more input can still be passed;
+    /// not with threads, where it is final like the other errors).
     pub fn decode(
         &mut self,
         input: &[u8],
@@ -572,6 +612,12 @@ impl XzDecoder {
             return Err(e);
         }
         let (mut ip, mut op) = (0, 0);
+        #[cfg(feature = "std")]
+        let r = match &mut self.mt {
+            Some(mt) => mt.decode(input, output, finish, &mut ip, &mut op),
+            None => self.run(input, output, finish, &mut ip, &mut op),
+        };
+        #[cfg(not(feature = "std"))]
         let r = self.run(input, output, finish, &mut ip, &mut op);
         crate::push::settle(&mut self.error, ip, op, r)
     }

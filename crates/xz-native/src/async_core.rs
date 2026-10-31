@@ -188,8 +188,9 @@ macro_rules! adapters {
             core: ReadCore<D>,
         }
 
-        /// .xz decompressing reader (single-threaded:
-        /// [`DecoderOptions::threads`] doesn't apply).
+        /// .xz decompressing reader. With [`DecoderOptions::threads`] other
+        /// than 1, it decodes with worker threads, and a poll can block
+        /// while it waits for them (see [`XzDecoder`]).
         pub type XzReader<R> = Reader<R, XzDecoder>;
         /// Legacy .lzma decompressing reader.
         pub type LzmaReader<R> = Reader<R, LzmaDecoder>;
