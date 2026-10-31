@@ -1,0 +1,15 @@
+# C liblzma (crates/xz-bench and fuzz/ only) is built by `liblzma-sys`,
+# whose config.h leaves out fast unaligned access and the CLMUL / ARM64 CRC
+# code. These per-target flags turn on what liblzma's own CMake build
+# detects on each platform, so benchmarks and differential tests compare
+# against the liblzma that distributions and the `xz` CLI ship (#85).
+#
+# To measure the plain `liblzma-sys` build instead, override the variable
+# for your target with an empty value, for example:
+#   cargo --config 'env.CFLAGS_x86_64_unknown_linux_gnu=""' bench -p xz-bench
+[env]
+CFLAGS_x86_64_unknown_linux_gnu = "-DTUKLIB_FAST_UNALIGNED_ACCESS=1 -DHAVE_USABLE_CLMUL=1 -DHAVE_CPUID_H=1 -DHAVE_FUNC_ATTRIBUTE_CONSTRUCTOR=1 -DHAVE_IMMINTRIN_H=1 -DHAVE__MM_MOVEMASK_EPI8=1 -DHAVE___BUILTIN_BSWAPXX=1 -DHAVE___BUILTIN_ASSUME_ALIGNED=1"
+CFLAGS_x86_64_pc_windows_msvc = "-DTUKLIB_FAST_UNALIGNED_ACCESS=1 -DHAVE_USABLE_CLMUL=1 -DHAVE_IMMINTRIN_H=1 -DHAVE__MM_MOVEMASK_EPI8=1"
+CFLAGS_aarch64_unknown_linux_gnu = "-DTUKLIB_FAST_UNALIGNED_ACCESS=1 -DHAVE_ARM64_CRC32=1 -DHAVE_GETAUXVAL=1 -DHAVE_HWCAP_CRC32=1 -DHAVE_FUNC_ATTRIBUTE_CONSTRUCTOR=1 -DHAVE___BUILTIN_BSWAPXX=1 -DHAVE___BUILTIN_ASSUME_ALIGNED=1"
+CFLAGS_aarch64_apple_darwin = "-DTUKLIB_FAST_UNALIGNED_ACCESS=1 -DHAVE_ARM64_CRC32=1 -DHAVE_SYSCTLBYNAME=1 -DHAVE_FUNC_ATTRIBUTE_CONSTRUCTOR=1 -DHAVE___BUILTIN_BSWAPXX=1 -DHAVE___BUILTIN_ASSUME_ALIGNED=1"
+CFLAGS_aarch64_pc_windows_msvc = "-DTUKLIB_FAST_UNALIGNED_ACCESS=1 -DHAVE_ARM64_CRC32=1"

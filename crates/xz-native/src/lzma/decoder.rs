@@ -384,6 +384,41 @@ fn bittree_rev<const SAFE: bool>(
     Ok(out)
 }
 
+/// The 4 align bits of a distance: a reverse bit tree at `ALIGN` whose node
+/// at step `k` is `2^k + sym`, `sym` being the bits decoded so far
+/// (liblzma's `rc_bittree_rev4`). This numbers each level's nodes in another
+/// order than [`bittree_rev`], which only permutes which probability each
+/// context uses; both paths must use the same order.
+#[inline(always)]
+fn align_bits<const SAFE: bool>(
+    rc: &mut Rc,
+    inp: &mut Input<'_, SAFE>,
+    probs: &mut Probs,
+    undo: &mut Undo,
+) -> core::result::Result<u32, Stop> {
+    #[cfg(all(target_arch = "x86_64", not(feature = "portable"), not(miri)))]
+    if !SAFE {
+        const { assert!(ALIGN + (1 << ALIGN_BITS) <= PROBS_SIZE) };
+        // SAFETY: the tree is inside `probs` (see `prob`), and the fast path
+        // has at least FAST_MIN input bytes left.
+        #[allow(unsafe_code)]
+        return Ok(unsafe {
+            super::x86_asm::bittree_rev4(
+                &mut rc.range,
+                &mut rc.code,
+                inp.buf,
+                &mut inp.pos,
+                probs.as_mut_ptr().add(ALIGN),
+            )
+        });
+    }
+    let mut sym = 0u32;
+    for k in 0..ALIGN_BITS {
+        sym |= bit_bl(rc, inp, probs, undo, ALIGN + (1 << k) + sym as usize)? << k;
+    }
+    Ok(sym)
+}
+
 #[inline(always)]
 fn direct_bits<const SAFE: bool>(
     rc: &mut Rc,
@@ -566,7 +601,7 @@ fn symbol<const SAFE: bool>(
             } else {
                 let d = base + (direct_bits(rc, inp, limit - ALIGN_BITS)? << ALIGN_BITS);
                 // Can wrap only for the end marker.
-                d.wrapping_add(bittree_rev(rc, inp, probs, undo, ALIGN, ALIGN_BITS)?)
+                d.wrapping_add(align_bits(rc, inp, probs, undo)?)
             }
         };
         if dist == u32::MAX {
@@ -996,6 +1031,71 @@ mod tests {
                 (p + ((BIT_MODEL_TOTAL - p) >> MOVE_BITS)) as u16,
                 "p={p} bit=0"
             );
+        }
+    }
+
+    /// The fast path (the x86-64 assembly where it is used) and the checked
+    /// path decode the reverse bit trees (align bits, and the low bits of
+    /// distance slots 4 to 13) alike: same result, coder state, input
+    /// position and probabilities.
+    #[test]
+    fn reverse_trees_fast_match_checked() {
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let steps = if cfg!(miri) { 50 } else { 20_000 };
+        for _ in 0..steps {
+            let mut probs = alloc::boxed::Box::new([0u16; PROBS_SIZE]);
+            for p in &mut probs[DIST_SPECIAL..ALIGN + 16] {
+                *p = 1 + (next() % (BIT_MODEL_TOTAL as u64 - 1)) as u16;
+            }
+            let buf: alloc::vec::Vec<u8> = (0..FAST_MIN + 8).map(|_| next() as u8).collect();
+            // A normalized coder: range >= 2^24 (or about to be refilled), code < range.
+            let range = (next() as u32).max(1 << 20);
+            let rc = Rc {
+                range,
+                code: (next() as u32) % range,
+            };
+            let (mut rc_a, mut rc_b) = (rc, rc);
+            let (mut probs_a, mut probs_b) = (probs.clone(), probs);
+            let mut in_a = Input::<false> { buf: &buf, pos: 0 };
+            let mut in_b = Input::<true> { buf: &buf, pos: 0 };
+            let bits = 1 + (next() % 6) as u32;
+            let (a, b) = if bits == 6 {
+                (
+                    align_bits(&mut rc_a, &mut in_a, &mut probs_a, &mut Undo::new()),
+                    align_bits(&mut rc_b, &mut in_b, &mut probs_b, &mut Undo::new()),
+                )
+            } else {
+                let base = DIST_SPECIAL + (next() % 32) as usize;
+                (
+                    bittree_rev(
+                        &mut rc_a,
+                        &mut in_a,
+                        &mut probs_a,
+                        &mut Undo::new(),
+                        base,
+                        bits,
+                    ),
+                    bittree_rev(
+                        &mut rc_b,
+                        &mut in_b,
+                        &mut probs_b,
+                        &mut Undo::new(),
+                        base,
+                        bits,
+                    ),
+                )
+            };
+            let (a, b) = (a.unwrap(), b.unwrap());
+            assert_eq!(a, b);
+            assert_eq!((rc_a.range, rc_a.code), (rc_b.range, rc_b.code));
+            assert_eq!(in_a.pos, in_b.pos);
+            assert!(probs_a[..] == probs_b[..]);
         }
     }
 }

@@ -199,3 +199,42 @@ fn lzip_concatenated_members() {
         assert!(decompress_lzip(&bad).is_err(), "byte {i}");
     }
 }
+
+/// `memusage()` is the smallest `--memlimit-decompress` the `xz` 5.8 CLI
+/// accepts for the file (64-bit; 32 bytes more on x86 for liblzma's SSE2
+/// dictionary copy).
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn memusage_matches_xz_cli_memlimit() {
+    if common::xz_version() != Some((5, 8)) {
+        eprintln!("xz 5.8 not available; skipping");
+        return;
+    }
+    let data = b"memory usage".repeat(100);
+    for opts in [
+        "--lzma2=preset=1,dict=4KiB",
+        "--lzma2=preset=1,dict=1MiB",
+        "--delta=dist=4 --lzma2=preset=1,dict=64KiB",
+    ] {
+        let mut args = vec!["-z", "-c"];
+        args.extend(opts.split(' '));
+        let packed = xz(&args, &data).unwrap();
+        let mut d = XzDecoder::new();
+        d.decode(&packed, &mut [0u8; 1], false).unwrap();
+        let m = d.memusage();
+        for (limit, ok) in [(m, true), (m - 1, false)] {
+            let path = std::env::temp_dir().join(format!("xz-native-memusage-{}.xz", m));
+            std::fs::write(&path, &packed).unwrap();
+            let status = std::process::Command::new("xz")
+                .args(["-d", "-c", "--no-adjust"])
+                .arg(format!("--memlimit-decompress={limit}"))
+                .arg(&path)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            std::fs::remove_file(&path).unwrap();
+            assert_eq!(status.success(), ok, "{opts}: limit {limit}");
+        }
+    }
+}

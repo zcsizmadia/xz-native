@@ -70,7 +70,9 @@ release is 0.2.0.
 - `memusage()`, `RawOptions::decoder_memusage()` and the memory limit
   checks use liblzma's figures (64-bit): the dictionary size plus the
   decoder state, so a limit accepts and rejects the same files as
-  liblzma (#75).
+  liblzma (#75). On x86 and x86-64 they include the 32 bytes liblzma's own
+  builds reserve for their SSE2 dictionary copy, matching the `xz` CLI's
+  `--memlimit-decompress` (#85).
 - The `portable` feature also replaces the decoder's unchecked input and
   probability reads with checked ones, so no `unsafe` code runs (#75).
 - `LzmaProps` is no longer public (no public API used it) (#75).
@@ -79,6 +81,8 @@ release is 0.2.0.
 - One-shot decoding with `concatenated(false)` ignores the input after the
   first Stream, like `xz --single-stream` and the readers; it was an error
   (#73).
+- Decoding on x86-64 is 2-3% faster: the align bits of long distances
+  use a port of liblzma's `rc_bittree_rev4` assembly (#81).
 
 ### Fixed
 - One-shot decoding (`decompress`, `decompress_into`, the threaded

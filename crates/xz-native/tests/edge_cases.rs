@@ -14,15 +14,24 @@ use xz_native::{
 
 /// Memory the LZMA1 decoders (.lzma, .lz) count for a dictionary, as
 /// liblzma (64-bit) does: the dictionary plus the decoder state and
-/// `LZMA_MEMUSAGE_BASE`.
+/// `LZMA_MEMUSAGE_BASE`, plus 32 bytes on x86 for its SSE2 dictionary copy.
 fn dict_mem(dict: u32) -> u64 {
-    dict as u64 + 65_984
+    dict as u64 + 65_984 + LZ_DICT_EXTRA
 }
 
 /// [`dict_mem`] for an .xz Block with only LZMA2.
 fn lzma2_mem(dict: u32) -> u64 {
-    dict as u64 + 66_168
+    dict as u64 + 66_168 + LZ_DICT_EXTRA
 }
+
+const LZ_DICT_EXTRA: u64 = if cfg!(any(
+    target_arch = "x86_64",
+    all(target_arch = "x86", target_feature = "sse2")
+)) {
+    32
+} else {
+    0
+};
 
 fn test_file(name: &str) -> Vec<u8> {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
