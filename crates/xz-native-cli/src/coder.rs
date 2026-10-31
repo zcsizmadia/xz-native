@@ -4,11 +4,12 @@
 
 use crate::Ctx;
 use crate::args::{Format, Limit, Threads, V_DEBUG, V_WARNING};
+use crate::chain::Item;
 use crate::num::{int as group, mib};
 use std::cell::RefCell;
 use std::io::{self, BufReader, Read, Write};
 use xz_native::{
-    AutoReader, Check, DecoderOptions, EncoderOptions, LzipReader, LzmaOptions, LzmaReader,
+    AutoReader, Check, DecoderOptions, EncoderOptions, Filter, LzipReader, LzmaOptions, LzmaReader,
     LzmaWriter, PRESET_EXTREME, RawMethod, RawOptions, XzReader, XzWriter,
 };
 
@@ -72,9 +73,9 @@ pub enum Encoder {
     Lzma(LzmaOptions),
 }
 
-/// `coder_set_compression_settings()` for the default filter chain:
-/// fewer threads, then single-threaded mode, then a smaller dictionary
-/// until the memory limit is met.
+/// `coder_set_compression_settings()`: the preset or the custom chain,
+/// then fewer threads, single-threaded mode and a smaller dictionary until
+/// the memory limit is met.
 pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
     let o = &ctx.o;
     let preset = o.preset | if o.extreme { PRESET_EXTREME } else { 0 };
@@ -83,8 +84,15 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
     if o.format == Format::Lzip {
         return Err("Compression of lzip files (.lz) is not supported".into());
     }
+    let unsupported = || "Unsupported filter chain or filter options".to_owned();
     if o.format == Format::Lzma {
-        let raw = RawOptions::preset(RawMethod::Lzma1, preset).map_err(invalid)?;
+        let mut raw = RawOptions::preset(RawMethod::Lzma1, preset).map_err(invalid)?;
+        match o.chain.as_slice() {
+            [] => {}
+            [Item::Lzma1(l)] => raw.lzma = *l,
+            _ => return Err("The .lzma format supports only the LZMA1 filter".into()),
+        }
+        raw.encoder_memusage().map_err(|_| unsupported())?;
         let lzma = fit_dict(ctx, raw.lzma, limit, '1', |lzma| {
             let mut r = raw.clone();
             r.lzma = lzma;
@@ -94,6 +102,26 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
     }
 
     let mut opts = EncoderOptions::preset(preset).map_err(invalid)?;
+    if !o.chain.is_empty() {
+        if o.chain.iter().any(|i| matches!(i, Item::Lzma1(_))) {
+            return Err("LZMA1 cannot be used with the .xz format".into());
+        }
+        // Delta and BCJ filters, then LZMA2 (`lzma_validate_chain()`).
+        let (last, first) = o.chain.split_last().expect("not empty");
+        let Item::Lzma2(lzma) = last else {
+            return Err(unsupported());
+        };
+        opts.lzma = *lzma;
+        opts.filters = first
+            .iter()
+            .map(|i| match *i {
+                Item::Bcj(kind, start_offset) => Ok(Filter::Bcj { kind, start_offset }),
+                Item::Delta(distance) => Ok(Filter::Delta { distance }),
+                _ => Err(unsupported()),
+            })
+            .collect::<Result<_, _>>()?;
+        opts.encoder_memusage().map_err(|_| unsupported())?;
+    }
     opts.check = o.check.unwrap_or(Check::Crc64);
     opts.block_size = o.block_size;
     let (mut threads, mut mt) = match o.threads {

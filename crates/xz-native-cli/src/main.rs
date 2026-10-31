@@ -4,6 +4,7 @@
 //! output is the same as xz's for the same options.
 
 mod args;
+mod chain;
 mod coder;
 mod files;
 mod list;
@@ -52,9 +53,13 @@ impl Ctx {
     }
 }
 
-fn fatal(msg: &str) -> ExitCode {
+/// Ends with an error before any file; `try_help` adds the pointer to
+/// `--help` that xz gives after errors in the option syntax.
+fn fatal(msg: &str, try_help: bool) -> ExitCode {
     eprintln!("{PROGRAM}: {msg}");
-    eprintln!("{PROGRAM}: Try '{PROGRAM} --help' for more information.");
+    if try_help {
+        eprintln!("{PROGRAM}: Try '{PROGRAM} --help' for more information.");
+    }
     ExitCode::from(E_ERROR)
 }
 
@@ -71,11 +76,11 @@ fn main() -> ExitCode {
     for var in ["XZ_DEFAULTS", "XZ_OPT"] {
         if let Some(value) = std::env::var_os(var) {
             let Some(value) = value.to_str() else {
-                return fatal(&format!("{var}: invalid value"));
+                return fatal(&format!("{var}: invalid value"), false);
             };
             let words: Vec<OsString> = value.split_whitespace().map(OsString::from).collect();
             if let Err(e) = args::parse(&words, &mut o, Some(var)) {
-                return fatal(&e);
+                return fatal(&e.msg, e.try_help);
             }
         }
     }
@@ -96,7 +101,7 @@ fn main() -> ExitCode {
             );
             return ExitCode::SUCCESS;
         }
-        Err(e) => return fatal(&e),
+        Err(e) => return fatal(&e.msg, e.try_help),
     }
     let mut ctx = Ctx { o, status: 0 };
     match files::run(&mut ctx) {
@@ -153,7 +158,14 @@ With no FILE, or when FILE is -, read standard input.
   -l, --list          list information about .xz files (-v, -vv for more)
       --robot         use machine-parsable messages (with --list)
 
-Not supported yet: --format=raw, custom filter chains,
+      --lzma1[=OPTS], --lzma2[=OPTS], --x86[=OPTS], --arm[=OPTS],
+      --armthumb[=OPTS], --arm64[=OPTS], --powerpc[=OPTS], --ia64[=OPTS],
+      --sparc[=OPTS], --riscv[=OPTS], --delta[=OPTS]
+                      add a filter to a custom filter chain (as in xz)
+      --filters=FILTERS
+                      set the filter chain with a liblzma filter string
+
+Not supported yet: --format=raw, --filters1..9,
 --block-list, --files.
 "
     )

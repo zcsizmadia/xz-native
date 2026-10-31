@@ -443,3 +443,52 @@ fn list_matches_xz() {
     assert_eq!(status(&o), 1);
     assert!(stderr(&o).contains("Try 'lzmainfo'"));
 }
+
+#[test]
+fn filter_chains_match_xz() {
+    let data = sample(1 << 20, 8);
+    for args in [
+        &["-c", "-T1", "--x86", "--lzma2=preset=1,dict=1MiB"][..],
+        &["-c", "--x86", "--lzma2=preset=1,dict=1MiB"],
+        &["-c", "-T1", "--delta=dist=4", "--lzma2=lc=0,lp=2,pb=0"],
+        &["-c", "-T1", "--arm64=start=4096", "--lzma2=preset=3e"],
+        &["-c", "-T1", "--filters=arm64 lzma2:preset=3e"],
+        &[
+            "-c",
+            "-T2",
+            "--filters=--x86 --delta=dist=2 --lzma2=dict=1MiB,mf=hc4,mode=fast,nice=64,depth=10",
+        ],
+        &["-c", "-T1", "--filters=2e"],
+        // A preset or -e after the filters replaces them, and filters after
+        // a preset replace it.
+        &["-c", "-T1", "-6", "--x86"],
+        &["-c", "-T1", "--x86", "-9"],
+        &["-c", "-T1", "--x86", "-e"],
+        &["-c", "-T1", "--format=lzma", "--lzma1=preset=4,mf=hc4"],
+    ] {
+        same_as_xz(args, &data);
+    }
+    // Errors: the same status and messages.
+    for args in [
+        &["-c", "--format=lzma", "--lzma2"][..],
+        &["-c", "-T1", "--lzma1"],
+        &["-c", "-T1", "--lzma2", "--x86"],
+        &["-c", "-T1", "--x86", "--x86", "--x86", "--x86", "--lzma2"],
+        &["-c", "-T1", "--lzma2=foo=1"],
+        &["-c", "-T1", "--lzma2=dict=1KiB"],
+        &["-c", "-T1", "--lzma2=lc=3,lp=2"],
+        &["-c", "-T1", "--delta=dist=0"],
+        &["-c", "-T1", "--filters=x86"],
+        &["-c", "-T1", "--filters=x86 lzma2:dict=1KiB"],
+        &["-c", "-T1", "--filters=bogus"],
+    ] {
+        let a = ours(args, b"data");
+        let Some(b) = xz(args, b"data") else { return };
+        assert_eq!(status(&a), status(&b), "{args:?}");
+        assert_eq!(
+            stderr(&a).replace("xz-native:", "xz:"),
+            stderr(&b).replace('\r', ""),
+            "{args:?}"
+        );
+    }
+}
