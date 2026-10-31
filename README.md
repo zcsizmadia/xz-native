@@ -33,8 +33,8 @@ build scripts or the memory-safety risk. Sibling of the C# library
   `portable` feature selects (no `unsafe` code runs then). Every push is
   fuzzed, and the results are compared with C liblzma on millions of
   mutated files.
-- **As fast as liblzma: about even at decompression and the slow presets,
-  faster at fast compression, checksums and incompressible data.** Two C
+- **As fast as liblzma: about even at decompression, faster at compression
+  (every preset), checksums and incompressible data.** Two C
   references: liblzma configured like its own build (fast unaligned
   access, CLMUL CRC, assembly decoder), and the `liblzma-sys` build that
   `xz2`/`liblzma` give Rust users, which has neither of the first two.
@@ -42,14 +42,14 @@ build scripts or the memory-safety risk. Sibling of the C# library
 
   | xz-native speed / C liblzma 5.8.4 (1.25x = 25% faster) | vs liblzma's own configuration | vs `liblzma-sys` (`xz2`, `liblzma` crates) |
   |---|---|---|
-  | Compression, single thread, Linux, presets 0-1 | 1.31-1.55x | 1.36-1.61x |
-  | Compression, single thread, Linux, presets 6-9e | 0.96-1.29x | 1.04-1.28x |
+  | Compression, single thread, Linux, presets 0-1 | 1.34-1.70x | 1.40-1.76x |
+  | Compression, single thread, Linux, presets 6-9e | 1.03-1.79x | 1.11-1.75x |
   | Compression, multithreaded, Linux | | 1.30-1.48x at preset 1, 1.04-1.13x at 6 |
-  | Decompression, single thread, Linux (streaming) | 0.94-1.02x (even; see BENCHMARK.md) | 1.04-1.13x |
+  | Decompression, single thread, Linux (streaming) | 0.94-1.02x (even; see BENCHMARK.md) | 1.04-1.11x |
   | Decompression, single thread, Windows (MSVC) | | 1.3-1.4x |
   | Decompression, multithreaded, Linux | | 1.04-1.06x at 1-8 threads, 1.10-1.50x at 16-32 |
   | Decompression of incompressible data, Linux | 2.4x | 14x |
-  | CRC32 / CRC64, Linux (Zen 3) | 1.9-2.0x | 13-23x |
+  | CRC32 / CRC64, Linux (Zen 3) | 1.9-2.1x | 13-23x |
 
   About 1.5x faster than [lzma-rust2](https://crates.io/crates/lzma-rust2),
   the fastest pure-Rust alternative, at decompression, and 1.1-1.5x at
