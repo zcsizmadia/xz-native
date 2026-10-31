@@ -1,0 +1,93 @@
+name: Mutants
+
+# cargo-mutants on the validation code of the decoders and containers (scope
+# in .cargo/mutants.toml, #22): a deleted or changed check must fail a test.
+# Pull requests test the mutants in their changed lines. The full set (about
+# 2000 mutants, a day of CPU) runs in 32 shards on demand and monthly and
+# reports its survivors in the job summary; mutants known to be equivalent
+# are excluded in .cargo/mutants.toml.
+on:
+  pull_request:
+    paths:
+      - "crates/xz-native/**"
+      - ".cargo/mutants.toml"
+      - ".github/workflows/mutants.yml"
+  schedule:
+    - cron: "41 2 1 * *"
+  workflow_dispatch:
+
+concurrency:
+  # Runs of the same PR share a group, so a new push cancels the old run.
+  group: mutants-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  diff:
+    name: mutants in the diff
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo install --locked cargo-mutants@27.1.0
+      - name: Mutants in the changed lines
+        shell: bash
+        run: |
+          git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
+          # A mutant can allocate without bound; fail it instead of the runner.
+          ulimit -v 16777216
+          # Exit 3: only timeouts (mutants that loop forever), which count as caught.
+          cargo mutants --in-diff pr.diff -j 2 || test $? -eq 3
+      - name: Missed mutants
+        if: failure()
+        run: cat mutants.out/missed.txt mutants.out/timeout.txt 2>/dev/null || true
+
+  all:
+    name: mutants ${{ matrix.shard }}/32
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+                16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo install --locked cargo-mutants@27.1.0
+      - name: Mutants, shard ${{ matrix.shard }} of 32
+        shell: bash
+        run: |
+          ulimit -v 16777216
+          # Report, don't fail: some survivors in the threaded engine's
+          # resource accounting are untriaged (#22). The PR job gates.
+          cargo mutants --shard ${{ matrix.shard }}/32 -j 2 || true
+      - name: Missed mutants
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Shard ${{ matrix.shard }}: missed mutants"
+            echo '```'
+            cat mutants.out/missed.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

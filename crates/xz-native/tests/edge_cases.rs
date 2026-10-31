@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::xz;
+use common::{Rng, xz};
 use std::path::PathBuf;
 use xz_native::{
     DecoderOptions, Error, LzipDecoder, LzmaDecoder, Result, Status, XzDecoder, decompress,
@@ -244,6 +244,16 @@ fn bcj_streaming_buffers() {
             let mut d = XzDecoder::new();
             let out = stream(packed, ins, outs, false, |i, o, f| d.decode(i, o, f)).unwrap();
             assert!(out == expected, "{ins:?} {outs:?}");
+        }
+        // Random sizes per call, so the filter's 32-byte buffer is left at
+        // every fill level.
+        let mut r = Rng(7);
+        for _ in 0..4 {
+            let ins: Vec<usize> = (0..97).map(|_| 1 + r.below(50) as usize).collect();
+            let outs: Vec<usize> = (0..89).map(|_| 1 + r.below(40) as usize).collect();
+            let mut d = XzDecoder::new();
+            let out = stream(packed, &ins, &outs, false, |i, o, f| d.decode(i, o, f)).unwrap();
+            assert!(out == expected, "random sizes");
         }
     }
 }
@@ -622,5 +632,121 @@ fn huge_lzma_dictionary_is_an_error_on_32_bit() {
             Some(xz_native::Error::MemLimit),
             "dict {dict:#x}"
         );
+    }
+}
+
+/// The .lz dictionary size byte: 2^n minus 0/16 to 7/16 of it.
+#[test]
+fn lzip_dictionary_size_fractions() {
+    for (b2log, frac) in [(20u32, 0u32), (20, 1), (20, 7), (29, 3), (13, 5)] {
+        let dict = (1 << b2log) - (frac << (b2log - 4));
+        let header = [b'L', b'Z', b'I', b'P', 1, (frac << 5 | b2log) as u8];
+        let mut dec = LzipDecoder::new();
+        dec.decode(&header, &mut [0; 16], false).unwrap();
+        assert_eq!(dec.memusage(), dict_mem(dict), "2^{b2log} - {frac}/16");
+    }
+}
+
+/// .lz decoding one byte of input at a time without `finish`, and a call
+/// without output space at the end of the input: neither is truncation.
+#[test]
+fn lzip_steps_are_not_truncation() {
+    let packed = test_file("good-2-v1-v1.lz");
+    let expected = decompress_lzip(&packed).unwrap();
+    let mut d = LzipDecoder::new();
+    let out = stream(&packed, &[1], &[4096], false, |i, o, f| d.decode(i, o, f)).unwrap();
+    assert!(out == expected);
+
+    let mut d = LzipDecoder::new();
+    let mut buf = vec![0u8; expected.len() + 1];
+    let (u, w, _) = d.decode(&packed[..20], &mut buf, false).unwrap();
+    assert_eq!(u, 20);
+    assert_eq!(d.decode(&[], &mut [], true), Ok((0, 0, Status::Ok)));
+    let (_, w2, s) = d.decode(&packed[20..], &mut buf[w..], true).unwrap();
+    assert_eq!(s, Status::StreamEnd);
+    assert!(buf[..w + w2] == expected);
+}
+
+/// The one-shot decoder (`decompress`, which decodes each Block straight
+/// into the output) and the streaming decoder must agree on damaged files:
+/// the same data, or the same error (`Data` for corruption before a cut,
+/// `Truncated` for a clean cut, as liblzma decides). Multi-Block files with
+/// and without sizes in their Block Headers, cut and corrupted all over.
+#[test]
+fn one_shot_and_streaming_agree_on_damage() {
+    let data = code_like(60_000);
+    let mut files = Vec::new();
+    for args in [
+        &["-zc", "-T2", "--block-size=20000", "--lzma2=preset=1"][..],
+        &[
+            "-zc",
+            "-T1",
+            "--block-size=20000",
+            "--x86",
+            "--lzma2=preset=1",
+        ][..],
+    ] {
+        if let Some(f) = xz(args, &data) {
+            files.push(f);
+        }
+    }
+    for f in files {
+        let opts = DecoderOptions::default();
+        let mut cases: Vec<Vec<u8>> = Vec::new();
+        for cut in (1..f.len()).step_by(61) {
+            cases.push(f[..cut].to_vec());
+        }
+        for i in (12..f.len()).step_by(97) {
+            for bit in [0x01, 0x40] {
+                let mut m = f.clone();
+                m[i] ^= bit;
+                cases.push(m.clone());
+                // Corrupt and cut short after the damage.
+                m.truncate((i + 50).min(m.len()));
+                cases.push(m);
+            }
+        }
+        // Block Header sizes off by one, with a valid CRC32 (the -T2 file
+        // stores both sizes): first and second Block.
+        let mut off = 12;
+        for _ in 0..2 {
+            let size = (f[off] as usize + 1) * 4;
+            if f[off + 1] & 0xC0 != 0xC0 {
+                break;
+            }
+            let mut field = off + 2;
+            let mut next_block = 0usize;
+            for which in 0..2 {
+                let mut m = f.clone();
+                m[field] ^= 1;
+                let crc = xz_native::crc32(&m[off..off + size - 4], 0);
+                m[off + size - 4..off + size].copy_from_slice(&crc.to_le_bytes());
+                cases.push(m);
+                // Skip this VLI (and remember the Compressed Size).
+                let (mut v, mut shift) = (0usize, 0);
+                while f[field] & 0x80 != 0 {
+                    v |= ((f[field] & 0x7F) as usize) << shift;
+                    shift += 7;
+                    field += 1;
+                }
+                v |= (f[field] as usize) << shift;
+                field += 1;
+                if which == 0 {
+                    next_block = off + size + v.next_multiple_of(4) + 8;
+                }
+            }
+            off = next_block;
+        }
+        for c in &cases {
+            let one_shot = decompress_with_options(c, opts);
+            let streaming = decompress_streaming(c, opts);
+            assert!(
+                one_shot == streaming,
+                "{} bytes: one-shot {:?}, streaming {:?}",
+                c.len(),
+                one_shot.as_ref().map(|v| v.len()),
+                streaming.as_ref().map(|v| v.len())
+            );
+        }
     }
 }

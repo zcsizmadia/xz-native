@@ -716,3 +716,181 @@ fn oversized_block_header_is_data_error() {
     r.seek(SeekFrom::Start(299_950)).unwrap();
     assert_eq!(read_all(&mut r).err(), Some(Error::Data));
 }
+
+/// Truncation and damage to the Stream Headers, Indexes, Stream Footers and
+/// Stream Padding of a two-Stream file: the seekable reader fails exactly
+/// when the streaming decoder does, with the same error (truncation is a
+/// data error for it, see [`KIND_EXCEPTIONS`]; under 12 bytes, a format
+/// error, as in liblzma's `file_info.c`).
+#[test]
+fn damage_matches_streaming_errors() {
+    let part = text(30_000, 6);
+    let Some(one) = xz(&["-c", "--block-size=7000"], &part) else {
+        return;
+    };
+    let mut file = one.clone();
+    file.extend_from_slice(&[0; 4]);
+    file.extend_from_slice(&one);
+    file.extend_from_slice(&[0; 8]);
+    let second = one.len() + 4;
+    let index = find_index(&one);
+    // Stream Headers, Index + Footer + Padding of both Streams.
+    let mut structural: Vec<usize> = (0..12).chain(second..second + 12).collect();
+    structural.extend(index..second);
+    structural.extend(second + index..file.len());
+
+    let mut cases: Vec<(String, Vec<u8>)> = Vec::new();
+    for &i in &structural {
+        cases.push((format!("cut at {i}"), file[..i].to_vec()));
+        for bit in [0x01, 0x80] {
+            let mut bad = file.clone();
+            bad[i] ^= bit;
+            cases.push((format!("byte {i} ^ {bit:#x}"), bad));
+        }
+    }
+    for (name, bad) in &cases {
+        let (streaming, seekable) = both(bad);
+        let expected = match streaming {
+            Err(_) if bad.len() < 12 => Err(Error::Format),
+            Err(Error::Truncated) => Err(Error::Data),
+            r => r,
+        };
+        assert!(
+            seekable == expected,
+            "{name}: {:?} vs {:?}",
+            seekable.map(|v| v.len()),
+            expected.map(|v| v.len())
+        );
+    }
+}
+
+/// A Block whose LZMA2 chunk header is split by the reader's 64 KiB input
+/// buffer, read up to that chunk and then on. Flushing every 4366 random
+/// bytes makes uncompressed chunks of 4369 bytes with their 3-byte headers,
+/// and 15 of them end 1 byte before 64 KiB. (The decoder takes the header
+/// byte with the data before it, even without output space, so the
+/// reader never sees a call that consumes input without output.)
+#[test]
+fn chunk_header_split_by_the_input_buffer() {
+    let mut r = Rng(11);
+    let data: Vec<u8> = (0..200_000).map(|_| r.next() as u8).collect();
+    let mut enc = xz_native::XzEncoder::new(0).unwrap();
+    let mut packed = Vec::new();
+    let mut out = vec![0u8; 1 << 16];
+    let pieces: Vec<&[u8]> = data.chunks(4366).collect();
+    for (i, piece) in pieces.iter().enumerate() {
+        let action = if i + 1 == pieces.len() {
+            xz_native::Action::Finish
+        } else {
+            xz_native::Action::SyncFlush
+        };
+        let mut input = *piece;
+        loop {
+            let (u, w, s) = enc.encode(input, &mut out, action).unwrap();
+            input = &input[u..];
+            packed.extend_from_slice(&out[..w]);
+            if s == xz_native::Status::StreamEnd {
+                break;
+            }
+        }
+    }
+    // The Block data starts with uncompressed chunks of 4369 bytes.
+    let block = 12 + (packed[12] as usize + 1) * 4;
+    assert_eq!(
+        packed[block], 0x01,
+        "first chunk: uncompressed, dictionary reset"
+    );
+    assert_eq!(packed[block + 4369], 0x02, "second chunk: uncompressed");
+    // A read that ends with the 15th chunk leaves only the header byte.
+    let mut r = open(&packed).unwrap();
+    let mut first = vec![0u8; 15 * 4366];
+    r.read_exact(&mut first).unwrap();
+    assert!(first == data[..first.len()]);
+    assert!(read_all(&mut r).unwrap() == data[first.len()..]);
+    check_random_access("chunk headers", &packed, &data, 12);
+}
+
+/// Damage to a file with one empty Block: reading from the start verifies
+/// the empty Block, so it fails exactly when the streaming decoder does,
+/// with its error or, for a Block longer than the Index says, a data error
+/// (see [`KIND_EXCEPTIONS`]).
+#[test]
+fn damaged_empty_block() {
+    let file = fs::read(files_dir().join("good-1-empty-bcj-lzma2.xz")).unwrap();
+    for i in 0..file.len() {
+        for bit in [0x01, 0x80] {
+            let mut bad = file.clone();
+            bad[i] ^= bit;
+            let what = format!("byte {i} ^ {bit:#x}");
+            match both(&bad) {
+                (Ok(a), Ok(b)) => assert_eq!(a, b, "{what}"),
+                (Err(a), Err(b)) => assert!(b == a || b == Error::Data, "{what}: {a:?} vs {b:?}"),
+                (a, b) => panic!("{what}: streaming {a:?}, seekable {b:?}"),
+            }
+        }
+    }
+}
+
+/// A Block Header whose Compressed or Uncompressed Size disagrees with the
+/// Index (with a valid header CRC32) fails when the Block is opened, before
+/// any of its data is returned.
+#[test]
+fn block_header_sizes_must_match_the_index() {
+    let data = text(40_000, 13);
+    let Some(c) = xz(&["-c", "-T2", "--block-size=10000"], &data) else {
+        return;
+    };
+    let off = find_block(&c, 1);
+    let size = (c[off] as usize + 1) * 4;
+    assert_eq!(c[off + 1] & 0xC0, 0xC0, "both sizes in the header");
+    // The Compressed Size VLI, then the Uncompressed Size VLI.
+    let mut uncompressed = off + 2;
+    while c[uncompressed] & 0x80 != 0 {
+        uncompressed += 1;
+    }
+    uncompressed += 1;
+    for field in [off + 2, uncompressed] {
+        let mut bad = c.clone();
+        bad[field] ^= 1;
+        let crc = xz_native::crc32(&bad[off..off + size - 4], 0);
+        bad[off + size - 4..off + size].copy_from_slice(&crc.to_le_bytes());
+        let mut r = open(&bad).unwrap();
+        r.seek(SeekFrom::Start(10_000)).unwrap();
+        let e = r.read(&mut [0; 1]).map_err(xz_error);
+        assert_eq!(e.err(), Some(Error::Data), "field at {field}");
+    }
+}
+
+/// The memory limit bounds the Index records the reader keeps: the smallest
+/// limit that opens a file is the same amount per Block for any number of
+/// Blocks (each record costs the same; a limit of exactly that many records
+/// is enough).
+#[test]
+fn memlimit_counts_index_records_exactly() {
+    let threshold = |blocks: usize| {
+        let c = xz(
+            &["-c", "-T1", "--block-size=1000"],
+            &text(blocks * 1000, 21),
+        )?;
+        let opens = |m: u64| {
+            XzSeekableReader::with_options(Cursor::new(&c), DecoderOptions::default().memlimit(m))
+                .is_ok()
+        };
+        let (mut lo, mut hi) = (0u64, 1 << 20);
+        assert!(opens(hi) && !opens(lo));
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2;
+            if opens(mid) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        Some(hi)
+    };
+    let (Some(t3), Some(t7)) = (threshold(3), threshold(7)) else {
+        return;
+    };
+    assert_eq!(t3 % 3, 0, "{t3}");
+    assert_eq!(t3 / 3, t7 / 7, "{t3} for 3 Blocks, {t7} for 7");
+}
