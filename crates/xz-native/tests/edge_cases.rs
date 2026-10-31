@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::xz;
+use common::{Rng, xz};
 use std::path::PathBuf;
 use xz_native::{
     DecoderOptions, Error, LzipDecoder, LzmaDecoder, Result, Status, XzDecoder, decompress,
@@ -244,6 +244,16 @@ fn bcj_streaming_buffers() {
             let mut d = XzDecoder::new();
             let out = stream(packed, ins, outs, false, |i, o, f| d.decode(i, o, f)).unwrap();
             assert!(out == expected, "{ins:?} {outs:?}");
+        }
+        // Random sizes per call, so the filter's 32-byte buffer is left at
+        // every fill level.
+        let mut r = Rng(7);
+        for _ in 0..4 {
+            let ins: Vec<usize> = (0..97).map(|_| 1 + r.below(50) as usize).collect();
+            let outs: Vec<usize> = (0..89).map(|_| 1 + r.below(40) as usize).collect();
+            let mut d = XzDecoder::new();
+            let out = stream(packed, &ins, &outs, false, |i, o, f| d.decode(i, o, f)).unwrap();
+            assert!(out == expected, "random sizes");
         }
     }
 }
@@ -622,5 +632,17 @@ fn huge_lzma_dictionary_is_an_error_on_32_bit() {
             Some(xz_native::Error::MemLimit),
             "dict {dict:#x}"
         );
+    }
+}
+
+/// The .lz dictionary size byte: 2^n minus 0/16 to 7/16 of it.
+#[test]
+fn lzip_dictionary_size_fractions() {
+    for (b2log, frac) in [(20u32, 0u32), (20, 1), (20, 7), (29, 3), (13, 5)] {
+        let dict = (1 << b2log) - (frac << (b2log - 4));
+        let header = [b'L', b'Z', b'I', b'P', 1, (frac << 5 | b2log) as u8];
+        let mut dec = LzipDecoder::new();
+        dec.decode(&header, &mut [0; 16], false).unwrap();
+        assert_eq!(dec.memusage(), dict_mem(dict), "2^{b2log} - {frac}/16");
     }
 }

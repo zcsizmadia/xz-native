@@ -1,0 +1,16 @@
+# cargo-mutants (#22): the validation code of the decoders and containers,
+# tested by the xz-native tests alone.
+examine_globs = [
+    "crates/xz-native/src/xz/**/*.rs",
+    "crates/xz-native/src/filter/**/*.rs",
+    "crates/xz-native/src/alone.rs",
+    "crates/xz-native/src/lzip.rs",
+    "crates/xz-native/src/seek.rs",
+    "crates/xz-native/src/lzma/lzma2.rs",
+]
+exclude_globs = [
+    "crates/xz-native/src/xz/encoder.rs",
+    "crates/xz-native/src/xz/mt_encoder.rs",
+]
+test_package = ["xz-native"]
+profile = "ci"
