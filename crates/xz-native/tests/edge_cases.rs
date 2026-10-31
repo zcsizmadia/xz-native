@@ -666,3 +666,56 @@ fn lzip_steps_are_not_truncation() {
     assert_eq!(s, Status::StreamEnd);
     assert!(buf[..w + w2] == expected);
 }
+
+/// The one-shot decoder (`decompress`, which decodes each Block straight
+/// into the output) and the streaming decoder must agree on damaged files:
+/// the same data, or the same error (`Data` for corruption before a cut,
+/// `Truncated` for a clean cut, as liblzma decides). Multi-Block files with
+/// and without sizes in their Block Headers, cut and corrupted all over.
+#[test]
+fn one_shot_and_streaming_agree_on_damage() {
+    let data = code_like(60_000);
+    let mut files = Vec::new();
+    for args in [
+        &["-zc", "-T2", "--block-size=20000", "--lzma2=preset=1"][..],
+        &[
+            "-zc",
+            "-T1",
+            "--block-size=20000",
+            "--x86",
+            "--lzma2=preset=1",
+        ][..],
+    ] {
+        if let Some(f) = xz(args, &data) {
+            files.push(f);
+        }
+    }
+    for f in files {
+        let opts = DecoderOptions::default();
+        let mut cases: Vec<Vec<u8>> = Vec::new();
+        for cut in (1..f.len()).step_by(61) {
+            cases.push(f[..cut].to_vec());
+        }
+        for i in (12..f.len()).step_by(97) {
+            for bit in [0x01, 0x40] {
+                let mut m = f.clone();
+                m[i] ^= bit;
+                cases.push(m.clone());
+                // Corrupt and cut short after the damage.
+                m.truncate((i + 50).min(m.len()));
+                cases.push(m);
+            }
+        }
+        for c in &cases {
+            let one_shot = decompress_with_options(c, opts);
+            let streaming = decompress_streaming(c, opts);
+            assert!(
+                one_shot == streaming,
+                "{} bytes: one-shot {:?}, streaming {:?}",
+                c.len(),
+                one_shot.as_ref().map(|v| v.len()),
+                streaming.as_ref().map(|v| v.len())
+            );
+        }
+    }
+}
