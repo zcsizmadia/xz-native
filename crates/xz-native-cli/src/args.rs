@@ -11,6 +11,7 @@ pub enum Mode {
     Compress,
     Decompress,
     Test,
+    List,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +44,7 @@ pub enum Limit {
 pub const V_SILENT: i32 = 0;
 pub const V_ERROR: i32 = 1;
 pub const V_WARNING: i32 = 2;
+pub const V_VERBOSE: i32 = 3;
 pub const V_DEBUG: i32 = 4;
 
 #[derive(Debug, Clone)]
@@ -67,6 +69,8 @@ pub struct Opts {
     pub verbosity: i32,
     /// `--no-warn`: warnings don't change the exit status.
     pub no_warn: bool,
+    /// `--robot`: machine-readable `--list` output.
+    pub robot: bool,
     pub files: Vec<OsString>,
 }
 
@@ -92,6 +96,7 @@ impl Default for Opts {
             suffix: None,
             verbosity: V_WARNING,
             no_warn: false,
+            robot: false,
             files: Vec::new(),
         }
     }
@@ -146,6 +151,7 @@ const LONG: &[(&str, HasArg, &str)] = &[
     ("quiet", HasArg::No, "q"),
     ("verbose", HasArg::No, "v"),
     ("no-warn", HasArg::No, "Q"),
+    ("robot", HasArg::No, "robot"),
     ("help", HasArg::No, "h"),
     ("long-help", HasArg::No, "H"),
     ("version", HasArg::No, "V"),
@@ -274,7 +280,8 @@ fn apply(key: &str, value: Option<&str>, o: &mut Opts, action: &mut Action) -> R
         "z" => o.mode = Mode::Compress,
         "d" => o.mode = Mode::Decompress,
         "t" => o.mode = Mode::Test,
-        "l" => return Err("--list is not supported yet".into()),
+        "l" => o.mode = Mode::List,
+        "robot" => o.robot = true,
         "k" => o.keep = true,
         "f" => o.force = true,
         "c" => o.stdout = true,

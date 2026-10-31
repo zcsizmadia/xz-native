@@ -23,6 +23,8 @@ minor version may change the API.
   one thread, like `xz -T+1` and liblzma's `lzma_stream_encoder_mt()` with
   one thread (`threads == 1` alone still selects the single-threaded
   encoder). `xz-native` uses it instead of running two threads (#123).
+- `xz-native --list` (`-l`, `-v`, `-vv`, `--robot`): the same output as
+  `xz --list`, from `XzSeekableReader`'s Stream and Block tables (#123).
 
 ## [0.3.0+xz.5.8.4]
 
