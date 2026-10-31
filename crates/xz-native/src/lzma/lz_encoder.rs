@@ -310,7 +310,10 @@ impl Mf {
         self.buf[..n].copy_from_slice(&dict[dict.len() - n..]);
         self.write_pos = n as u32;
         self.action = MfAction::SyncFlush;
-        self.skip_raw(n as u32);
+        // Through `skip`, the encoders' only way in: a second caller of
+        // `skip_raw` changes how it is compiled (1% more instructions).
+        self.skip(n as u32);
+        self.read_ahead = 0;
         self.action = MfAction::Run;
     }
 
