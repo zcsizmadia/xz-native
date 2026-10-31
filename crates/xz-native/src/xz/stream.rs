@@ -63,9 +63,9 @@ pub struct DecoderOptions {
 
 /// [`DecoderOptions::memlimit_threading`] by default.
 pub(crate) const DEFAULT_MEMLIMIT_THREADING: u64 = if usize::BITS >= 64 {
-    2 << 30
+    2_147_483_648 // 2 GiB
 } else {
-    512 << 20
+    536_870_912 // 512 MiB
 };
 
 impl DecoderOptions {
