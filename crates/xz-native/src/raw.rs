@@ -24,6 +24,41 @@ pub enum RawMethod {
     /// LZMA2 (`LZMA_FILTER_LZMA2`), as in .xz Blocks.
     #[default]
     Lzma2,
+    /// LZMA1 with a known size (`LZMA_FILTER_LZMA1EXT`), as in .7z and
+    /// .zip: the end of payload marker is optional, and the application
+    /// stores the uncompressed size outside the stream.
+    ///
+    /// - Encoder: `end_marker` writes the marker (like [`RawMethod::Lzma1`]);
+    ///   without it, the stream just ends. `uncompressed_size` is ignored.
+    /// - Decoder: with `uncompressed_size` unknown (`None`), the marker must
+    ///   be present, as for [`RawMethod::Lzma1`]. With a size, decoding
+    ///   stops after that many bytes, and the marker is allowed exactly
+    ///   there if `end_marker` is set; without `end_marker`, a marker is
+    ///   [`Error::Data`] (`LZMA_LZMA1EXT_ALLOW_EOPM` in liblzma).
+    ///
+    /// ```
+    /// use xz_native::{Action, RawDecoder, RawEncoder, RawMethod, RawOptions};
+    ///
+    /// let data = b"stored size, no end marker".repeat(20);
+    /// let method = RawMethod::Lzma1Ext { uncompressed_size: None, end_marker: false };
+    /// let packed = xz_native::compress_raw(&data, &RawOptions::preset(method, 6)?)?;
+    ///
+    /// let method = RawMethod::Lzma1Ext {
+    ///     uncompressed_size: Some(data.len() as u64),
+    ///     end_marker: false,
+    /// };
+    /// let plain = xz_native::decompress_raw(&packed, &RawOptions::preset(method, 6)?)?;
+    /// assert_eq!(plain, data);
+    /// # Ok::<(), xz_native::Error>(())
+    /// ```
+    Lzma1Ext {
+        /// The size of the decoded data, or `None` if unknown (then the end
+        /// marker is required). Only the decoder uses it.
+        uncompressed_size: Option<u64>,
+        /// Encoder: write the end marker. Decoder: allow one after
+        /// `uncompressed_size` bytes.
+        end_marker: bool,
+    },
 }
 
 /// Options for raw streams: what `xz --format=raw` takes on its command
@@ -68,7 +103,9 @@ impl RawOptions {
     /// (`lzma_raw_decoder_memusage()`).
     pub fn decoder_memusage(&self) -> u64 {
         let lz = match self.method {
-            RawMethod::Lzma1 => crate::lzma::lzma1_decoder_memusage(self.lzma.dict_size),
+            RawMethod::Lzma1 | RawMethod::Lzma1Ext { .. } => {
+                crate::lzma::lzma1_decoder_memusage(self.lzma.dict_size)
+            }
             RawMethod::Lzma2 => crate::lzma::lzma2_decoder_memusage(self.lzma.dict_size),
         };
         lz + self
@@ -135,9 +172,17 @@ impl RawDecoder {
         validate_filters(&opts.filters)?;
         let dict_size = opts.lzma.dict_size;
         let inner = match opts.method {
-            RawMethod::Lzma1 => {
+            RawMethod::Lzma1 | RawMethod::Lzma1Ext { .. } => {
                 let mut dec = LzmaDecoder::new(opts.props()?);
-                dec.set_uncompressed(None, true);
+                // An unknown size needs the end marker (`lzma_decoder_init()`).
+                let (size, end_marker) = match opts.method {
+                    RawMethod::Lzma1Ext {
+                        uncompressed_size,
+                        end_marker,
+                    } => (uncompressed_size, end_marker || uncompressed_size.is_none()),
+                    _ => (None, true),
+                };
+                dec.set_uncompressed(size, end_marker);
                 let mut chain = ChainDecoder::with_codec(&opts.filters, dec, dict_size)?;
                 chain.preset_dict(dict, dict_size);
                 DecoderKind::Lzma1(chain)
@@ -242,8 +287,14 @@ impl RawEncoder {
         opts.lzma.validate()?;
         validate_filters(&opts.filters)?;
         let inner = match opts.method {
-            RawMethod::Lzma1 => {
+            RawMethod::Lzma1 | RawMethod::Lzma1Ext { .. } => {
                 let mut lz = Lzma1Encoder::new_lz(&opts.lzma, &opts.filters)?;
+                if let RawMethod::Lzma1Ext {
+                    end_marker: false, ..
+                } = opts.method
+                {
+                    lz.without_end_marker();
+                }
                 lz.preset_dict(dict);
                 EncoderKind::Lzma1(lz)
             }
