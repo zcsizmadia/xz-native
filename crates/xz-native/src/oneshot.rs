@@ -85,6 +85,23 @@ pub fn decompress_lzip_with_options(input: &[u8], opts: DecoderOptions) -> Resul
     decode_all(input, true, |i, o, f| d.decode(i, o, f))
 }
 
+/// Decompresses .xz, .lzma or .lz data, detected from the first byte like
+/// [`AutoDecoder`](crate::AutoDecoder) (liblzma's `lzma_auto_decoder`).
+pub fn decompress_auto(input: &[u8]) -> Result<Vec<u8>> {
+    decompress_auto_with_options(input, DecoderOptions::default())
+}
+
+/// [`decompress_auto`] with options; they apply to the detected format as
+/// to its own decoder. .xz takes the [`decompress_with_options`] path,
+/// with threads if set.
+pub fn decompress_auto_with_options(input: &[u8], opts: DecoderOptions) -> Result<Vec<u8>> {
+    if input.first() == Some(&0xFD) {
+        return decompress_with_options(input, opts);
+    }
+    let mut d = crate::auto::AutoDecoder::with_options(opts);
+    decode_all(input, !opts.concatenated, |i, o, f| d.decode(i, o, f))
+}
+
 /// Like [`decompress`], but appends to `out` and reuses its capacity.
 ///
 /// Decoding many files into one reused buffer avoids paying for fresh memory

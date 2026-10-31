@@ -6,6 +6,21 @@ use crate::lzma::{LzDriver, LzmaProps, Progress};
 use crate::xz::encoder::Action;
 use crate::xz::stream::{DecoderOptions, Status};
 
+/// Whether a .lzma dictionary size is likely one: 2^n or 2^n + 2^(n-1), or
+/// unknown. With the size limit of 256 GiB, this keeps much non-.lzma data
+/// from passing as .lzma (`picky` in `alone_decoder.c`).
+fn plausible_dict_size(dict_size: u32) -> bool {
+    dict_size == u32::MAX || {
+        let mut d = dict_size.wrapping_sub(1);
+        d |= d >> 2;
+        d |= d >> 3;
+        d |= d >> 4;
+        d |= d >> 8;
+        d |= d >> 16;
+        d.wrapping_add(1) == dict_size
+    }
+}
+
 /// Streaming .lzma decoder.
 #[derive(Debug)]
 pub struct LzmaDecoder {
@@ -14,6 +29,9 @@ pub struct LzmaDecoder {
     memlimit: u64,
     memusage: u64,
     lz: Option<LzDriver<Lzma1Decoder>>,
+    /// Rejects headers that are unlikely to be .lzma, as liblzma's
+    /// `lzma_auto_decoder` does (`picky` in `alone_decoder.c`).
+    picky: bool,
     done: bool,
     /// The error that ended decoding; later calls return it.
     error: Option<Error>,
@@ -40,9 +58,18 @@ impl LzmaDecoder {
             memlimit: opts.memlimit,
             memusage: 0,
             lz: None,
+            picky: false,
             done: false,
             error: None,
         }
+    }
+
+    /// Rejects unlikely headers with [`Error::Format`] (see
+    /// [`plausible_dict_size`] and a size under 256 GiB), for format
+    /// detection.
+    pub(crate) fn picky(mut self) -> Self {
+        self.picky = true;
+        self
     }
 
     /// Memory the decoder needs once the header has been read: the figure
@@ -97,6 +124,17 @@ impl LzmaDecoder {
             self.header[self.header_pos..self.header_pos + n].copy_from_slice(&input[..n]);
             self.header_pos += n;
             *ip = n;
+            // Each field is checked as soon as it is complete, as in
+            // liblzma, so a short input that isn't .lzma is a format error.
+            if self.header_pos >= 1 && LzmaProps::from_byte(self.header[0]).is_none() {
+                return Err(Error::Format);
+            }
+            if self.picky && self.header_pos >= 5 {
+                let dict_size = u32::from_le_bytes(self.header[1..5].try_into().unwrap());
+                if !plausible_dict_size(dict_size) {
+                    return Err(Error::Format);
+                }
+            }
             if self.header_pos < 13 {
                 return if finish {
                     Err(Error::Truncated)
@@ -107,6 +145,9 @@ impl LzmaDecoder {
             let props = LzmaProps::from_byte(self.header[0]).ok_or(Error::Format)?;
             let dict_size = u32::from_le_bytes(self.header[1..5].try_into().unwrap());
             let size = u64::from_le_bytes(self.header[5..13].try_into().unwrap());
+            if self.picky && size != u64::MAX && size >= 1 << 38 {
+                return Err(Error::Format);
+            }
             self.memusage = crate::lzma::lzma1_decoder_memusage(dict_size);
             if self.memusage > self.memlimit {
                 // The retry consumes nothing: the header is kept.

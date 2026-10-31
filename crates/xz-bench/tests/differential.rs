@@ -321,3 +321,120 @@ fn memusage_matches_liblzma() {
         );
     }
 }
+
+/// liblzma's `lzma_auto_decoder` with `LZMA_CONCATENATED`.
+fn reference_auto(input: &[u8]) -> Option<Vec<u8>> {
+    let s = Stream::new_auto_decoder(MEMLIMIT, CONCATENATED).unwrap();
+    let mut out = Vec::new();
+    liblzma::bufread::XzDecoder::new_stream(input, s)
+        .read_to_end(&mut out)
+        .ok()
+        .map(|_| out)
+}
+
+/// `decompress_auto` and `AutoReader` (through a small buffer) must agree;
+/// returns their result.
+fn ours_auto(input: &[u8]) -> Option<Vec<u8>> {
+    let opts = xz_native::DecoderOptions::default().memlimit(MEMLIMIT);
+    let one_shot = xz_native::decompress_auto_with_options(input, opts).ok();
+    let mut r =
+        xz_native::AutoReader::with_options(std::io::BufReader::with_capacity(97, input), opts);
+    let mut out = Vec::new();
+    let streamed = r.read_to_end(&mut out).ok().map(|_| out);
+    assert!(
+        one_shot == streamed,
+        "decompress_auto and AutoReader disagree"
+    );
+    one_shot
+}
+
+#[test]
+fn auto_decoder_agrees_with_liblzma() {
+    let lzip = reference_auto_has_lzip();
+    let mut r = Rng(7);
+    let mut cases = 0;
+    for (packed, format) in samples() {
+        if format == Format::Lzip && !lzip {
+            continue;
+        }
+        assert_eq!(ours_auto(&packed), reference_auto(&packed));
+        let iterations = if cfg!(debug_assertions) { 100 } else { 1000 };
+        for _ in 0..iterations {
+            let mut m = packed.clone();
+            match r.below(5) {
+                0 => {
+                    let i = r.below(m.len().min(32));
+                    m[i] = r.next() as u8;
+                }
+                1 => m.truncate(r.below(m.len())),
+                2 => m.extend((0..1 + r.below(8)).map(|_| r.next() as u8)),
+                3 => m.extend_from_slice(&[0; 4]),
+                _ => {
+                    // Another file after it, of any format.
+                    let (other, _) = &samples()[r.below(samples().len())];
+                    m.extend_from_slice(&other[..other.len().min(200)]);
+                }
+            }
+            let a = ours_auto(&m);
+            let b = reference_auto(&m);
+            assert!(
+                a == b,
+                "auto mismatch: ours ok={} liblzma ok={}",
+                a.is_some(),
+                b.is_some()
+            );
+            cases += 1;
+        }
+    }
+    eprintln!("{cases} mutated inputs through both auto decoders");
+}
+
+/// Every xz test file (.xz, .lzma, .lz), and short garbage.
+#[test]
+fn auto_decoder_test_files() {
+    let lzip = reference_auto_has_lzip();
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../third_party/xz/tests/files");
+    let mut n = 0;
+    for e in std::fs::read_dir(dir).unwrap() {
+        let path = e.unwrap().path();
+        let Some(ext) = path.extension().and_then(|x| x.to_str()) else {
+            continue;
+        };
+        if !matches!(ext, "xz" | "lzma" | "lz") {
+            continue;
+        }
+        let data = std::fs::read(&path).unwrap();
+        if data.first() == Some(&b'L') && !lzip {
+            continue;
+        }
+        assert!(
+            ours_auto(&data) == reference_auto(&data),
+            "{}",
+            path.display()
+        );
+        n += 1;
+    }
+    assert!(n > 90, "{n} files");
+    for garbage in [
+        &b"hello, world"[..],
+        b"L",
+        b"LZIP",
+        b"\xFD7zX",
+        b"\x5d\0\0\x80\0",
+        &[0; 13],
+    ] {
+        assert!(ours_auto(garbage) == reference_auto(garbage), "{garbage:?}");
+    }
+}
+
+/// Whether the C build's auto decoder detects .lz (`HAVE_LZIP_DECODER`,
+/// which `.cargo/config.toml` sets and plain `liblzma-sys` leaves out).
+fn reference_auto_has_lzip() -> bool {
+    let lz = lzip_member(b"probe", 0, 1, 0x0C);
+    let ok = reference_auto(&lz).is_some();
+    if !ok {
+        eprintln!("C liblzma without HAVE_LZIP_DECODER: skipping .lz in the auto decoder tests");
+    }
+    ok
+}

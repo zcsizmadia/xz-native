@@ -1,6 +1,7 @@
 //! `std::io` adapters.
 
 use crate::alone::{LzmaDecoder, LzmaEncoder};
+use crate::auto::{AutoDecoder, Format};
 use crate::lzip::LzipDecoder;
 use crate::options::{EncoderOptions, LzmaOptions};
 use crate::push::{PushDecoder, PushEncoder};
@@ -239,6 +240,66 @@ impl<R: BufRead> LzipReader<R> {
 }
 
 impl<R: BufRead> Read for LzipReader<R> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        read_with(&mut self.dec, &mut self.inner, &mut self.done, out)
+    }
+}
+
+/// Decompressing reader for .xz, .lzma or .lz data, detected from the
+/// first byte; see [`AutoDecoder`] for the detection and how the options
+/// and data after the end are handled.
+///
+/// [`DecoderOptions::threads`] applies to .xz (see [`XzDecoder`]).
+#[derive(Debug)]
+pub struct AutoReader<R> {
+    inner: R,
+    dec: AutoDecoder,
+    done: bool,
+}
+
+impl<R: BufRead> AutoReader<R> {
+    /// Creates a reader with default options.
+    pub fn new(inner: R) -> Self {
+        Self::with_options(inner, DecoderOptions::default())
+    }
+
+    /// Creates a reader with options.
+    pub fn with_options(inner: R, opts: DecoderOptions) -> Self {
+        Self {
+            inner,
+            dec: AutoDecoder::with_options(opts),
+            done: false,
+        }
+    }
+
+    /// The detected format, once the first byte has been read.
+    pub fn format(&self) -> Option<Format> {
+        self.dec.format()
+    }
+
+    /// Memory the decoder needs (see [`AutoDecoder::memusage`]).
+    pub fn memusage(&self) -> u64 {
+        self.dec.memusage()
+    }
+
+    /// Returns a reference to the inner reader.
+    pub fn get_ref(&self) -> &R {
+        &self.inner
+    }
+
+    /// Returns a mutable reference to the inner reader. Reading from it
+    /// directly skips compressed data and corrupts the output.
+    pub fn get_mut(&mut self) -> &mut R {
+        &mut self.inner
+    }
+
+    /// Returns the inner reader.
+    pub fn into_inner(self) -> R {
+        self.inner
+    }
+}
+
+impl<R: BufRead> Read for AutoReader<R> {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         read_with(&mut self.dec, &mut self.inner, &mut self.done, out)
     }
