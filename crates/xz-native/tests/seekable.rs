@@ -716,3 +716,50 @@ fn oversized_block_header_is_data_error() {
     r.seek(SeekFrom::Start(299_950)).unwrap();
     assert_eq!(read_all(&mut r).err(), Some(Error::Data));
 }
+
+/// Truncation and damage to the Stream Headers, Indexes, Stream Footers and
+/// Stream Padding of a two-Stream file: the seekable reader fails exactly
+/// when the streaming decoder does, with the same error (truncation is a
+/// data error for it, see [`KIND_EXCEPTIONS`]; under 12 bytes, a format
+/// error, as in liblzma's `file_info.c`).
+#[test]
+fn damage_matches_streaming_errors() {
+    let part = text(30_000, 6);
+    let Some(one) = xz(&["-c", "--block-size=7000"], &part) else {
+        return;
+    };
+    let mut file = one.clone();
+    file.extend_from_slice(&[0; 4]);
+    file.extend_from_slice(&one);
+    file.extend_from_slice(&[0; 8]);
+    let second = one.len() + 4;
+    let index = find_index(&one);
+    // Stream Headers, Index + Footer + Padding of both Streams.
+    let mut structural: Vec<usize> = (0..12).chain(second..second + 12).collect();
+    structural.extend(index..second);
+    structural.extend(second + index..file.len());
+
+    let mut cases: Vec<(String, Vec<u8>)> = Vec::new();
+    for &i in &structural {
+        cases.push((format!("cut at {i}"), file[..i].to_vec()));
+        for bit in [0x01, 0x80] {
+            let mut bad = file.clone();
+            bad[i] ^= bit;
+            cases.push((format!("byte {i} ^ {bit:#x}"), bad));
+        }
+    }
+    for (name, bad) in &cases {
+        let (streaming, seekable) = both(bad);
+        let expected = match streaming {
+            Err(_) if bad.len() < 12 => Err(Error::Format),
+            Err(Error::Truncated) => Err(Error::Data),
+            r => r,
+        };
+        assert!(
+            seekable == expected,
+            "{name}: {:?} vs {:?}",
+            seekable.map(|v| v.len()),
+            expected.map(|v| v.len())
+        );
+    }
+}
