@@ -37,6 +37,10 @@ minor version may change the API.
 - `RawMethod::Lzma1Ext`: LZMA1 with a known size and an optional end
   marker, like liblzma's `LZMA_FILTER_LZMA1EXT` (.7z and .zip payloads),
   byte-identical with it (#102).
+- `DecoderOptions::memlimit_threading`, like liblzma's `memlimit_threading`:
+  the memory decoding with threads may use (default 2 GiB, 512 MiB on
+  32-bit); above it, fewer threads, down to one, never an error.
+  `memlimit` stays the limit that fails (#104).
 
 ### Changed
 - `LzmaDecoder` checks the .lzma properties byte as soon as it arrives,

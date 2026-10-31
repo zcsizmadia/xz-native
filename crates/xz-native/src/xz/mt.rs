@@ -20,7 +20,7 @@
 //! thread waits in the queue behind the Blocks before it.
 //!
 //! Memory: at most `2 * threads` Blocks are in flight (read but not yet
-//! returned), holding at most `min(memlimit, DEFAULT_BUDGET)` bytes of
+//! returned), holding at most `min(memlimit, memlimit_threading)` bytes of
 //! compressed input plus decoded output, like liblzma's `memlimit_threading`.
 //!
 //! [`XzDecoder`]: super::stream::XzDecoder
@@ -42,12 +42,6 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-/// Memory for Blocks in flight when `memlimit` is higher.
-const DEFAULT_BUDGET: u64 = if usize::BITS >= 64 {
-    2 << 30
-} else {
-    512 << 20
-};
 /// Input and output per decoder call when a failed Block is decoded again.
 const REPLAY_STEP: usize = 64 << 10;
 
@@ -458,7 +452,7 @@ impl MtDecoder {
             opts,
             threads,
             max_blocks: threads.saturating_mul(2),
-            budget: opts.memlimit.min(DEFAULT_BUDGET),
+            budget: opts.memlimit.min(opts.memlimit_threading),
             pool: None,
             queue: VecDeque::new(),
             in_flight: 0,
@@ -493,7 +487,7 @@ impl MtDecoder {
     /// flight; it applies from the next Block Header.
     pub(crate) fn set_memlimit(&mut self, memlimit: u64) {
         self.opts.memlimit = memlimit;
-        self.budget = memlimit.min(DEFAULT_BUDGET);
+        self.budget = memlimit.min(self.opts.memlimit_threading);
     }
 
     /// Check type of the Stream being parsed.

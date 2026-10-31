@@ -51,7 +51,22 @@ pub struct DecoderOptions {
     /// than 16384 (`LZMA_THREADS_MAX`) is [`Error::Options`]. Without the
     /// `std` feature, it is ignored.
     pub threads: usize,
+    /// Memory that decoding with threads may use for Blocks in flight
+    /// (liblzma's `memlimit_threading`; default 2 GiB, 512 MiB on 32-bit
+    /// targets). Above it, the decoder uses fewer threads, down to decoding
+    /// on one thread, and never fails because of it: [`memlimit`] is the
+    /// limit that fails (`memlimit_stop`). The smaller of the two applies.
+    ///
+    /// [`memlimit`]: DecoderOptions::memlimit
+    pub memlimit_threading: u64,
 }
+
+/// [`DecoderOptions::memlimit_threading`] by default.
+pub(crate) const DEFAULT_MEMLIMIT_THREADING: u64 = if usize::BITS >= 64 {
+    2_147_483_648 // 2 GiB
+} else {
+    536_870_912 // 512 MiB
+};
 
 impl DecoderOptions {
     /// The defaults: no memory limit, concatenated streams, checks
@@ -63,6 +78,7 @@ impl DecoderOptions {
             ignore_check: false,
             fail_on_unsupported_check: false,
             threads: 1,
+            memlimit_threading: DEFAULT_MEMLIMIT_THREADING,
         }
     }
 }
@@ -79,6 +95,7 @@ crate::options::setters!(DecoderOptions {
     ignore_check: bool,
     fail_on_unsupported_check: bool,
     threads: usize,
+    memlimit_threading: u64,
 });
 
 /// Running summary of Block or Index records, compared at the Index.
@@ -472,8 +489,7 @@ enum Seq {
 /// Blocks that are done, and when none is and there is output space, it
 /// waits for one (it does not wait for more input). The input consumed runs
 /// ahead of the output by up to `2 * threads` Blocks, within
-/// `min(memlimit, 2 GiB)` bytes of Blocks in flight (512 MiB on 32-bit
-/// targets).
+/// `min(memlimit, memlimit_threading)` bytes of Blocks in flight.
 #[derive(Debug)]
 pub struct XzDecoder {
     opts: DecoderOptions,

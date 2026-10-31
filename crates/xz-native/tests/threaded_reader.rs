@@ -617,3 +617,43 @@ fn bad_magic_in_a_later_stream() {
         assert_eq!(err, Some(Error::Data), "threads {t}");
     }
 }
+
+/// `memlimit_threading` bounds the Blocks in flight: at 0, every Block is
+/// decoded on the reading thread (no read-ahead); the output is the same
+/// either way, and the one-shot decoder falls back to one thread.
+#[test]
+fn memlimit_threading_limits_read_ahead() {
+    let data = text(2_000_000, 14);
+    let Some(c) = multi_block(&data, &["--block-size=100000"]) else {
+        return;
+    };
+    let bl = blocks(&c, 0);
+    for (limit, expected) in [(0, 0), (u64::MAX, 4)] {
+        let opts = threads(2).memlimit_threading(limit);
+        let mut dec = XzDecoder::with_options(opts);
+        let mut buf = [0u8; 1000];
+        let (used, n, _) = dec.decode(&c, &mut buf, true).unwrap();
+        assert!(n > 0 && buf[..n] == data[..n]);
+        let ahead = bl.iter().filter(|b| b.0 + b.2 <= used).count();
+        assert_eq!(ahead, expected, "memlimit_threading {limit}");
+        let (out, err) = read_xz(&c, opts, 8192, 3);
+        assert_eq!(err, None);
+        assert!(out == data, "memlimit_threading {limit}");
+        assert!(xz_native::decompress_with_options(&c, opts.threads(4)).unwrap() == data);
+    }
+    // The stop limit still fails.
+    let opts = threads(2).memlimit(1 << 10).memlimit_threading(u64::MAX);
+    assert_eq!(read_xz(&c, opts, 8192, 3).1, Some(Error::MemLimit));
+}
+
+/// The default `memlimit_threading`: 2 GiB, 512 MiB on 32-bit targets.
+#[test]
+fn memlimit_threading_default() {
+    let expected: u64 = if usize::BITS >= 64 {
+        2 << 30
+    } else {
+        512 << 20
+    };
+    assert_eq!(DecoderOptions::default().memlimit_threading, expected);
+    assert_eq!(DecoderOptions::new().memlimit_threading, expected);
+}
