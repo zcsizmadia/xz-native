@@ -15,6 +15,11 @@ minor version may change the API.
   `DecoderOptions` (memory limit, threads for .xz, concatenation), and
   report the `Format`. The `compat` readers' `new_multi_decoder` uses it
   (#100).
+- Filter properties as .7z and .zip store them: `Filter::id`,
+  `Filter::properties` and `Filter::from_properties`, and the 5-byte LZMA1
+  properties `LzmaOptions::lzma1_properties` and
+  `LzmaOptions::from_lzma1_properties`, equal to liblzma's
+  `lzma_properties_encode` and `lzma_properties_decode` (#101).
 - Preset dictionaries for raw LZMA1/LZMA2 streams:
   `RawEncoder::with_preset_dict` and `RawDecoder::with_preset_dict`
   (liblzma's `preset_dict`). Small inputs similar to the dictionary
