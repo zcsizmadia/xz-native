@@ -283,7 +283,9 @@ fn decompress_append(input: &[u8], opts: &DecoderOptions, out: &mut Vec<u8>) -> 
         first = false;
 
         if !opts.concatenated {
-            break;
+            // Like `xz --single-stream` and lzma_stream_buffer_decode, the
+            // rest of the input is ignored.
+            return Ok(());
         }
         let pad = input[pos..].iter().take_while(|&&b| b == 0).count();
         pos += pad;

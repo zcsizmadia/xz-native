@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 pub(crate) const FILTER_DELTA: u64 = 0x03;
 pub(crate) const FILTER_LZMA2: u64 = 0x21;
 /// Filter IDs at or above this are reserved.
-const FILTER_RESERVED_START: u64 = 1 << 62;
+pub(crate) const FILTER_RESERVED_START: u64 = 1 << 62;
 
 /// A filter in an .xz filter chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

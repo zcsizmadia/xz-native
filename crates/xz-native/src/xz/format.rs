@@ -2,7 +2,7 @@
 
 use crate::check::{Check, crc32};
 use crate::error::{Error, Result};
-use crate::filter::{Filter, validate_chain};
+use crate::filter::{FILTER_RESERVED_START, Filter, validate_chain};
 use alloc::vec::Vec;
 
 pub(crate) const HEADER_MAGIC: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
@@ -145,6 +145,11 @@ pub(crate) fn decode_block_header(buf: &[u8], check: Check) -> Result<BlockHeade
     let mut filters = Vec::with_capacity(count);
     for _ in 0..count {
         let id = read_vli(body, &mut pos)?;
+        // Like liblzma's lzma_filter_flags_decode: a reserved ID is corrupt
+        // data, not an unsupported filter.
+        if id >= FILTER_RESERVED_START {
+            return Err(Error::Data);
+        }
         let props_size = read_vli(body, &mut pos)?;
         if props_size > (body.len() - pos) as u64 {
             return Err(Error::Data);

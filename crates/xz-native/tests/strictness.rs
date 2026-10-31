@@ -254,3 +254,81 @@ fn match_beyond_declared_dictionary_is_data_error() {
             .is_err()
     );
 }
+
+/// Runs `input` through the one-shot, streaming and reader paths.
+fn all_paths(input: &[u8], opts: DecoderOptions) -> [Result<Vec<u8>, xz_native::Error>; 3] {
+    let mut out = Vec::new();
+    let reader = XzReader::with_options(input, opts)
+        .read_to_end(&mut out)
+        .map(|_| out)
+        .map_err(|e| {
+            *e.get_ref()
+                .and_then(|e| e.downcast_ref::<xz_native::Error>())
+                .unwrap()
+        });
+    [
+        xz_native::decompress_with_options(input, opts),
+        xz_native::decompress_streaming(input, opts),
+        reader,
+    ]
+}
+
+/// Stream boundaries: later Streams, Stream Padding and unsupported checks
+/// give the same result on every path.
+#[test]
+fn stream_boundaries_on_all_paths() {
+    use xz_native::Error;
+    let data = b"stream boundaries".repeat(100);
+    let s = xz_native::compress(&data, 1).unwrap();
+    let d = DecoderOptions::default();
+    let cat = |parts: &[&[u8]]| parts.concat();
+
+    // A later Stream with a bad magic: Data, not Format.
+    let mut bad = s.clone();
+    bad[1] = b'8';
+    for r in all_paths(&cat(&[&s, &[0; 4], &bad]), d) {
+        assert_eq!(r.err(), Some(Error::Data));
+    }
+    // Stream Padding that isn't a multiple of 4.
+    for r in all_paths(&cat(&[&s, &[0; 3], &s]), d) {
+        assert_eq!(r.err(), Some(Error::Data));
+    }
+    for r in all_paths(&cat(&[&s, &[0; 5]]), d) {
+        assert_eq!(r.err(), Some(Error::Data));
+    }
+    // Valid padding and a second Stream.
+    for r in all_paths(&cat(&[&s, &[0; 8], &s]), d) {
+        assert_eq!(r.unwrap(), cat(&[&data, &data]));
+    }
+    // Check ID 2 is reserved (unsupported): decoded without the check, or
+    // an error with fail_on_unsupported_check.
+    let mut odd = s.clone();
+    odd[7] = 2;
+    let crc = crc32(&odd[6..8], 0);
+    odd[8..12].copy_from_slice(&crc.to_le_bytes());
+    let n = odd.len();
+    odd[n - 3] = 2;
+    let crc = crc32(&odd[n - 8..n - 2], 0);
+    odd[n - 12..n - 8].copy_from_slice(&crc.to_le_bytes());
+    let strict = DecoderOptions::default().fail_on_unsupported_check(true);
+    for r in all_paths(&odd, strict) {
+        assert_eq!(r.err(), Some(Error::Options));
+    }
+}
+
+/// With `concatenated(false)`, data after the first Stream is ignored,
+/// like `xz --single-stream`; by default it is an error.
+#[test]
+fn single_stream_ignores_trailing_data() {
+    let data = b"single stream".repeat(50);
+    let s = xz_native::compress(&data, 1).unwrap();
+    let single = DecoderOptions::default().concatenated(false);
+    for tail in [&[0u8; 4][..], b"junk", &s] {
+        let input = [&s[..], tail].concat();
+        for r in all_paths(&input, single) {
+            assert_eq!(r.unwrap(), data);
+        }
+        // By default, padding and a second Stream are fine, junk isn't.
+        assert_eq!(decompress(&input).is_err(), tail == b"junk");
+    }
+}

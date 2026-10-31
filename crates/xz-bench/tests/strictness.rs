@@ -549,3 +549,48 @@ fn block_header_uncompressed_size_off_by_one() {
         assert_error(&name("too large"), &large, Error::Data);
     }
 }
+
+/// A reserved Filter ID (2^62 and up) in a Block Header is corrupt data,
+/// not an unsupported filter (filter_flags_decoder.c).
+#[test]
+fn reserved_filter_id() {
+    let data = b"reserved filter IDs are data errors";
+    let mut xz = Xz::parse(&compress(data, 6, Check::Crc64));
+    let props = xz.blocks[0].filters[2];
+    let mut f = Vec::new();
+    write_vli(&mut f, (1 << 62) | 0x21);
+    f.extend_from_slice(&[1, props]);
+    xz.blocks[0].filters = f;
+    assert_error("reserved ID", &xz.build(false, |_| {}), Error::Data);
+}
+
+/// When the input ends inside the Index, a record that doesn't match the
+/// Blocks, or a wrong CRC32 byte already read, is a data error: liblzma
+/// checks the records before the CRC32 and the CRC32 byte by byte.
+#[test]
+fn index_mismatch_before_truncation() {
+    let data = b"index records are checked before the CRC32".repeat(3);
+    let xz = Xz::parse(&compress(&data, 6, Check::Crc64));
+    let good = xz.build(false, |_| {});
+    assert_decodes("rebuilt", &good, &data);
+    // Uncompressed Size + 1 (same VLI length), cut before the CRC32.
+    let bad = xz.build(false, |f| *f.last_mut().unwrap() += 1);
+    assert_error("record, cut at CRC32", &bad[..bad.len() - 16], Error::Data);
+    // Unpadded Size + 4 (the records exceed the Blocks), cut right after
+    // the record.
+    let bad = xz.build(false, |f| f[1] += 4);
+    let backward = u32::from_le_bytes(bad[bad.len() - 8..][..4].try_into().unwrap());
+    let index = bad.len() - 12 - (backward as usize + 1) * 4;
+    let mut p = index + 1;
+    read_vli(&bad, &mut p);
+    read_vli(&bad, &mut p);
+    read_vli(&bad, &mut p);
+    assert_error("sum, cut after record", &bad[..p], Error::Data);
+    // A wrong first CRC32 byte, cut after it.
+    let mut bad = good.clone();
+    let crc = bad.len() - 16;
+    bad[crc] ^= 1;
+    assert_error("CRC32 byte, cut after it", &bad[..crc + 1], Error::Data);
+    // A correct first CRC32 byte, cut after it: truncated.
+    assert_error("cut in CRC32", &good[..crc + 1], Error::Truncated);
+}

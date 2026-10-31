@@ -35,7 +35,9 @@ pub enum Status {
 pub struct DecoderOptions {
     /// Memory usage limit in bytes (default: unlimited).
     pub memlimit: u64,
-    /// Decode concatenated .xz streams (default: true, like `xz`).
+    /// Decode concatenated .xz streams (default: true, like `xz`). When
+    /// false, decoding stops after the first Stream and the input after it
+    /// is ignored (left unread by the readers), like `xz --single-stream`.
     pub concatenated: bool,
     /// Don't verify the integrity check (default: false).
     pub ignore_check: bool,
@@ -128,7 +130,6 @@ pub(crate) struct IndexDecoder {
     crc: Crc32,
     /// Bytes of the Index so far (excluding the CRC32 field).
     size: u64,
-    crc_buf: [u8; 4],
     crc_pos: usize,
     /// The records as `(unpadded, uncompressed)` pairs, if kept.
     list: Option<Vec<(u64, u64)>>,
@@ -146,7 +147,6 @@ impl IndexDecoder {
             records: RecordHash::default(),
             crc: Crc32::default(),
             size: 0,
-            crc_buf: [0; 4],
             crc_pos: 0,
             list: None,
             max_records: u64::MAX,
@@ -182,20 +182,19 @@ impl IndexDecoder {
         let hashed = 0;
         while i < inp.len() {
             if self.seq == IndexSeq::Crc {
+                // Like liblzma's index_hash.c, each CRC32 byte is compared
+                // as it arrives, so a wrong one is a data error even when
+                // the input ends before the rest.
                 self.crc.update(&inp[hashed..i]);
-                let n = (4 - self.crc_pos).min(inp.len() - i);
-                self.crc_buf[self.crc_pos..self.crc_pos + n].copy_from_slice(&inp[i..i + n]);
-                self.crc_pos += n;
-                i += n;
-                if self.crc_pos < 4 {
-                    return Ok((i, false));
+                let want = self.crc.value().to_le_bytes();
+                while self.crc_pos < 4 && i < inp.len() {
+                    if inp[i] != want[self.crc_pos] {
+                        return Err(Error::Data);
+                    }
+                    self.crc_pos += 1;
+                    i += 1;
                 }
-                if u32::from_le_bytes(self.crc_buf) != self.crc.value()
-                    || blocks.is_some_and(|b| self.records != *b)
-                {
-                    return Err(Error::Data);
-                }
-                return Ok((i, true));
+                return Ok((i, self.crc_pos == 4));
             }
             let b = inp[i];
             i += 1;
@@ -235,6 +234,14 @@ impl IndexDecoder {
                 IndexSeq::Uncompressed => {
                     if let Some(v) = self.vli.push(b)? {
                         self.records.add(self.unpadded, v)?;
+                        // The records so far can't add up to more than the
+                        // Blocks (index_hash.c checks after each record).
+                        if blocks.is_some_and(|b| {
+                            self.records.unpadded > b.unpadded
+                                || self.records.uncompressed > b.uncompressed
+                        }) {
+                            return Err(Error::Data);
+                        }
                         if let Some(list) = &mut self.list {
                             list.push((self.unpadded, v));
                         }
@@ -254,6 +261,10 @@ impl IndexDecoder {
                 IndexSeq::Crc => unreachable!(),
             }
             if self.seq == IndexSeq::Padding && self.size.is_multiple_of(4) {
+                // The records must match the Blocks before the CRC32 is read.
+                if blocks.is_some_and(|b| self.records != *b) {
+                    return Err(Error::Data);
+                }
                 self.seq = IndexSeq::Crc;
             }
         }
