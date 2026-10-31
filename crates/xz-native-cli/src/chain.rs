@@ -231,10 +231,11 @@ fn str_preset(v: &str) -> Result<u32, &'static str> {
     Ok(p)
 }
 
-/// A `--filters=` string (`lzma_str_to_filters()` with
-/// `LZMA_STR_ALL_FILTERS`): a preset such as `6e`, or filters separated by
-/// spaces or `--`, each `name`, `name:options` or `name=options`.
-pub fn from_str(s: &str) -> Result<Vec<Item>, StrError> {
+/// A `--filters=` string (`lzma_str_to_filters()`): a preset such as `6e`,
+/// or filters separated by spaces or `--`, each `name`, `name:options` or
+/// `name=options`. With `only_xz` (`--filters1..9`, no
+/// `LZMA_STR_ALL_FILTERS`), LZMA1 isn't allowed.
+pub fn from_str(s: &str, only_xz: bool) -> Result<Vec<Item>, StrError> {
     let mut pos = s.len() - s.trim_start_matches(' ').len();
     if pos == s.len() {
         return Err(err(
@@ -277,6 +278,9 @@ pub fn from_str(s: &str) -> Result<Vec<Item>, StrError> {
             None => (word, "", end),
         };
         let item = match name {
+            "lzma1" if only_xz => {
+                return Err(err(pos, "This filter cannot be used in the .xz format"));
+            }
             "lzma1" | "lzma2" => {
                 let mut o = LzmaOptions::preset(6).expect("preset 6");
                 str_options(opts, opts_pos, |n, v| {
@@ -372,15 +376,15 @@ mod tests {
     #[test]
     fn strings() {
         let six = LzmaOptions::preset(6).unwrap();
-        assert_eq!(from_str("6"), Ok(vec![Item::Lzma2(six)]));
+        assert_eq!(from_str("6", false), Ok(vec![Item::Lzma2(six)]));
         assert_eq!(
-            from_str("  -9e "),
+            from_str("  -9e ", false),
             Ok(vec![Item::Lzma2(
                 LzmaOptions::preset(9 | xz_native::PRESET_EXTREME).unwrap()
             )])
         );
         assert_eq!(
-            from_str("--x86 --delta=dist=4 lzma2:dict=6KiB"),
+            from_str("--x86 --delta=dist=4 lzma2:dict=6KiB", false),
             Ok(vec![
                 Item::Bcj(BcjKind::X86, 0),
                 Item::Delta(4),
@@ -391,21 +395,25 @@ mod tests {
                 }),
             ])
         );
-        assert_eq!(from_str("arm64=start=64 lzma1").unwrap().len(), 2);
-        assert_eq!(from_str("").unwrap_err().pos, 0);
+        assert_eq!(from_str("arm64=start=64 lzma1", false).unwrap().len(), 2);
+        assert_eq!(from_str("", false).unwrap_err().pos, 0);
         assert_eq!(
-            from_str("x86 bogus").unwrap_err(),
+            from_str("x86 bogus", false).unwrap_err(),
             err(4, "Unknown filter name")
         );
         assert_eq!(
-            from_str("lzma2:dict=1KiB").unwrap_err(),
+            from_str("lzma2:dict=1KiB", false).unwrap_err(),
             err(11, "Value out of range")
         );
-        assert!(from_str("x86 x86 x86 x86 lzma2").is_err());
+        assert!(from_str("x86 x86 x86 x86 lzma2", false).is_err());
         assert_eq!(
-            from_str("x86").unwrap_err(),
+            from_str("x86", false).unwrap_err(),
             err(3, "Invalid filter chain ('lzma2' missing at the end?)")
         );
-        assert!(from_str("lzma2 x86").is_err());
+        assert!(from_str("lzma2 x86", false).is_err());
+        assert_eq!(
+            from_str("x86 lzma1", true).unwrap_err(),
+            err(4, "This filter cannot be used in the .xz format")
+        );
     }
 }

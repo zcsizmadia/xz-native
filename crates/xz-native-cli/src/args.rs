@@ -72,6 +72,12 @@ pub struct Opts {
     /// The chain came from `--filters=`, so the next filter option
     /// starts a new one.
     pub chain_from_str: bool,
+    /// `--filters1..9=`: the chains `--block-list` can name (index 0
+    /// unused; chain 0 is `chain` or the preset).
+    pub block_chains: [Option<Vec<Item>>; 10],
+    /// `--block-list`: `(chain, size)` entries, a size of `u64::MAX` for
+    /// the rest of the input.
+    pub block_list: Option<Vec<(usize, u64)>>,
     pub verbosity: i32,
     /// `--no-warn`: warnings don't change the exit status.
     pub no_warn: bool,
@@ -102,6 +108,8 @@ impl Default for Opts {
             suffix: None,
             chain: Vec::new(),
             chain_from_str: false,
+            block_chains: Default::default(),
+            block_list: None,
             verbosity: V_WARNING,
             no_warn: false,
             robot: false,
@@ -132,6 +140,64 @@ fn getopt(msg: String) -> ArgError {
         msg,
         try_help: true,
     }
+}
+
+/// A `--filters=` or `--filtersN=` string, with xz's error message.
+fn filters_str(s: &str, n: usize) -> Result<Vec<Item>, String> {
+    chain::from_str(s, n != 0).map_err(|e| {
+        let p = crate::PROGRAM;
+        let num = if n == 0 { String::new() } else { n.to_string() };
+        // `str_to_filters()` in xz's coder.c: the string, a caret under
+        // the error, then the message.
+        format!(
+            "Error in --filters{num}=FILTERS option:
+{p}: {s}
+{p}: {:pos$}^
+{p}: {}",
+            "",
+            e.msg,
+            pos = e.pos
+        )
+    })
+}
+
+/// `parse_block_list()`: comma-separated sizes, each optionally `N:` for
+/// filter chain N; an empty entry repeats the previous one, and 0, last,
+/// means the rest of the input.
+fn block_list(s: &str) -> Result<Vec<(usize, u64)>, String> {
+    if s.is_empty() || s.starts_with(',') {
+        return Err(format!("{s}: Invalid argument to --block-list"));
+    }
+    let parts: Vec<&str> = s.split(',').collect();
+    let mut list: Vec<(usize, u64)> = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        let b = part.as_bytes();
+        let (chain, size) = if b.len() >= 2 && b[0].is_ascii_digit() && b[1] == b':' {
+            if b.len() == 2 {
+                return Err(format!(
+                    "In --block-list, block size is missing after filter chain number '{}:'",
+                    b[0] as char
+                ));
+            }
+            ((b[0] - b'0') as usize, &part[2..])
+        } else {
+            (0, *part)
+        };
+        if size.is_empty() {
+            // Only possible after a comma, so there is a previous entry.
+            list.push(list[i - 1]);
+            continue;
+        }
+        let mut n = parse_u64("block-list", size, 0, u64::MAX)?;
+        if n == 0 {
+            if i + 1 != parts.len() {
+                return Err("0 can only be used as the last element in --block-list".into());
+            }
+            n = u64::MAX;
+        }
+        list.push((chain, n));
+    }
+    Ok(list)
 }
 
 /// `coder_add_filter()`: appends to the custom chain, which replaces the
@@ -206,6 +272,16 @@ const LONG: &[(&str, HasArg, &str)] = &[
     ("long-help", HasArg::No, "H"),
     ("version", HasArg::No, "V"),
     ("filters", HasArg::Yes, "filters"),
+    ("filters1", HasArg::Yes, "filters1"),
+    ("filters2", HasArg::Yes, "filters2"),
+    ("filters3", HasArg::Yes, "filters3"),
+    ("filters4", HasArg::Yes, "filters4"),
+    ("filters5", HasArg::Yes, "filters5"),
+    ("filters6", HasArg::Yes, "filters6"),
+    ("filters7", HasArg::Yes, "filters7"),
+    ("filters8", HasArg::Yes, "filters8"),
+    ("filters9", HasArg::Yes, "filters9"),
+    ("block-list", HasArg::Yes, "block-list"),
     ("lzma1", HasArg::Optional, "lzma1"),
     ("lzma2", HasArg::Optional, "lzma2"),
     ("x86", HasArg::Optional, "x86"),
@@ -358,23 +434,16 @@ fn apply(key: &str, value: Option<&str>, o: &mut Opts, action: &mut Action) -> R
             o.chain.clear();
         }
         "filters" => {
-            let s = v();
-            let items = chain::from_str(s).map_err(|e| {
-                let p = crate::PROGRAM;
-                // `str_to_filters()` in xz's coder.c: the string, a caret
-                // under the error, then the message.
-                format!(
-                    "Error in --filters=FILTERS option:\n{p}: {s}\n{p}: {:pos$}^\n{p}: {}",
-                    "",
-                    e.msg,
-                    pos = e.pos
-                )
-            })?;
-            o.chain = items;
+            o.chain = filters_str(v(), 0)?;
             o.chain_from_str = true;
             o.preset = 6;
             o.extreme = false;
         }
+        k if k.starts_with("filters") => {
+            let n = (k.as_bytes()[7] - b'0') as usize;
+            o.block_chains[n] = Some(filters_str(v(), n)?);
+        }
+        "block-list" => o.block_list = Some(block_list(v())?),
         "lzma1" => add_filter(o, Item::Lzma1(chain::lzma(value)?))?,
         "lzma2" => add_filter(o, Item::Lzma2(chain::lzma(value)?))?,
         "delta" => add_filter(o, Item::Delta(chain::delta(value)?))?,

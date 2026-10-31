@@ -29,6 +29,15 @@ pub fn run(ctx: &mut Ctx) -> Result<(), String> {
     if o.mode == Mode::Compress && o.format == Format::Auto {
         o.format = Format::Xz;
     }
+    if o.block_list.is_some() && !(o.mode == Mode::Compress && o.format == Format::Xz) {
+        o.block_list = None;
+        if o.verbosity >= crate::args::V_WARNING {
+            eprintln!(
+                "{}: --block-list is ignored unless compressing to the .xz format",
+                crate::PROGRAM
+            );
+        }
+    }
     if o.mode == Mode::Compress
         && (o.stdout || (o.files.len() == 1 && o.files[0] == "-"))
         && io::stdout().is_terminal()
