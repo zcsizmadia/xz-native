@@ -773,14 +773,18 @@ impl LzmaEncoder {
 
     #[inline(always)]
     fn dist_len_price(&self, dist: u32, len: u32, pos_state: usize) -> u32 {
-        let ds = dist_state(len);
-        let price = if (dist as usize) < FULL_DISTANCES {
+        self.dist_price(dist, dist_state(len)) + self.match_len_encoder.price(len, pos_state)
+    }
+
+    /// The distance part of `get_dist_len_price()`.
+    #[inline(always)]
+    fn dist_price(&self, dist: u32, ds: usize) -> u32 {
+        if (dist as usize) < FULL_DISTANCES {
             self.dist_prices[ds][dist as usize]
         } else {
             self.dist_slot_prices[ds][dist_slot(dist) as usize]
                 + self.align_prices[(dist & ALIGN_MASK) as usize]
-        };
-        price + self.match_len_encoder.price(len, pos_state)
+        }
     }
 
     fn fill_dist_prices(&mut self) {
@@ -1259,67 +1263,93 @@ impl LzmaEncoder {
             }
             let mut len_test = start_len;
             loop {
-                let cur_back = self.matches[i].dist;
-                let mut cur_and_len_price =
-                    normal_match_price + self.dist_len_price(cur_back, len_test, pos_state);
-                let o = &mut self.opts[(cur + len_test) as usize];
-                if cur_and_len_price < o.price {
-                    o.price = cur_and_len_price;
-                    o.pos_prev = cur;
-                    o.back_prev = cur_back + REPS as u32;
-                    o.prev_1_is_literal = false;
+                let Match {
+                    dist: cur_back,
+                    len: match_len,
+                } = self.matches[i];
+                // Same prices as get_dist_len_price() for each length. From
+                // length 5 on, the distance price no longer depends on the
+                // length: look it up once and walk the length prices and
+                // opts as slices.
+                let back_prev = cur_back + REPS as u32;
+                let set = |o: &mut Optimal, price: u32| {
+                    if price < o.price {
+                        o.price = price;
+                        o.pos_prev = cur;
+                        o.back_prev = back_prev;
+                        o.prev_1_is_literal = false;
+                    }
+                };
+                let mut cur_and_len_price = 0;
+                while len_test <= match_len && len_test < DIST_STATES as u32 + MATCH_LEN_MIN {
+                    cur_and_len_price =
+                        normal_match_price + self.dist_len_price(cur_back, len_test, pos_state);
+                    set(&mut self.opts[(cur + len_test) as usize], cur_and_len_price);
+                    len_test += 1;
+                }
+                if len_test <= match_len {
+                    let dist_price =
+                        normal_match_price + self.dist_price(cur_back, DIST_STATES - 1);
+                    let (lo, hi) = (len_test - MATCH_LEN_MIN, match_len - MATCH_LEN_MIN);
+                    let len_prices =
+                        &self.match_len_encoder.prices[pos_state][lo as usize..=hi as usize];
+                    let opts =
+                        &mut self.opts[(cur + len_test) as usize..=(cur + match_len) as usize];
+                    for (o, &len_price) in opts.iter_mut().zip(len_prices) {
+                        cur_and_len_price = dist_price + len_price;
+                        set(o, cur_and_len_price);
+                    }
+                }
+                len_test = match_len;
+
+                // Try match + literal + rep0.
+                let buf_back = buf - cur_back as usize - 1;
+                let mut len_test_2 = len_test + 1;
+                let limit = buf_avail_full.min(len_test_2 + nice_len);
+                if len_test_2 < limit {
+                    len_test_2 = memcmplen(b, buf, buf_back, len_test_2, limit);
+                }
+                len_test_2 -= len_test + 1;
+
+                if len_test_2 >= 2 {
+                    let mut state_2 = update_match(state);
+                    let mut pos_state_next = (position + len_test) & self.pos_mask;
+                    let cur_and_len_literal_price = cur_and_len_price
+                        + bit0_price(self.is_match[state_2 as usize][pos_state_next as usize])
+                        + self.literal_price(
+                            position + len_test,
+                            b[buf + len_test as usize - 1] as u32,
+                            true,
+                            b[buf_back + len_test as usize] as u32,
+                            b[buf + len_test as usize] as u32,
+                        );
+                    state_2 = update_literal(state_2);
+                    pos_state_next = (pos_state_next + 1) & self.pos_mask;
+                    let next_rep_match_price = cur_and_len_literal_price
+                        + bit1_price(self.is_match[state_2 as usize][pos_state_next as usize])
+                        + bit1_price(self.is_rep[state_2 as usize]);
+                    let offset = cur + len_test + 1 + len_test_2;
+                    while len_end < offset {
+                        len_end += 1;
+                        self.opts[len_end as usize].price = INFINITY_PRICE;
+                    }
+                    cur_and_len_price = next_rep_match_price
+                        + self.rep_price(0, len_test_2, state_2, pos_state_next as usize);
+                    let o = &mut self.opts[offset as usize];
+                    if cur_and_len_price < o.price {
+                        o.price = cur_and_len_price;
+                        o.pos_prev = cur + len_test + 1;
+                        o.back_prev = 0;
+                        o.prev_1_is_literal = true;
+                        o.prev_2 = true;
+                        o.pos_prev_2 = cur;
+                        o.back_prev_2 = cur_back + REPS as u32;
+                    }
                 }
 
-                if len_test == self.matches[i].len {
-                    // Try match + literal + rep0.
-                    let buf_back = buf - cur_back as usize - 1;
-                    let mut len_test_2 = len_test + 1;
-                    let limit = buf_avail_full.min(len_test_2 + nice_len);
-                    if len_test_2 < limit {
-                        len_test_2 = memcmplen(b, buf, buf_back, len_test_2, limit);
-                    }
-                    len_test_2 -= len_test + 1;
-
-                    if len_test_2 >= 2 {
-                        let mut state_2 = update_match(state);
-                        let mut pos_state_next = (position + len_test) & self.pos_mask;
-                        let cur_and_len_literal_price = cur_and_len_price
-                            + bit0_price(self.is_match[state_2 as usize][pos_state_next as usize])
-                            + self.literal_price(
-                                position + len_test,
-                                b[buf + len_test as usize - 1] as u32,
-                                true,
-                                b[buf_back + len_test as usize] as u32,
-                                b[buf + len_test as usize] as u32,
-                            );
-                        state_2 = update_literal(state_2);
-                        pos_state_next = (pos_state_next + 1) & self.pos_mask;
-                        let next_rep_match_price = cur_and_len_literal_price
-                            + bit1_price(self.is_match[state_2 as usize][pos_state_next as usize])
-                            + bit1_price(self.is_rep[state_2 as usize]);
-                        let offset = cur + len_test + 1 + len_test_2;
-                        while len_end < offset {
-                            len_end += 1;
-                            self.opts[len_end as usize].price = INFINITY_PRICE;
-                        }
-                        cur_and_len_price = next_rep_match_price
-                            + self.rep_price(0, len_test_2, state_2, pos_state_next as usize);
-                        let o = &mut self.opts[offset as usize];
-                        if cur_and_len_price < o.price {
-                            o.price = cur_and_len_price;
-                            o.pos_prev = cur + len_test + 1;
-                            o.back_prev = 0;
-                            o.prev_1_is_literal = true;
-                            o.prev_2 = true;
-                            o.pos_prev_2 = cur;
-                            o.back_prev_2 = cur_back + REPS as u32;
-                        }
-                    }
-
-                    i += 1;
-                    if i == matches_count as usize {
-                        break;
-                    }
+                i += 1;
+                if i == matches_count as usize {
+                    break;
                 }
                 len_test += 1;
             }

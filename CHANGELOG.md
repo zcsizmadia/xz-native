@@ -83,6 +83,8 @@ release is 0.2.0.
   (#73).
 - Decoding on x86-64 is 2-3% faster: the align bits of long distances
   use a port of liblzma's `rc_bittree_rev4` assembly (#81).
+- Compression at the slow presets prices long matches faster: preset 9e
+  on binary data is 6% faster, as fast as liblzma (#88).
 
 ### Fixed
 - One-shot decoding (`decompress`, `decompress_into`, the threaded
