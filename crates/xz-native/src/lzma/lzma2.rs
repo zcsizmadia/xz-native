@@ -50,6 +50,15 @@ impl Lzma2Decoder {
     }
 }
 
+impl Lzma2Decoder {
+    /// With a preset dictionary, the first chunk needn't reset the
+    /// dictionary (`lzma2_decoder_init()`).
+    pub(crate) fn with_preset_dict(mut self) -> Self {
+        self.need_dictionary_reset = false;
+        self
+    }
+}
+
 impl LzCodec for Lzma2Decoder {
     fn code(&mut self, dict: &mut Dict, inp: &[u8]) -> Result<(usize, Progress)> {
         let mut ip = 0;

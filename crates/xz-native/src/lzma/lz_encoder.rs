@@ -258,6 +258,19 @@ impl Mf {
         self.init_positions();
     }
 
+    /// Starts the empty window with a preset dictionary (`lz_encoder_init()`):
+    /// its last bytes that fit in the window, run through the match finder
+    /// as if they had been encoded.
+    pub(crate) fn preset_dict(&mut self, dict: &[u8]) {
+        debug_assert_eq!(self.write_pos, 0);
+        let n = dict.len().min(self.size as usize);
+        self.buf[..n].copy_from_slice(&dict[dict.len() - n..]);
+        self.write_pos = n as u32;
+        self.action = MfAction::SyncFlush;
+        self.skip_raw(n as u32);
+        self.action = MfAction::Run;
+    }
+
     /// Bytes not yet run through the match finder.
     #[inline(always)]
     pub(crate) fn avail(&self) -> u32 {

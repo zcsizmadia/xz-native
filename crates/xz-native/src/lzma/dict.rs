@@ -122,6 +122,16 @@ impl Dict {
         self.need_reset = false;
     }
 
+    /// Fills the empty history with the last `dict_size` bytes of `preset`
+    /// (a preset dictionary, as in `lz_decoder_init()`); they are not
+    /// output.
+    pub(crate) fn preset(&mut self, preset: &[u8], dict_size: u32) {
+        debug_assert!(!self.flat && self.pos == INIT_POS);
+        let n = preset.len().min(dict_size as usize);
+        self.buf[self.pos..self.pos + n].copy_from_slice(&preset[preset.len() - n..]);
+        self.pos += n;
+    }
+
     /// Wraps to the start when the end of the buffer was reached.
     #[inline]
     pub(crate) fn wrap_if_needed(&mut self) {

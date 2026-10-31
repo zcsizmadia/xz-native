@@ -386,6 +386,13 @@ impl<C: LzCodec> ChainDecoder<C> {
     ) -> Result<(usize, usize, Progress)> {
         decode_level(&mut self.stages, &mut self.lz, inp, out)
     }
+
+    /// Starts with a preset dictionary (see [`Dict::preset`]).
+    ///
+    /// [`Dict::preset`]: crate::lzma::dict::Dict::preset
+    pub(crate) fn preset_dict(&mut self, preset: &[u8], dict_size: u32) {
+        self.lz.dict.preset(preset, dict_size);
+    }
 }
 
 fn decode_level<C: LzCodec>(

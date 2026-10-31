@@ -110,19 +110,32 @@ impl RawDecoder {
     /// Creates a decoder. The options must match the encoder's; see
     /// [`RawOptions`].
     pub fn with_options(opts: &RawOptions) -> Result<Self> {
+        Self::with_preset_dict(opts, &[])
+    }
+
+    /// Creates a decoder for a stream encoded with a preset dictionary
+    /// ([`RawEncoder::with_preset_dict`]); `dict` must be the encoder's
+    /// (`lzma_options_lzma.preset_dict`). An empty `dict` is none.
+    pub fn with_preset_dict(opts: &RawOptions, dict: &[u8]) -> Result<Self> {
         validate_filters(&opts.filters)?;
         let dict_size = opts.lzma.dict_size;
         let inner = match opts.method {
             RawMethod::Lzma1 => {
                 let mut dec = LzmaDecoder::new(opts.props()?);
                 dec.set_uncompressed(None, true);
-                DecoderKind::Lzma1(ChainDecoder::with_codec(&opts.filters, dec, dict_size)?)
+                let mut chain = ChainDecoder::with_codec(&opts.filters, dec, dict_size)?;
+                chain.preset_dict(dict, dict_size);
+                DecoderKind::Lzma1(chain)
             }
-            RawMethod::Lzma2 => DecoderKind::Lzma2(ChainDecoder::with_codec(
-                &opts.filters,
-                Lzma2Decoder::new(),
-                dict_size,
-            )?),
+            RawMethod::Lzma2 => {
+                let mut codec = Lzma2Decoder::new();
+                if !dict.is_empty() {
+                    codec = codec.with_preset_dict();
+                }
+                let mut chain = ChainDecoder::with_codec(&opts.filters, codec, dict_size)?;
+                chain.preset_dict(dict, dict_size);
+                DecoderKind::Lzma2(chain)
+            }
         };
         Ok(Self {
             inner: Box::new(inner),
@@ -181,14 +194,48 @@ pub struct RawEncoder {
 impl RawEncoder {
     /// Creates an encoder.
     pub fn with_options(opts: &RawOptions) -> Result<Self> {
+        Self::with_preset_dict(opts, &[])
+    }
+
+    /// Creates an encoder whose dictionary starts with `dict`
+    /// (`lzma_options_lzma.preset_dict`): input similar to it, such as many
+    /// small messages of one kind, compresses much better. Only the last
+    /// `dict_size` bytes count, so put the most typical strings at the end.
+    /// The stream doesn't store it: decode with
+    /// [`RawDecoder::with_preset_dict`] and the same `dict`. An empty `dict`
+    /// is none. The output is byte-identical to liblzma's with the same
+    /// preset dictionary.
+    ///
+    /// ```
+    /// use xz_native::{Action, RawDecoder, RawEncoder, RawMethod, RawOptions};
+    ///
+    /// let dict = br#"{"user":"","event":"login","ok":true,"ms":}"#;
+    /// let msg = br#"{"user":"ada","event":"login","ok":true,"ms":12}"#;
+    /// let opts = RawOptions::preset(RawMethod::Lzma2, 6)?;
+    ///
+    /// let mut out = [0u8; 256];
+    /// let mut enc = RawEncoder::with_preset_dict(&opts, dict)?;
+    /// let (_, n, _) = enc.encode(msg, &mut out, Action::Finish)?;
+    /// let packed = out[..n].to_vec();
+    ///
+    /// let mut dec = RawDecoder::with_preset_dict(&opts, dict)?;
+    /// let (_, m, _) = dec.decode(&packed, &mut out, true)?;
+    /// assert_eq!(&out[..m], msg);
+    /// # Ok::<(), xz_native::Error>(())
+    /// ```
+    pub fn with_preset_dict(opts: &RawOptions, dict: &[u8]) -> Result<Self> {
         opts.lzma.validate()?;
         validate_filters(&opts.filters)?;
         let inner = match opts.method {
             RawMethod::Lzma1 => {
-                EncoderKind::Lzma1(Lzma1Encoder::new_lz(&opts.lzma, &opts.filters)?)
+                let mut lz = Lzma1Encoder::new_lz(&opts.lzma, &opts.filters)?;
+                lz.preset_dict(dict);
+                EncoderKind::Lzma1(lz)
             }
             RawMethod::Lzma2 => {
-                EncoderKind::Lzma2(Lzma2Encoder::new_lz(&opts.lzma, &opts.filters)?)
+                let mut lz = Lzma2Encoder::new_lz(&opts.lzma, &opts.filters)?;
+                lz.preset_dict(dict);
+                EncoderKind::Lzma2(lz)
             }
         };
         Ok(Self {

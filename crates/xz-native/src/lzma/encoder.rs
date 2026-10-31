@@ -350,6 +350,12 @@ impl LzmaEncoder {
         Ok((enc, lz))
     }
 
+    /// After a preset dictionary, the first byte is encoded like the others
+    /// (`is_initialized` in `lzma_lzma_encoder_reset()`).
+    pub(crate) fn skip_init(&mut self) {
+        self.is_initialized = true;
+    }
+
     /// Prepares for a new stream with the same options (the parts of
     /// `lzma_lzma_encoder_create()` that run again for a new Block).
     pub(crate) fn restart(&mut self, o: &LzmaOptions) -> Result<()> {

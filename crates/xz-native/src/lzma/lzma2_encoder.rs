@@ -197,6 +197,19 @@ impl LzEncoder<Lzma2Encoder> {
     }
 }
 
+impl LzEncoder<Lzma2Encoder> {
+    /// Starts with a preset dictionary; the first chunk then doesn't reset
+    /// the dictionary (`lzma2_encoder_init()`). Must be called before any
+    /// input; an empty one is no preset dictionary.
+    pub(crate) fn preset_dict(&mut self, dict: &[u8]) {
+        if !dict.is_empty() {
+            self.mf.preset_dict(dict);
+            self.codec.lzma.skip_init();
+            self.codec.need_dictionary_reset = false;
+        }
+    }
+}
+
 impl LzCodecEnc for Lzma2Encoder {
     /// `lzma2_encode()`.
     fn code(&mut self, mf: &mut Mf, out: &mut [u8], out_pos: &mut usize) -> Result<bool> {
@@ -318,6 +331,17 @@ impl Lzma1Encoder {
             true
         } else {
             false
+        }
+    }
+}
+
+impl LzEncoder<Lzma1Encoder> {
+    /// Starts with a preset dictionary. Must be called before any input; an
+    /// empty one is no preset dictionary.
+    pub(crate) fn preset_dict(&mut self, dict: &[u8]) {
+        if !dict.is_empty() {
+            self.mf.preset_dict(dict);
+            self.codec.lzma.skip_init();
         }
     }
 }
