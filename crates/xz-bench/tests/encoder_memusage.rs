@@ -183,6 +183,28 @@ fn raw_encoder_memusage_matches_liblzma() {
     }
 }
 
+/// The MT structs hold the platform's mutexes and condition variables, so
+/// their sizes differ by OS: on a mismatch, report the constants that
+/// would match this platform (from two and three threads; one thread is
+/// the single-threaded encoder).
+#[test]
+fn mt_struct_sizes_for_this_platform() {
+    let e = EncoderOptions::preset(0).unwrap();
+    let diff = |t: u32| {
+        let e = e.clone().threads(t as usize);
+        c_mt(&e, t) as i64 - e.encoder_memusage().unwrap() as i64
+    };
+    let (d2, d3) = (diff(2), diff(3));
+    assert!(
+        d2 == 0 && d3 == 0,
+        "{}/{}: STREAM_CODER_STRUCT off by {}, PER_THREAD_STRUCTS off by {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        3 * d2 - 2 * d3,
+        d3 - d2
+    );
+}
+
 #[test]
 fn easy_and_mt_encoder_memusage_match_liblzma() {
     for preset in 0..=9 {
