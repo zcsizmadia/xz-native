@@ -358,6 +358,9 @@ pub(crate) fn decompress_threads_into(
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
 
+    if opts.threads > super::mt::THREADS_MAX {
+        return Err(Error::Options);
+    }
     let threads = super::mt::thread_count(opts.threads);
     if threads < 2 || !opts.concatenated {
         return decompress_into(input, opts, out);
@@ -415,9 +418,10 @@ pub(crate) fn decompress_threads_into(
 
     let next = AtomicUsize::new(0);
     let failed = AtomicBool::new(false);
-    std::thread::scope(|s| {
+    let spawned = std::thread::scope(|s| {
+        let mut spawned = 0;
         for _ in 0..threads.min(blocks.len()) {
-            s.spawn(|| {
+            let r = std::thread::Builder::new().spawn_scoped(s, || {
                 let mut scratch = Vec::new();
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
@@ -430,9 +434,16 @@ pub(crate) fn decompress_threads_into(
                     }
                 }
             });
+            // If the OS refuses more threads, the ones there are do the
+            // work.
+            if r.is_err() {
+                break;
+            }
+            spawned += 1;
         }
+        spawned
     });
-    if failed.load(Ordering::Relaxed) {
+    if spawned == 0 || failed.load(Ordering::Relaxed) {
         // Report exactly what the single-threaded decoder reports.
         out.truncate(base);
         return decompress_into(input, opts, out);

@@ -49,6 +49,9 @@ const DEFAULT_BUDGET: u64 = if usize::BITS >= 64 {
 const REPLAY_STEP: usize = 64 << 10;
 
 /// Resolves [`DecoderOptions::threads`] (0 = one per CPU).
+/// Most threads liblzma accepts (`LZMA_THREADS_MAX`).
+pub(crate) const THREADS_MAX: usize = 16384;
+
 pub(crate) fn thread_count(threads: usize) -> usize {
     match threads {
         0 => std::thread::available_parallelism().map_or(1, |n| n.get()),
@@ -231,18 +234,24 @@ impl Pool {
         }
     }
 
-    fn spawn(&mut self) {
+    /// Starts a worker; false if the OS refuses a new thread.
+    fn spawn(&mut self) -> bool {
         let (jobs, done, stop) = (
             self.jobs_rx.clone(),
             self.done_tx.clone(),
             self.stop.clone(),
         );
         let opts = self.opts;
-        let handle = std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("xz-native-decoder".into())
-            .spawn(move || worker(&jobs, &done, &stop, opts))
-            .expect("failed to spawn a decoder thread");
-        self.handles.push(handle);
+            .spawn(move || worker(&jobs, &done, &stop, opts));
+        match spawned {
+            Ok(handle) => {
+                self.handles.push(handle);
+                true
+            }
+            Err(_) => false,
+        }
     }
 }
 
@@ -424,7 +433,8 @@ impl MtDecoder {
             records: RecordHash::default(),
             hbuf: Box::new([0; 1024]),
             hpos: 0,
-            failed: None,
+            // Like lzma_stream_decoder_mt, too many threads is an error.
+            failed: (threads > THREADS_MAX).then_some(Error::Options),
             memusage: 0,
         }
     }
@@ -608,14 +618,15 @@ impl MtDecoder {
 
     fn dispatch(&mut self, hdr: BlockHeader, check: Check, input: Vec<u8>, cost: u64, cut: bool) {
         let pool = self.pool.get_or_insert_with(|| Pool::new(self.opts));
-        self.pending += 1;
-        // Start a worker when all the others are busy.
-        if pool.handles.len() < self.threads.min(self.pending) {
+        // Start a worker when all the others are busy. If the OS refuses,
+        // the workers there are carry on; without any, the Block is decoded
+        // on this thread.
+        if pool.handles.len() < self.threads.min(self.pending + 1) {
             pool.spawn();
         }
         let id = self.next_id;
         self.next_id += 1;
-        let job = Job {
+        let mut job = Job {
             id,
             hdr,
             check,
@@ -623,6 +634,17 @@ impl MtDecoder {
             out: self.outputs.take(),
             cut,
         };
+        if pool.handles.is_empty() {
+            let error = decode_job(&mut job, &self.opts);
+            self.queue.push_back(Item::Block {
+                id,
+                cost,
+                data: Some((job.out, error)),
+                pos: 0,
+            });
+            return;
+        }
+        self.pending += 1;
         // If the workers are gone, `collect` reports it.
         let _ = pool.jobs.as_ref().unwrap().send(job);
         self.queue.push_back(Item::Block {
@@ -649,6 +671,12 @@ impl MtDecoder {
             };
             if let Some(p) = d.panic {
                 drop(rx);
+                // A bug in the decoder. If the caller catches the panic,
+                // later reads fail instead of waiting for the lost Block.
+                self.failed = Some(Error::Usage);
+                self.parse = Parse::Done;
+                self.queue.clear();
+                pool.stop.store(0, Ordering::Relaxed);
                 resume_unwind(p);
             }
             self.pending -= 1;

@@ -63,6 +63,8 @@ minor version may change the API.
 - `compat::{read, bufread}::XzDecoder::new_multi_decoder` also decodes
   .lzma and .lz, detected from the first byte, like `xz2`'s auto decoder
   (#72).
+- Threaded decoding rejects more than 16384 threads with `Error::Options`,
+  like `lzma_stream_decoder_mt` (#74).
 - One-shot decoding with `concatenated(false)` ignores the input after the
   first Stream, like `xz --single-stream` and the readers; it was an error
   (#73).
@@ -97,6 +99,12 @@ minor version may change the API.
   instead of `Error::Truncated`; seeking to the end of a partly read Block
   opens the next one instead of decoding the rest, and skipping uses a
   64 KiB buffer instead of the caller's (#73).
+- Threads: when the OS refuses a new thread, the threaded decoders and
+  encoders continue with the threads they have (or decode on the calling
+  thread, or fall back to single-threaded one-shot decoding) instead of
+  panicking; the streaming encoder without any worker returns
+  `Error::MemLimit`. After a worker panic is caught, later calls return
+  `Error::Usage` instead of waiting forever (#74).
 - Dictionary sizes that don't fit in memory (on 32-bit targets, from
   2 GiB) give `Error::MemLimit` instead of a panic or a wrapped size; large
   dictionaries are allocated fallibly (#70).

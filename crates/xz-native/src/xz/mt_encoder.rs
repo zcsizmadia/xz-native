@@ -52,8 +52,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
-/// Most threads liblzma accepts (`LZMA_THREADS_MAX`).
-const THREADS_MAX: usize = 16384;
+use super::mt::THREADS_MAX;
 /// Largest Block size (`BLOCK_SIZE_MAX`).
 const BLOCK_SIZE_MAX: u64 = u64::MAX / THREADS_MAX as u64;
 /// Bound of a Block Header plus padding and check (`HEADERS_BOUND`).
@@ -286,9 +285,10 @@ pub(crate) fn compress(data: &[u8], opts: &EncoderOptions) -> Result<Vec<u8>> {
             panic: None,
         });
         let wake = Condvar::new();
-        std::thread::scope(|s| {
+        let spawned = std::thread::scope(|s| {
+            let mut spawned = 0;
             for _ in 0..workers {
-                s.spawn(|| {
+                let r = std::thread::Builder::new().spawn_scoped(s, || {
                     let mut coder = BlockCoder::default();
                     let mut st = state.lock().unwrap();
                     loop {
@@ -315,8 +315,18 @@ pub(crate) fn compress(data: &[u8], opts: &EncoderOptions) -> Result<Vec<u8>> {
                         wake.notify_all();
                     }
                 });
+                // If the OS refuses more threads, the ones there are do the
+                // work.
+                if r.is_err() {
+                    break;
+                }
+                spawned += 1;
             }
+            spawned
         });
+        if spawned == 0 {
+            return Err(Error::MemLimit);
+        }
         let st = state.into_inner().unwrap();
         if let Some(panic) = st.panic {
             resume_unwind(panic);
@@ -434,18 +444,24 @@ impl Pool {
         }
     }
 
-    fn spawn(&mut self) {
+    /// Starts a worker; false if the OS refuses a new thread.
+    fn spawn(&mut self) -> bool {
         let (p, jobs, done, stop) = (
             self.params.clone(),
             self.jobs_rx.clone(),
             self.done_tx.clone(),
             self.stop.clone(),
         );
-        let handle = std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("xz-native-encoder".into())
-            .spawn(move || worker(&p, &jobs, &done, &stop))
-            .expect("failed to spawn an encoder thread");
-        self.handles.push(handle);
+            .spawn(move || worker(&p, &jobs, &done, &stop));
+        match spawned {
+            Ok(handle) => {
+                self.handles.push(handle);
+                true
+            }
+            Err(_) => false,
+        }
     }
 }
 
@@ -594,7 +610,7 @@ impl MtEncoder {
                 Seq::Blocks => {
                     self.collect(false)?;
                     self.copy_out(output, &mut op);
-                    self.take_input(input, &mut ip, action);
+                    self.take_input(input, &mut ip, action)?;
                     if ip == input.len() && (action == Action::Run || self.cur.is_empty()) {
                         match action {
                             Action::Run => return Ok((ip, op, Status::Ok)),
@@ -623,14 +639,14 @@ impl MtEncoder {
 
     /// Copies input into Blocks while a worker and room in the queue are
     /// free; a full Block, or the last one before a flush, goes to a worker.
-    fn take_input(&mut self, input: &[u8], ip: &mut usize, action: Action) {
+    fn take_input(&mut self, input: &[u8], ip: &mut usize, action: Action) -> Result<()> {
         let bs = self.params.block_size;
         while self.busy < self.threads && self.queue.len() < 2 * self.threads {
             if *ip == input.len() {
                 if action != Action::Run && !self.cur.is_empty() {
-                    self.dispatch();
+                    self.dispatch()?;
                 }
-                return;
+                return Ok(());
             }
             if self.cur.capacity() == 0 {
                 self.cur = self.free_in.pop().unwrap_or_default();
@@ -639,20 +655,23 @@ impl MtEncoder {
             self.cur.extend_from_slice(&input[*ip..*ip + n]);
             *ip += n;
             if self.cur.len() == bs {
-                self.dispatch();
+                self.dispatch()?;
             }
         }
+        Ok(())
     }
 
-    fn dispatch(&mut self) {
+    fn dispatch(&mut self) -> Result<()> {
         let pool = self
             .pool
             .get_or_insert_with(|| Pool::new(self.params.clone()));
-        self.busy += 1;
-        // Start a worker when all the others are busy.
-        if pool.handles.len() < self.busy {
-            pool.spawn();
+        // Start a worker when all the others are busy. If the OS refuses,
+        // the workers there are carry on; without any, it is liblzma's
+        // LZMA_MEM_ERROR.
+        if pool.handles.len() <= self.busy && !pool.spawn() && pool.handles.is_empty() {
+            return Err(Error::MemLimit);
         }
+        self.busy += 1;
         let id = self.next_id;
         self.next_id += 1;
         let job = Job {
@@ -667,6 +686,7 @@ impl MtEncoder {
             done: None,
             pos: 0,
         });
+        Ok(())
     }
 
     /// Stores encoded Blocks; with `wait`, waits for at least one.
@@ -687,6 +707,11 @@ impl MtEncoder {
             };
             if let Some(panic) = d.panic {
                 drop(rx);
+                // A bug in the encoder. If the caller catches the panic,
+                // later calls fail instead of waiting for the lost Block.
+                self.error = Some(Error::Usage);
+                self.queue.clear();
+                pool.stop.store(true, Ordering::Relaxed);
                 resume_unwind(panic);
             }
             self.busy -= 1;
