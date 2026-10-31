@@ -169,3 +169,92 @@ pub(crate) fn decode_block_header(buf: &[u8], check: Check) -> Result<BlockHeade
         filters,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    fn vli(mut v: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        while v >= 0x80 {
+            out.push(v as u8 | 0x80);
+            v >>= 7;
+        }
+        out.push(v as u8);
+        out
+    }
+
+    /// A Block Header with a Compressed Size and LZMA2.
+    fn block_header(compressed: u64) -> Vec<u8> {
+        let mut h = vec![0, 0x40];
+        h.extend(vli(compressed));
+        h.extend([0x21, 0x01, 0x00]);
+        while (h.len() + 4) % 4 != 0 {
+            h.push(0);
+        }
+        h[0] = ((h.len() + 4) / 4 - 1) as u8;
+        let crc = crc32(&h, 0);
+        h.extend(crc.to_le_bytes());
+        h
+    }
+
+    #[test]
+    fn vli_must_be_minimal() {
+        let read = |bytes: &[u8]| {
+            let mut r = VliReader::default();
+            let mut last = Ok(None);
+            for &b in bytes {
+                last = r.push(b);
+            }
+            last
+        };
+        assert_eq!(read(&[0x00]), Ok(Some(0)));
+        assert_eq!(read(&[0x81, 0x01]), Ok(Some(129)));
+        assert_eq!(read(&[0x80, 0x00]), Err(Error::Data));
+        assert_eq!(read(&[0x81, 0x80, 0x00]), Err(Error::Data));
+    }
+
+    /// Stream Flags: the first byte and the high bits of the second must be
+    /// zero.
+    #[test]
+    fn stream_flags_reserved_bits() {
+        for (b0, b1, ok) in [
+            (0, 1, true),
+            (1, 1, false),
+            (0, 0x11, false),
+            (0x80, 4, false),
+        ] {
+            let mut h = [0u8; 12];
+            h[..6].copy_from_slice(&HEADER_MAGIC);
+            h[6..8].copy_from_slice(&[b0, b1]);
+            let crc = crc32(&h[6..8], 0);
+            h[8..12].copy_from_slice(&crc.to_le_bytes());
+            let r = decode_stream_header(&h);
+            assert_eq!(r.is_ok(), ok, "{b0:#x} {b1:#x}");
+            if !ok {
+                assert_eq!(r, Err(Error::Options));
+            }
+        }
+    }
+
+    /// The Compressed Size must be non-zero and keep the Unpadded Size
+    /// (header + data + check) at or below 2^63 - 4.
+    #[test]
+    fn compressed_size_limits() {
+        const MAX_UNPADDED: u64 = (1 << 63) - 4;
+        let size = block_header(1 << 62).len() as u64;
+        assert_eq!(block_header(1).len() as u64, size - 8, "VLI sizes");
+        for check in [Check::Crc32, Check::Sha256] {
+            let largest = MAX_UNPADDED - size - check.size() as u64;
+            let h = block_header(largest);
+            assert_eq!(h.len() as u64, size);
+            let hdr = decode_block_header(&h, check).unwrap();
+            assert_eq!(hdr.compressed_size, Some(largest), "{check:?}");
+            let r = decode_block_header(&block_header(largest + 1), check);
+            assert_eq!(r.map(|h| h.compressed_size), Err(Error::Data), "{check:?}");
+        }
+        let r = decode_block_header(&block_header(0), Check::Crc32);
+        assert_eq!(r.map(|h| h.compressed_size), Err(Error::Data));
+    }
+}
