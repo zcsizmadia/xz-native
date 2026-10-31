@@ -13,6 +13,12 @@ returned and when, constructor return types, removed exports), so the next
 release is 0.2.0.
 
 ### Added
+- `XzDecoder` decodes with threads: `DecoderOptions::threads` now applies
+  to the push API and the async `XzReader`, like
+  `lzma_stream_decoder_mt`, and goes on after `Error::MemLimit` once the
+  limit is raised, as without threads. The threaded `std::io::XzReader`
+  now returns the Blocks already decoded when its input returns
+  `WouldBlock` (#58).
 - `XzSeekableReader::streams()`, `blocks()` and `block_details(i)`: the
   Stream and Block tables of `xz --list -vv` (offsets, sizes, checks,
   padding, and from the Block Header its size, stored sizes, filter chain,

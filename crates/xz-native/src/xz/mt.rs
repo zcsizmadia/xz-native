@@ -1,5 +1,8 @@
-//! Multithreaded .xz decoding for [`crate::XzReader`] (liblzma
-//! `stream_decoder_mt.c`).
+//! Multithreaded .xz decoding for [`crate::XzReader`] and [`XzDecoder`]
+//! (liblzma `stream_decoder_mt.c`).
+//!
+//! With [`XzDecoder`], the input is what each `decode` call passes; its end
+//! pauses parsing until the next call, unless it is the end of the data.
 //!
 //! The reading thread parses the input in order and checks the Stream
 //! Headers, Block Headers, Index, Stream Footers and Stream Padding exactly
@@ -24,7 +27,7 @@
 
 use super::flat::decode_block;
 use super::format::*;
-use super::stream::{BlockDecoder, DecoderOptions, IndexDecoder, RecordHash};
+use super::stream::{BlockDecoder, DecoderOptions, IndexDecoder, RecordHash, Status};
 use crate::check::Check;
 use crate::error::Error;
 use alloc::boxed::Box;
@@ -302,6 +305,9 @@ enum Item {
     /// A Block decoded on the reading thread, from the inner reader.
     Direct(Box<BlockDecoder>),
     Fail(Error),
+    /// A Block Header, of this size, over the memory limit: the error, and
+    /// once the limit is raised, decoding goes on from that header.
+    MemLimit(usize),
     End,
 }
 
@@ -374,7 +380,41 @@ fn fill_vec<R: BufRead>(inner: &mut R, buf: &mut Vec<u8>, need: usize) -> io::Re
     Ok(true)
 }
 
-/// The multithreaded engine of [`crate::XzReader`].
+/// The input of [`MtDecoder::decode`]: until `finish`, its end is
+/// [`io::ErrorKind::WouldBlock`] instead of the end of the data.
+struct PushInput<'a> {
+    data: &'a [u8],
+    pos: usize,
+    finish: bool,
+}
+
+impl io::Read for PushInput<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let avail = self.fill_buf()?;
+        let n = avail.len().min(buf.len());
+        buf[..n].copy_from_slice(&avail[..n]);
+        self.consume(n);
+        Ok(n)
+    }
+}
+
+impl BufRead for PushInput<'_> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        if self.pos == self.data.len() && !self.finish {
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        Ok(&self.data[self.pos..])
+    }
+
+    fn consume(&mut self, n: usize) {
+        self.pos += n;
+    }
+}
+
+/// The multithreaded engine of [`crate::XzReader`] and [`XzDecoder`] with
+/// threads.
+///
+/// [`XzDecoder`]: super::stream::XzDecoder
 pub(crate) struct MtDecoder {
     opts: DecoderOptions,
     threads: usize,
@@ -445,6 +485,65 @@ impl MtDecoder {
         self.memusage
     }
 
+    pub(crate) fn memlimit(&self) -> u64 {
+        self.opts.memlimit
+    }
+
+    /// Changes the memory limit, and with it the budget for Blocks in
+    /// flight; it applies from the next Block Header.
+    pub(crate) fn set_memlimit(&mut self, memlimit: u64) {
+        self.opts.memlimit = memlimit;
+        self.budget = memlimit.min(DEFAULT_BUDGET);
+    }
+
+    /// Check type of the Stream being parsed.
+    pub(crate) fn check(&self) -> Option<Check> {
+        self.flags.map(|f| f.check)
+    }
+
+    /// [`XzDecoder::decode`] with threads: like [`read`](Self::read) on the
+    /// input given so far. Without `finish`, the end of `input` only pauses
+    /// parsing; the Blocks already read are still returned, and when none is
+    /// ready, the call waits for a worker to finish one.
+    ///
+    /// [`XzDecoder::decode`]: super::stream::XzDecoder::decode
+    pub(crate) fn decode(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+        ip: &mut usize,
+        op: &mut usize,
+    ) -> core::result::Result<Status, Error> {
+        let mut src = PushInput {
+            data: input,
+            pos: 0,
+            finish,
+        };
+        let r = if output.is_empty() {
+            self.pump(&mut src).map(|()| 0)
+        } else {
+            self.read(&mut src, output)
+        };
+        *ip = src.pos;
+        match r {
+            Ok(n) => {
+                *op = n;
+                Ok(if matches!(self.queue.front(), Some(Item::End)) {
+                    Status::StreamEnd
+                } else {
+                    Status::Ok
+                })
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(Status::Ok),
+            // `PushInput` returns no other I/O errors.
+            Err(e) => Err(*e
+                .get_ref()
+                .and_then(|e| e.downcast_ref::<Error>())
+                .expect("an xz_native::Error")),
+        }
+    }
+
     /// Room in the budget for unused buffers.
     fn room(&self) -> u64 {
         self.budget
@@ -506,9 +605,15 @@ impl MtDecoder {
                 if !fill(inner, &mut self.hbuf[..size], &mut self.hpos)? {
                     return Err(Error::Truncated.into());
                 }
-                self.hpos = 0;
                 let hdr = decode_block_header(&self.hbuf[..size], check)?;
                 self.memusage = BlockDecoder::mem_usage(&hdr);
+                if self.memusage > self.opts.memlimit {
+                    // The header stays read (`hpos`), as in XzDecoder.
+                    self.queue.push_back(Item::MemLimit(size));
+                    self.parse = Parse::Blocked;
+                    return Ok(false);
+                }
+                self.hpos = 0;
                 let cost = match (hdr.compressed_size, hdr.uncompressed_size) {
                     (Some(c), Some(u)) => c
                         .next_multiple_of(4)
@@ -517,9 +622,6 @@ impl MtDecoder {
                     _ => u64::MAX,
                 };
                 if cost <= self.budget {
-                    if self.memusage > self.opts.memlimit {
-                        return Err(Error::MemLimit.into());
-                    }
                     self.parse = Parse::Held(hdr, cost);
                 } else {
                     // Sizes unknown or too large: decode it here once the
@@ -617,7 +719,9 @@ impl MtDecoder {
     }
 
     fn dispatch(&mut self, hdr: BlockHeader, check: Check, input: Vec<u8>, cost: u64, cut: bool) {
-        let pool = self.pool.get_or_insert_with(|| Pool::new(self.opts));
+        // The limit is checked here, at the Block Header, and can change.
+        let worker_opts = self.opts.memlimit(u64::MAX);
+        let pool = self.pool.get_or_insert_with(|| Pool::new(worker_opts));
         // Start a worker when all the others are busy. If the OS refuses,
         // the workers there are carry on; without any, the Block is decoded
         // on this thread.
@@ -717,13 +821,22 @@ impl MtDecoder {
         }
         let mut written = 0;
         while written < out.len() {
-            if let Err(e) = self.pump(inner) {
-                return if written > 0 { Ok(written) } else { Err(e) };
-            }
+            // Without more input for now, the Blocks already read are still
+            // returned.
+            let paused = match self.pump(inner) {
+                Ok(()) => false,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => true,
+                Err(e) => return if written > 0 { Ok(written) } else { Err(e) },
+            };
             self.collect(false);
             let Some(front) = self.queue.front_mut() else {
-                // Parsing stops only at an item in the queue.
-                unreachable!()
+                // Parsing stops only at an item in the queue or for input.
+                assert!(paused);
+                return if written > 0 {
+                    Ok(written)
+                } else {
+                    Err(io::ErrorKind::WouldBlock.into())
+                };
             };
             match front {
                 Item::Block {
@@ -793,6 +906,14 @@ impl MtDecoder {
                 Item::Fail(e) => {
                     let e = *e;
                     return self.fail(e, written);
+                }
+                Item::MemLimit(size) => {
+                    if written > 0 {
+                        break;
+                    }
+                    self.parse = Parse::BlockHeader(*size);
+                    self.queue.pop_front();
+                    return Err(Error::MemLimit.into());
                 }
                 Item::End => break,
             }
