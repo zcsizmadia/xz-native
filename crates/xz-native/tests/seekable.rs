@@ -763,3 +763,49 @@ fn damage_matches_streaming_errors() {
         );
     }
 }
+
+/// A Block whose LZMA2 chunk header is split by the reader's 64 KiB input
+/// buffer, read up to that chunk and then on. Flushing every 4366 random
+/// bytes makes uncompressed chunks of 4369 bytes with their 3-byte headers,
+/// and 15 of them end 1 byte before 64 KiB. (The decoder takes the header
+/// byte with the data before it, even without output space, so the
+/// reader never sees a call that consumes input without output.)
+#[test]
+fn chunk_header_split_by_the_input_buffer() {
+    let mut r = Rng(11);
+    let data: Vec<u8> = (0..200_000).map(|_| r.next() as u8).collect();
+    let mut enc = xz_native::XzEncoder::new(0).unwrap();
+    let mut packed = Vec::new();
+    let mut out = vec![0u8; 1 << 16];
+    let pieces: Vec<&[u8]> = data.chunks(4366).collect();
+    for (i, piece) in pieces.iter().enumerate() {
+        let action = if i + 1 == pieces.len() {
+            xz_native::Action::Finish
+        } else {
+            xz_native::Action::SyncFlush
+        };
+        let mut input = *piece;
+        loop {
+            let (u, w, s) = enc.encode(input, &mut out, action).unwrap();
+            input = &input[u..];
+            packed.extend_from_slice(&out[..w]);
+            if s == xz_native::Status::StreamEnd {
+                break;
+            }
+        }
+    }
+    // The Block data starts with uncompressed chunks of 4369 bytes.
+    let block = 12 + (packed[12] as usize + 1) * 4;
+    assert_eq!(
+        packed[block], 0x01,
+        "first chunk: uncompressed, dictionary reset"
+    );
+    assert_eq!(packed[block + 4369], 0x02, "second chunk: uncompressed");
+    // A read that ends with the 15th chunk leaves only the header byte.
+    let mut r = open(&packed).unwrap();
+    let mut first = vec![0u8; 15 * 4366];
+    r.read_exact(&mut first).unwrap();
+    assert!(first == data[..first.len()]);
+    assert!(read_all(&mut r).unwrap() == data[first.len()..]);
+    check_random_access("chunk headers", &packed, &data, 12);
+}
