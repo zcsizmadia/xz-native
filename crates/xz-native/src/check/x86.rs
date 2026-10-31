@@ -352,6 +352,10 @@ pub(crate) fn crc64_vpclmul(buf: &[u8], crc: u64) -> u64 {
 #[cfg(test)]
 type CrcFns = (fn(&[u8], u32) -> u32, fn(&[u8], u64) -> u64);
 
+/// A SHA-256 block function, as returned by the test hook below.
+#[cfg(test)]
+type Sha256Fn = fn(&mut [u32; 8], &[u8]);
+
 /// Test hook: the PCLMULQDQ functions as safe calls, or `None` if the CPU
 /// lacks the features.
 #[cfg(test)]
@@ -380,6 +384,17 @@ pub(crate) fn vpclmul_fns() -> Option<CrcFns> {
         |b, c| unsafe { crc32_vpclmul(b, c) },
         |b, c| unsafe { crc64_vpclmul(b, c) },
     ))
+}
+
+/// Test hook: [`sha256_blocks`] as a safe call, or `None` if the CPU lacks
+/// the SHA extensions.
+#[cfg(test)]
+pub(crate) fn sha256_fn() -> Option<Sha256Fn> {
+    if !crate::cpu::has_sha256() {
+        return None;
+    }
+    // SAFETY: returned only after the CPU features were detected above.
+    Some(|s, b| unsafe { sha256_blocks(s, b) })
 }
 
 /// SHA-256 compression of whole 64-byte blocks with the x86 SHA extensions.

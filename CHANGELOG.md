@@ -63,6 +63,13 @@ minor version may change the API.
 - `compat::{read, bufread}::XzDecoder::new_multi_decoder` also decodes
   .lzma and .lz, detected from the first byte, like `xz2`'s auto decoder
   (#72).
+- `memusage()`, `RawOptions::decoder_memusage()` and the memory limit
+  checks use liblzma's figures (64-bit): the dictionary size plus the
+  decoder state, so a limit accepts and rejects the same files as
+  liblzma (#75).
+- The `portable` feature also replaces the decoder's unchecked input and
+  probability reads with checked ones, so no `unsafe` code runs (#75).
+- `LzmaProps` is no longer public (no public API used it) (#75).
 - Threaded decoding rejects more than 16384 threads with `Error::Options`,
   like `lzma_stream_decoder_mt` (#74).
 - One-shot decoding with `concatenated(false)` ignores the input after the

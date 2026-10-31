@@ -266,3 +266,58 @@ fn mutations_agree_with_liblzma() {
     }
     eprintln!("{cases} mutated inputs, {ok_cases} decoded successfully by both");
 }
+
+/// `memusage()` matches liblzma's `lzma_memusage` once the headers are read
+/// (on 64-bit platforms): liblzma decodes with that memory limit and fails
+/// with one byte less, so limits accept and reject the same files.
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn memusage_matches_liblzma() {
+    use xz_native::{BcjKind, EncoderOptions, Filter, LzmaDecoder, XzDecoder};
+    let data = b"memory usage".repeat(100);
+    let decodes = |s: Result<Stream, liblzma::stream::Error>, input: &[u8]| {
+        let mut s = s.unwrap();
+        let mut out = Vec::with_capacity(data.len() + 100);
+        match s.process_vec(input, &mut out, Action::Finish) {
+            Ok(_) => true,
+            Err(liblzma::stream::Error::MemLimit) => false,
+            Err(e) => panic!("{e:?}"),
+        }
+    };
+    for dict in [4096u32, 5000, 1 << 20, (3 << 20) + 1] {
+        for filters in [
+            vec![],
+            vec![Filter::Bcj {
+                kind: BcjKind::X86,
+                start_offset: 0,
+            }],
+            vec![Filter::Delta { distance: 4 }],
+        ] {
+            let mut opts = EncoderOptions::preset(1).unwrap().filters(filters.clone());
+            opts.lzma.dict_size = dict;
+            let xz = xz_native::compress_with_options(&data, &opts).unwrap();
+            let mut d = XzDecoder::new();
+            d.decode(&xz, &mut [0u8; 1], false).unwrap();
+            let m = d.memusage();
+            let label = format!("xz, dict {dict}, {filters:?}");
+            assert!(decodes(Stream::new_stream_decoder(m, 0), &xz), "{label}");
+            assert!(
+                !decodes(Stream::new_stream_decoder(m - 1, 0), &xz),
+                "{label}"
+            );
+        }
+        let lzma_opts = xz_native::LzmaOptions::preset(1).unwrap().dict_size(dict);
+        let lzma = xz_native::compress_lzma_with_options(&data, &lzma_opts).unwrap();
+        let mut d = LzmaDecoder::new();
+        d.decode(&lzma, &mut [0u8; 1], false).unwrap();
+        let m = d.memusage();
+        assert!(
+            decodes(Stream::new_lzma_decoder(m), &lzma),
+            "lzma, dict {dict}"
+        );
+        assert!(
+            !decodes(Stream::new_lzma_decoder(m - 1), &lzma),
+            "lzma, dict {dict}"
+        );
+    }
+}

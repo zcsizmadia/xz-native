@@ -258,3 +258,36 @@ pub(crate) fn sha256_blocks(state: &mut [u32; 8], blocks: &[u8]) {
     }
     *state = out;
 }
+
+/// CRC32 and CRC64 function pointers, as returned by the test hooks below.
+#[cfg(test)]
+type CrcFns = (fn(&[u8], u32) -> u32, fn(&[u8], u64) -> u64);
+
+/// A SHA-256 block function, as returned by the test hook below.
+#[cfg(test)]
+type Sha256Fn = fn(&mut [u32; 8], &[u8]);
+
+/// Test hook: the CRC32 (ARMv8 CRC) and CRC64 (PMULL) functions as safe
+/// calls, or `None` if the CPU lacks either.
+#[cfg(all(test, target_endian = "little"))]
+pub(crate) fn crc_fns() -> Option<CrcFns> {
+    if !crate::cpu::has_arm_crc32() || !crate::cpu::has_clmul() {
+        return None;
+    }
+    // SAFETY: returned only after the CPU features were detected above.
+    Some((
+        |b, c| unsafe { crc32_arm(b, c) },
+        |b, c| unsafe { crc64_pmull(b, c) },
+    ))
+}
+
+/// Test hook: [`sha256_blocks`] as a safe call, or `None` if the CPU lacks
+/// the SHA2 instructions.
+#[cfg(test)]
+pub(crate) fn sha256_fn() -> Option<Sha256Fn> {
+    if !crate::cpu::has_sha256() {
+        return None;
+    }
+    // SAFETY: returned only after the CPU features were detected above.
+    Some(|s, b| unsafe { sha256_blocks(s, b) })
+}

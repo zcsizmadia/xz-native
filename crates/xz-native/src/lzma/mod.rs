@@ -16,15 +16,17 @@ use dict::Dict;
 
 pub(crate) const NUM_STATES: usize = 12;
 
-/// Literal context bits, literal position bits and position bits.
+/// Literal context bits, literal position bits and position bits. The
+/// decoder's unchecked probability reads rely on lc + lp <= 4 and pb <= 4,
+/// which [`decoder::LzmaDecoder::reset`] asserts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LzmaProps {
-    /// Literal context bits (0-8; lc + lp <= 4).
-    pub lc: u8,
-    /// Literal position bits (0-4; lc + lp <= 4).
-    pub lp: u8,
+pub(crate) struct LzmaProps {
+    /// Literal context bits (lc + lp <= 4).
+    pub(crate) lc: u8,
+    /// Literal position bits (lc + lp <= 4).
+    pub(crate) lp: u8,
     /// Position bits (0-4).
-    pub pb: u8,
+    pub(crate) pb: u8,
 }
 
 impl LzmaProps {
@@ -57,6 +59,20 @@ impl LzCodec for decoder::LzmaDecoder {
 
 /// Runs an [`LzCodec`] and copies the dictionary output to the caller's
 /// buffer (liblzma `lz_decoder.c`).
+/// Decoder memory usage as liblzma reports it on 64-bit platforms
+/// (`lzma_raw_decoder_memusage`, `lzma_memusage`): the dictionary size plus
+/// a fixed overhead for the decoder state and `LZMA_MEMUSAGE_BASE`, so that
+/// memory limits accept and reject the same files.
+pub(crate) fn lzma1_decoder_memusage(dict_size: u32) -> u64 {
+    dict_size as u64 + 65_984
+}
+
+/// [`lzma1_decoder_memusage`] for LZMA2 (an LZMA1 decoder and the chunk
+/// parser).
+pub(crate) fn lzma2_decoder_memusage(dict_size: u32) -> u64 {
+    dict_size as u64 + 66_168
+}
+
 #[derive(Debug)]
 pub(crate) struct LzDriver<C> {
     pub(crate) codec: C,

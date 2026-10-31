@@ -3,7 +3,6 @@
 use crate::check::crc32;
 use crate::error::{Error, Result};
 use crate::lzma::decoder::LzmaDecoder;
-use crate::lzma::dict::Dict;
 use crate::lzma::{LzDriver, LzmaProps, Progress};
 use crate::xz::stream::{DecoderOptions, Status};
 
@@ -192,7 +191,7 @@ impl LzipDecoder {
                     self.seq = Seq::CoderInit;
                 }
                 Seq::CoderInit => {
-                    self.memusage = Dict::mem_usage(self.dict_size) + 32 * 1024;
+                    self.memusage = crate::lzma::lzma1_decoder_memusage(self.dict_size);
                     if self.memusage > self.opts.memlimit.max(1) {
                         // The retry consumes nothing (the state stays at
                         // CoderInit).
@@ -369,7 +368,7 @@ mod tests {
         assert_eq!(run_once(&mut d, &m), Ok((6, Status::Ok)));
         assert_eq!(run(&mut d, &m[6..]), Err(Error::MemLimit));
         assert_eq!(run(&mut d, &m[6..]), Err(Error::MemLimit));
-        assert_eq!(d.memusage(), Dict::mem_usage(512 << 20) + 32 * 1024);
+        assert_eq!(d.memusage(), crate::lzma::lzma1_decoder_memusage(512 << 20));
         assert_eq!(d.memlimit(), 256 << 20);
         // Raising the limit resumes (4 KiB dictionary, so nothing big is
         // allocated).

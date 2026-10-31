@@ -78,12 +78,12 @@ impl Filter {
     }
 
     /// Memory needed to decode with this filter.
+    /// Its share of `lzma_raw_decoder_memusage` (64-bit liblzma).
     pub(crate) fn decoder_mem_usage(&self) -> u64 {
         match self {
-            Filter::Lzma2 { dict_size } => {
-                crate::lzma::dict::Dict::mem_usage(*dict_size) + 32 * 1024
-            }
-            _ => 1024,
+            Filter::Lzma2 { dict_size } => crate::lzma::lzma2_decoder_memusage(*dict_size),
+            Filter::Delta { .. } => 352,
+            Filter::Bcj { .. } => 1024,
         }
     }
 }

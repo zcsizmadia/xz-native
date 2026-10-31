@@ -2,7 +2,6 @@
 
 use crate::error::{Error, Result};
 use crate::lzma::decoder::LzmaDecoder as Lzma1Decoder;
-use crate::lzma::dict::Dict;
 use crate::lzma::{LzDriver, LzmaProps, Progress};
 use crate::xz::encoder::Action;
 use crate::xz::stream::{DecoderOptions, Status};
@@ -108,7 +107,7 @@ impl LzmaDecoder {
             let props = LzmaProps::from_byte(self.header[0]).ok_or(Error::Format)?;
             let dict_size = u32::from_le_bytes(self.header[1..5].try_into().unwrap());
             let size = u64::from_le_bytes(self.header[5..13].try_into().unwrap());
-            self.memusage = Dict::mem_usage(dict_size) + 32 * 1024;
+            self.memusage = crate::lzma::lzma1_decoder_memusage(dict_size);
             if self.memusage > self.memlimit {
                 // The retry consumes nothing: the header is kept.
                 return Err(Error::MemLimit);

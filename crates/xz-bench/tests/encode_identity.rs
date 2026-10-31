@@ -621,9 +621,18 @@ fn normalization_after_4_gib_matches_liblzma() {
 }
 
 /// Runs xz-native over the same chunks and actions as [`run_c`].
-fn run_ours(mut enc: xz_native::XzEncoder, chunks: &[(&[u8], Action)]) -> Vec<u8> {
+fn run_ours(enc: xz_native::XzEncoder, chunks: &[(&[u8], Action)]) -> Vec<u8> {
+    run_ours_buf(enc, chunks, 1 << 16)
+}
+
+/// [`run_ours`] with an output buffer of `out_size` bytes per call.
+fn run_ours_buf(
+    mut enc: xz_native::XzEncoder,
+    chunks: &[(&[u8], Action)],
+    out_size: usize,
+) -> Vec<u8> {
     let mut out = Vec::new();
-    let mut buf = vec![0u8; 1 << 16];
+    let mut buf = vec![0u8; out_size];
     for &(data, action) in chunks {
         let a = match action {
             Action::Run => xz_native::Action::Run,
@@ -684,6 +693,59 @@ fn streaming_and_flushes_match_liblzma() {
         let what = format!("streaming preset {preset}");
         assert_same(&what, &ours, &theirs);
         assert_eq!(liblzma_decode(&ours), data, "{what}");
+    }
+}
+
+/// Two LZMA2 encoder paths that depend on call boundaries: a chunk of
+/// highly compressible data that has to close at the 2 MiB uncompressed
+/// limit when a call ends within a match length of it, and an uncompressed
+/// chunk header written into an output buffer with fewer than 3 bytes free.
+#[test]
+fn lzma2_chunk_limits_across_calls_match_liblzma() {
+    let o = preset_opts(1, 1 << 20);
+    let enc = || xz_native::XzEncoder::with_options(o.clone()).unwrap();
+    let c = || Stream::new_stream_encoder(&filters_c(&o), check_c(o.check)).unwrap();
+
+    // Compresses far beyond 32:1, so chunks end at 2 MiB uncompressed.
+    // Bytes changed at random gaps of 200-455 vary the match lengths, so
+    // the encoder's position doesn't move only in steps of 273; several
+    // seeds make some calls stop within a match length of the limit.
+    for seed in 23..31 {
+        let mut data = periodic(5 << 20, 7, 21);
+        let mut r = Rng(seed);
+        let mut i = 0;
+        while i < data.len() {
+            data[i] ^= 1 + (r.next() % 255) as u8;
+            i += 200 + (r.next() % 256) as usize;
+        }
+        let mut chunks: Vec<(&[u8], Action)> = Vec::new();
+        let mut pos = 0;
+        for chunk_end in [2 << 20, 4 << 20] {
+            // The match finder keeps a few KiB of lookahead, so the
+            // encoder stops that much before the end of a call's input:
+            // cut every 50 bytes around the limit.
+            for cut in (chunk_end - 100..chunk_end + 4500).step_by(50) {
+                chunks.push((&data[pos..cut], Action::Run));
+                pos = cut;
+            }
+        }
+        chunks.push((&data[pos..], Action::Finish));
+        let ours = run_ours(enc(), &chunks);
+        assert_same(
+            &format!("2 MiB limit, seed {seed}"),
+            &ours,
+            &run_c(c(), &chunks),
+        );
+        assert_eq!(xz_native::decompress(&ours).unwrap(), data);
+    }
+
+    // Incompressible data through 1- and 2-byte output buffers.
+    let data = random(150_000, 22);
+    let chunks = [(&data[..], Action::Finish)];
+    let theirs = run_c(c(), &chunks);
+    for out_size in [1, 2, 3] {
+        let ours = run_ours_buf(enc(), &chunks, out_size);
+        assert_same(&format!("{out_size}-byte output"), &ours, &theirs);
     }
 }
 

@@ -4,7 +4,6 @@
 use crate::error::{Error, Result};
 use crate::filter::{ChainDecoder, Filter};
 use crate::lzma::decoder::LzmaDecoder;
-use crate::lzma::dict::Dict;
 use crate::lzma::lz_encoder::MfAction;
 use crate::lzma::lzma2::Lzma2Decoder;
 use crate::lzma::lzma2_encoder::{LzEncoder, Lzma1Encoder, Lzma2Encoder};
@@ -68,7 +67,15 @@ impl RawOptions {
     /// Memory the decoder needs for these options, in bytes
     /// (`lzma_raw_decoder_memusage()`).
     pub fn decoder_memusage(&self) -> u64 {
-        Dict::mem_usage(self.lzma.dict_size) + 32 * 1024 + 1024 * self.filters.len() as u64
+        let lz = match self.method {
+            RawMethod::Lzma1 => crate::lzma::lzma1_decoder_memusage(self.lzma.dict_size),
+            RawMethod::Lzma2 => crate::lzma::lzma2_decoder_memusage(self.lzma.dict_size),
+        };
+        lz + self
+            .filters
+            .iter()
+            .map(|f| f.decoder_mem_usage())
+            .sum::<u64>()
     }
 
     fn props(&self) -> Result<LzmaProps> {
