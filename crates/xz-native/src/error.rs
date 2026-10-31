@@ -32,6 +32,9 @@ pub enum Error {
     /// encoder after a worker thread panicked (a bug) and the panic was
     /// caught.
     Usage,
+    /// The output buffer is too small for the result (`LZMA_BUF_ERROR` from
+    /// liblzma's buffer functions); see [`crate::compress_bound`].
+    BufferTooSmall,
 }
 
 impl fmt::Display for Error {
@@ -45,6 +48,7 @@ impl fmt::Display for Error {
             Error::Truncated => "unexpected end of input",
             Error::InvalidOptions => "invalid encoder options",
             Error::Usage => "unsupported use of the API",
+            Error::BufferTooSmall => "output buffer too small",
         })
     }
 }
@@ -59,6 +63,7 @@ impl From<Error> for std::io::Error {
             Error::MemLimit => std::io::ErrorKind::OutOfMemory,
             Error::Options | Error::InvalidOptions => std::io::ErrorKind::Unsupported,
             Error::Usage => std::io::ErrorKind::InvalidInput,
+            Error::BufferTooSmall => std::io::ErrorKind::WriteZero,
             _ => std::io::ErrorKind::InvalidData,
         };
         std::io::Error::new(kind, e)

@@ -19,6 +19,11 @@ minor version may change the API.
   `RawEncoder::with_preset_dict` and `RawDecoder::with_preset_dict`
   (liblzma's `preset_dict`). Small inputs similar to the dictionary
   compress much better; the output is byte-identical with liblzma's (#95).
+- One-shot functions into a caller's buffer: `compress_to_slice`,
+  `compress_with_options_to_slice`, `decompress_to_slice` and
+  `decompress_with_options_to_slice`, with `Error::BufferTooSmall` when it
+  doesn't fit, and `compress_bound`, equal to liblzma's
+  `lzma_stream_buffer_bound` (#106).
 - Encoder memory usage: `EncoderOptions::encoder_memusage` and
   `RawOptions::encoder_memusage`, equal to liblzma's
   `lzma_raw_encoder_memusage`, `lzma_easy_encoder_memusage` and, with
