@@ -860,3 +860,39 @@ fn block_header_sizes_must_match_the_index() {
         assert_eq!(e.err(), Some(Error::Data), "field at {field}");
     }
 }
+
+/// The memory limit bounds the Index records the reader keeps: the smallest
+/// limit that opens a file is the same amount per Block for any number of
+/// Blocks (each record costs the same; a limit of exactly that many records
+/// is enough).
+#[test]
+fn memlimit_counts_index_records_exactly() {
+    let threshold = |blocks: usize| {
+        let Some(c) = xz(
+            &["-c", "-T1", "--block-size=1000"],
+            &text(blocks * 1000, 21),
+        ) else {
+            return None;
+        };
+        let opens = |m: u64| {
+            XzSeekableReader::with_options(Cursor::new(&c), DecoderOptions::default().memlimit(m))
+                .is_ok()
+        };
+        let (mut lo, mut hi) = (0u64, 1 << 20);
+        assert!(opens(hi) && !opens(lo));
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2;
+            if opens(mid) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        Some(hi)
+    };
+    let (Some(t3), Some(t7)) = (threshold(3), threshold(7)) else {
+        return;
+    };
+    assert_eq!(t3 % 3, 0, "{t3}");
+    assert_eq!(t3 / 3, t7 / 7, "{t3} for 3 Blocks, {t7} for 7");
+}

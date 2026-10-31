@@ -308,3 +308,32 @@ fn lzma_header_dictionary_size_is_rounded() {
         assert_eq!(lzma[1..5], u32::to_le_bytes(stored), "dict {dict}");
     }
 }
+
+/// A call without output space isn't truncation, even with `finish` and no
+/// input left; and a file with a check this crate can't verify decodes
+/// through the push API (with its check skipped) unless
+/// `fail_on_unsupported_check` is set.
+#[test]
+fn xz_decoder_no_space_and_unsupported_check() {
+    let data = sample();
+    let packed = compress(&data, 1).unwrap();
+    let mut dec = XzDecoder::new();
+    let (u, _, _) = dec.decode(&packed[..30], &mut [], false).unwrap();
+    assert_eq!(dec.decode(&[], &mut [], true), Ok((0, 0, Status::Ok)));
+    let mut out = vec![0u8; data.len()];
+    let (_, w, _) = dec.decode(&packed[u..], &mut out, true).unwrap();
+    assert!(w == data.len() && out == data);
+
+    let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../third_party/xz/tests/files/unsupported-check.xz");
+    let file = std::fs::read(p).unwrap();
+    let mut out = vec![0u8; 1 << 16];
+    let mut dec = XzDecoder::new();
+    let (_, _, s) = dec.decode(&file, &mut out, true).unwrap();
+    assert_eq!(s, Status::StreamEnd);
+    let opts = xz_native::DecoderOptions::new().fail_on_unsupported_check(true);
+    let mut dec = XzDecoder::with_options(opts);
+    // The Stream Header is consumed first, then the error comes.
+    assert_eq!(dec.decode(&file, &mut out, true), Ok((12, 0, Status::Ok)));
+    assert_eq!(dec.decode(&file[12..], &mut out, true), Err(Error::Options));
+}

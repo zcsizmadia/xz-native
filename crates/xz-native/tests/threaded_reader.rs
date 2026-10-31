@@ -597,3 +597,23 @@ fn too_many_threads() {
         b"thread limit"
     );
 }
+
+/// A damaged magic in a later Stream Header is a data error, not a format
+/// error (only the first Stream decides whether the input is .xz at all),
+/// with threads too.
+#[test]
+fn bad_magic_in_a_later_stream() {
+    let data = text(100_000, 12);
+    let Some(one) = multi_block(&data, &["--block-size=20000"]) else {
+        return;
+    };
+    let mut cat = one.clone();
+    cat.extend_from_slice(&one);
+    let second = one.len();
+    cat[second + 1] ^= 0x20;
+    same_error("second Stream Header magic", &cat, data.len());
+    for t in [1, 4] {
+        let (_, err) = read_xz(&cat, threads(t), 8192, 1);
+        assert_eq!(err, Some(Error::Data), "threads {t}");
+    }
+}
