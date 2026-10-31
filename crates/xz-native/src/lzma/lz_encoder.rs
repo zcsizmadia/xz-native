@@ -501,6 +501,42 @@ impl Mf {
         )
     }
 
+    /// Prefetches the 4-byte hash bucket of the byte after `cur`, the first
+    /// load of the next search (tukaani-project/xz#247). The bytes after
+    /// the input are the window's slack, so the hash can be garbage there.
+    #[inline(always)]
+    fn prefetch_next_hash4(&self, cur: usize) {
+        #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+        if let Some(b) = self.buf.get(cur + 1..cur + 5) {
+            let t3 = hash_byte(b[0]) ^ b[1] as u32 ^ ((b[2] as u32) << 8);
+            let hv = (t3 ^ (hash_byte(b[3]) << 5)) & self.hash_mask;
+            prefetch(
+                self.hash
+                    .as_ptr()
+                    .wrapping_add(FIX_4_HASH_SIZE + hv as usize),
+            );
+        }
+        #[cfg(not(all(target_arch = "x86_64", not(feature = "portable"))))]
+        let _ = cur;
+    }
+
+    /// [`prefetch_next_hash4`](Self::prefetch_next_hash4) for 3-byte
+    /// hashing.
+    #[inline(always)]
+    fn prefetch_next_hash3(&self, cur: usize) {
+        #[cfg(all(target_arch = "x86_64", not(feature = "portable")))]
+        if let Some(b) = self.buf.get(cur + 1..cur + 4) {
+            let hv = (hash_byte(b[0]) ^ b[1] as u32 ^ ((b[2] as u32) << 8)) & self.hash_mask;
+            prefetch(
+                self.hash
+                    .as_ptr()
+                    .wrapping_add(FIX_3_HASH_SIZE + hv as usize),
+            );
+        }
+        #[cfg(not(all(target_arch = "x86_64", not(feature = "portable"))))]
+        let _ = cur;
+    }
+
     #[inline(always)]
     fn hash2(&self, cur: usize) -> usize {
         u16::from_le_bytes([self.buf[cur], self.buf[cur + 1]]) as usize
@@ -702,6 +738,7 @@ impl Mf {
         let cur = self.read_pos as usize;
         let pos = self.pos();
         let (h2, hv) = self.hash3(cur);
+        self.prefetch_next_hash3(cur);
         let delta2 = pos.wrapping_sub(self.hash[h2]);
         let cur_match = self.hash[hv];
         self.hash[h2] = pos;
@@ -735,6 +772,7 @@ impl Mf {
             let cur = self.read_pos as usize;
             let pos = self.pos();
             let (h2, hv) = self.hash3(cur);
+            self.prefetch_next_hash3(cur);
             let cur_match = self.hash[hv];
             self.hash[h2] = pos;
             self.hash[hv] = pos;
@@ -750,6 +788,7 @@ impl Mf {
         let cur = self.read_pos as usize;
         let pos = self.pos();
         let (h2, h3, hv) = self.hash4(cur);
+        self.prefetch_next_hash4(cur);
         let mut delta2 = pos.wrapping_sub(self.hash[h2]);
         let delta3 = pos.wrapping_sub(self.hash[h3]);
         let cur_match = self.hash[hv];
@@ -801,6 +840,7 @@ impl Mf {
             let cur = self.read_pos as usize;
             let pos = self.pos();
             let (h2, h3, hv) = self.hash4(cur);
+            self.prefetch_next_hash4(cur);
             let cur_match = self.hash[hv];
             self.hash[h2] = pos;
             self.hash[h3] = pos;
@@ -893,6 +933,7 @@ impl Mf {
         let cur = self.read_pos as usize;
         let pos = self.pos();
         let (h2, h3, hv) = self.hash4(cur);
+        self.prefetch_next_hash4(cur);
         let mut delta2 = pos.wrapping_sub(self.hash[h2]);
         let delta3 = pos.wrapping_sub(self.hash[h3]);
         let cur_match = self.hash[hv];
@@ -943,6 +984,7 @@ impl Mf {
             let cur = self.read_pos as usize;
             let pos = self.pos();
             let (h2, h3, hv) = self.hash4(cur);
+            self.prefetch_next_hash4(cur);
             let cur_match = self.hash[hv];
             self.hash[h2] = pos;
             self.hash[h3] = pos;
