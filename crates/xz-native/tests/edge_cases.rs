@@ -706,6 +706,37 @@ fn one_shot_and_streaming_agree_on_damage() {
                 cases.push(m);
             }
         }
+        // Block Header sizes off by one, with a valid CRC32 (the -T2 file
+        // stores both sizes): first and second Block.
+        let mut off = 12;
+        for _ in 0..2 {
+            let size = (f[off] as usize + 1) * 4;
+            if f[off + 1] & 0xC0 != 0xC0 {
+                break;
+            }
+            let mut field = off + 2;
+            let mut next_block = 0usize;
+            for which in 0..2 {
+                let mut m = f.clone();
+                m[field] ^= 1;
+                let crc = xz_native::crc32(&m[off..off + size - 4], 0);
+                m[off + size - 4..off + size].copy_from_slice(&crc.to_le_bytes());
+                cases.push(m);
+                // Skip this VLI (and remember the Compressed Size).
+                let (mut v, mut shift) = (0usize, 0);
+                while f[field] & 0x80 != 0 {
+                    v |= ((f[field] & 0x7F) as usize) << shift;
+                    shift += 7;
+                    field += 1;
+                }
+                v |= (f[field] as usize) << shift;
+                field += 1;
+                if which == 0 {
+                    next_block = off + size + v.next_multiple_of(4) + 8;
+                }
+            }
+            off = next_block;
+        }
         for c in &cases {
             let one_shot = decompress_with_options(c, opts);
             let streaming = decompress_streaming(c, opts);
