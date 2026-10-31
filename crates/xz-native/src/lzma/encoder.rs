@@ -249,7 +249,7 @@ pub(crate) struct LzmaEncoder {
     longest_match_length: u32,
     fast_mode: bool,
     is_initialized: bool,
-    use_eopm: bool,
+    pub(crate) use_eopm: bool,
     pos_mask: u32,
     literal_context_bits: u32,
     literal_mask: u32,

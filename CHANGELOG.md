@@ -24,6 +24,9 @@ minor version may change the API.
   `lzma_raw_encoder_memusage`, `lzma_easy_encoder_memusage` and, with
   threads, `lzma_stream_encoder_mt_memusage` (64-bit figures), for
   choosing a preset or thread count under a memory limit (#99).
+- `RawMethod::Lzma1Ext`: LZMA1 with a known size and an optional end
+  marker, like liblzma's `LZMA_FILTER_LZMA1EXT` (.7z and .zip payloads),
+  byte-identical with it (#102).
 
 ### Changed
 - `LzmaDecoder` checks the .lzma properties byte as soon as it arrives,
