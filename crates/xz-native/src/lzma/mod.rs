@@ -57,22 +57,34 @@ impl LzCodec for decoder::LzmaDecoder {
     }
 }
 
-/// Runs an [`LzCodec`] and copies the dictionary output to the caller's
-/// buffer (liblzma `lz_decoder.c`).
+/// `LZ_DICT_EXTRA` of liblzma's `lz_decoder.h`: liblzma's CMake and
+/// autotools builds compile its SSE2 dictionary copy on x86 with SSE2
+/// (`LZMA_LZ_DECODER_CONFIG` 2), which reserves 32 more bytes.
+const LZ_DICT_EXTRA: u64 = if cfg!(any(
+    target_arch = "x86_64",
+    all(target_arch = "x86", target_feature = "sse2")
+)) {
+    32
+} else {
+    0
+};
+
 /// Decoder memory usage as liblzma reports it on 64-bit platforms
 /// (`lzma_raw_decoder_memusage`, `lzma_memusage`): the dictionary size plus
 /// a fixed overhead for the decoder state and `LZMA_MEMUSAGE_BASE`, so that
 /// memory limits accept and reject the same files.
 pub(crate) fn lzma1_decoder_memusage(dict_size: u32) -> u64 {
-    dict_size as u64 + 65_984
+    dict_size as u64 + 65_984 + LZ_DICT_EXTRA
 }
 
 /// [`lzma1_decoder_memusage`] for LZMA2 (an LZMA1 decoder and the chunk
 /// parser).
 pub(crate) fn lzma2_decoder_memusage(dict_size: u32) -> u64 {
-    dict_size as u64 + 66_168
+    dict_size as u64 + 66_168 + LZ_DICT_EXTRA
 }
 
+/// Runs an [`LzCodec`] and copies the dictionary output to the caller's
+/// buffer (liblzma `lz_decoder.c`).
 #[derive(Debug)]
 pub(crate) struct LzDriver<C> {
     pub(crate) codec: C,
