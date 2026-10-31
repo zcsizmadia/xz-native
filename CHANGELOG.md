@@ -8,6 +8,10 @@ minor version may change the API.
 
 ## [Unreleased]
 
+The changes below change behavior that callers can see (which errors are
+returned and when, constructor return types, removed exports), so the next
+release is 0.2.0.
+
 ### Added
 - `XzSeekableReader::streams()`, `blocks()` and `block_details(i)`: the
   Stream and Block tables of `xz --list -vv` (offsets, sizes, checks,

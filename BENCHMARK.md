@@ -11,27 +11,53 @@ changes may have moved them a little; [#23] tracks refreshing them for
 releases and adding more platforms and the Silesia corpus.
 
 [#23]: https://github.com/zcsizmadia/xz-native/issues/23
+[#45]: https://github.com/zcsizmadia/xz-native/pull/45
+[#51]: https://github.com/zcsizmadia/xz-native/pull/51
 
 ## Machines
 
 | | CPU | OS | C liblzma 5.8.4 build |
 |---|---|---|---|
-| **Linux** | AMD EPYC 7543 (Zen 3), one core pinned with `taskset` on an idle NUMA node | Ubuntu 22.04 | GCC, with liblzma's x86-64 assembly decoder |
+| **Linux** | AMD EPYC 7543 (Zen 3), one core pinned with `taskset` on an idle NUMA node | Ubuntu 22.04 | GCC 11, with liblzma's x86-64 assembly decoder; both builds below |
 | **Windows** | Intel i7-12800H (Alder Lake) | Windows 11 | MSVC, without assembly (what `xz2`/`liblzma` build on Windows) |
 | **Linux, small** | AMD Ryzen 5 3500U (Zen+, 4 MB L3), one core pinned | Ubuntu 26.04 (glibc 2.43, THP `madvise`) | GCC (`liblzma-sys`); also Ubuntu's `xz` 5.8.3 |
 
 The Rust code is built with the stable toolchain and the workspace `bench`
-profile (fat LTO, one codegen unit). C liblzma comes from `liblzma-sys`
-(static build), which is how Rust users get it through `xz2` and
-`liblzma`.
+profile (fat LTO, one codegen unit).
+
+### Two C liblzma builds
+
+C liblzma comes from `liblzma-sys` (static build), which is how Rust users
+get it through `xz2` and `liblzma`. That build uses `liblzma-sys`'s own
+`config.h`, which leaves out two things that liblzma's own CMake and
+autotools builds (and so the distributions' `liblzma.so` and the `xz` CLI)
+turn on for x86-64 and arm64:
+
+- **fast unaligned access** (`TUKLIB_FAST_UNALIGNED_ACCESS`): without it,
+  `lzma_memcmplen()` compares byte by byte in the match finders, so the
+  encoder is slower;
+- **CLMUL CRC** (`HAVE_USABLE_CLMUL`): without it, CRC32 and CRC64 use the
+  table code at 1.2-2.7 GiB/s instead of 10+ GiB/s, which also slows down
+  decoding files with a CRC64 check (the `xz` default).
+
+On the EPYC the tables show both: **`liblzma-sys`** is the default build,
+and **tuned** is the same source compiled through `liblzma-sys` with
+`CFLAGS="-DTUKLIB_FAST_UNALIGNED_ACCESS=1 -DHAVE_USABLE_CLMUL=1
+-DHAVE_CPUID_H=1 -DHAVE_FUNC_ATTRIBUTE_CONSTRUCTOR=1 -DHAVE_IMMINTRIN_H=1
+-DHAVE__MM_MOVEMASK_EPI8=1"`, the settings liblzma's CMake build uses on
+x86-64 Linux (its CRC then runs at 13.7 GiB/s). The tuned build is the
+fair reference for "as fast as liblzma"; the default build is what
+`xz2`/`liblzma` users run today. The other machines and the multithreaded
+tables were measured against the default build only.
 
 ## Data
 
-`xz_bench::datasets()` produces three synthetic 8 MiB inputs:
+`xz_bench::datasets()` produces three synthetic inputs:
 
-- **text**: words from a skewed vocabulary, like natural-language text
-- **binary**: structured records with small integers and repeats
-- **random**: incompressible
+- **text** (8 MiB): words from a skewed vocabulary, like natural-language
+  text
+- **binary** (8 MiB): structured records with small integers and repeats
+- **random** (4 MiB): incompressible
 
 The decode benchmarks decompress them after compressing with `xz -1` and
 `xz -6`. The encode benchmarks compress the first 4 MiB of each.
@@ -41,15 +67,16 @@ The decode benchmarks decompress them after compressing with `xz -1` and
 "One-shot" is `decompress`, "XzReader" is the streaming `std::io::Read`
 adapter.
 
-**Linux (EPYC 7543)**, at da40bf3
+**Linux (EPYC 7543)**: xz-native and the tuned liblzma at 4a6211c, the
+`liblzma-sys` build at 223f72c (the decoder is the same in both)
 
-| Input | xz-native one-shot | xz-native XzReader | lzma-rust2 | C liblzma |
-|---|---|---|---|---|
-| text, xz -1 | **109.4** | 108.1 | 73.2 | 109.1 |
-| text, xz -6 | **119.0** | 117.8 | 79.5 | 118.5 |
-| binary, xz -1 | **91.1** | 90.2 | 62.9 | 90.7 |
-| binary, xz -6 | **168.6** | 164.6 | 105.3 | 159.3 |
-| random (GiB/s) | **15.5-15.6** | 6.6-8.2 | 0.41-0.42 | 1.08 |
+| Input | xz-native one-shot | xz-native XzReader | lzma-rust2 | C liblzma, tuned | C liblzma, `liblzma-sys` |
+|---|---|---|---|---|---|
+| text, xz -1 | 118.5 | 116.2 | 73.6 | **125.5** | 109.1 |
+| text, xz -6 | 129.0 | 126.8 | 80.0 | **135.8** | 117.9 |
+| binary, xz -1 | 94.9 | 93.1 | 62.8 | **98.7** | 91.3 |
+| binary, xz -6 | 173.4 | 170.0 | 104.9 | **179.5** | 158.7 |
+| random (GiB/s) | **15.5-15.6** | 6.6-8.1 | 0.42-0.43 | 6.5 | 1.07 |
 
 **Windows (i7-12800H)**, at da40bf3
 
@@ -61,9 +88,15 @@ adapter.
 | binary, xz -6 | **174.4** | 167.6 | 110.0 | 134.6 |
 | random (GiB/s) | **3.72-3.76** | 1.90-2.71 | 0.38-0.44 | 0.82-0.97 |
 
-Against liblzma with its assembly decoder, xz-native is at 1.00-1.06x. Against
-the MSVC build it is 1.3-1.4x faster. On both, xz-native is about 1.5x
-faster than lzma-rust2 (1.42-1.64x).
+Against the tuned liblzma (assembly decoder, CLMUL CRC64), xz-native is
+behind: 0.94-0.97x one-shot and 0.93-0.95x through `XzReader` (the
+like-for-like comparison: the liblzma column is its streaming `Read`
+adapter) ([#81]). Against the `liblzma-sys` build, whose CRC64 costs it
+about 10%, xz-native is ahead: 1.03-1.08x one-shot, 1.01-1.06x streaming.
+Against the MSVC build it is 1.3-1.4x faster. On every machine,
+xz-native is about 1.5x faster than lzma-rust2 (1.42-1.64x).
+
+[#81]: https://github.com/zcsizmadia/xz-native/issues/81
 
 Incompressible data is copied straight from LZMA2's uncompressed chunks into
 the output, written once ([#49]). On Windows, first-touch page faults on a
@@ -87,7 +120,7 @@ transparent huge pages are on for the heap. `examples/alloc_probe` with
 
 So for outputs of 32 MiB and more, decode into a reused buffer
 (`decompress_into`) or stream (`XzReader`). Below that size the Ryzen's
-ceiling is its CRC64 (9.2 GiB/s, 128-bit PCLMULQDQ only), not memory.
+ceiling is its CRC64 (10.5 GiB/s, 128-bit PCLMULQDQ only), not memory.
 
 [#49]: https://github.com/zcsizmadia/xz-native/pull/49
 
@@ -95,9 +128,10 @@ ceiling is its CRC64 (9.2 GiB/s, 128-bit PCLMULQDQ only), not memory.
 
 ## Decompression, multithreaded
 
-64 MiB (each dataset repeated 8 times) compressed at `xz -6` with 1 MiB
+64 MiB (text and binary repeated 8 times) compressed at `xz -6` with 1 MiB
 Blocks and a CRC64 check (as `xz` writes), decoded with the one-shot API
-and compared with liblzma's multithreaded decoder (with
+and compared with liblzma's multithreaded decoder (the `liblzma-sys`
+build, without CLMUL CRC; with
 `memlimit_threading` raised so that it uses every thread).
 `examples/profile_decode`.
 
@@ -115,6 +149,9 @@ node (`taskset -c 32-63`):
 The check matters for the comparison: without one, the decode loops alone
 are within 1-3% of each other (liblzma ahead on large outputs), and
 xz-native's lead at low thread counts comes from its faster CRC64 ([#50]).
+Against a liblzma with CLMUL CRC (the tuned build above), expect it
+slightly behind at low thread counts, as in single-threaded decoding
+([#81]).
 
 **Windows (i7-12800H)**, text, at 798d326 (mean of two runs):
 
@@ -131,25 +168,32 @@ xz-native's lead at low thread counts comes from its faster CRC64 ([#50]).
 xz-native and C liblzma produce identical output. lzma-rust2 has no extreme
 mode, so its -9e column is its plain -9.
 
-**Linux (EPYC 7543)**, at da40bf3
+**Linux (EPYC 7543)**, at 4a6211c (the `liblzma-sys` column at 223f72c;
+the encoder is the same in both). Ratios are xz-native over the tuned
+build, then over the `liblzma-sys` build.
 
-| Data, preset | xz-native | lzma-rust2 | C liblzma | xz-native / liblzma |
-|---|---|---|---|---|
-| text -0 | **30.6** | 21.7 | 18.6 | 1.65x |
-| text -1 | **21.3** | 17.0 | 14.7 | 1.45x |
-| text -6 | **3.63** | 3.30 | 3.46 | 1.05x |
-| text -9 | **3.52** | 3.22 | 3.38 | 1.04x |
-| text -9e | **3.55** | 3.22 | 3.42 | 1.04x |
-| binary -0 | **25.1** | 18.8 | 16.6 | 1.51x |
-| binary -1 | **20.4** | 16.2 | 14.8 | 1.38x |
-| binary -6 | **4.08** | 3.42 | 3.70 | 1.10x |
-| binary -9 | **3.84** | 3.25 | 3.50 | 1.10x |
-| binary -9e | 2.67 | **3.25** | 2.65 | 1.01x |
-| random -0 | **11.8** | 8.30 | 7.68 | 1.54x |
-| random -1 | **10.8** | 8.00 | 7.30 | 1.48x |
-| random -6 | **7.73** | 6.33 | 6.08 | 1.27x |
-| random -9 | **5.77** | 4.86 | 4.69 | 1.23x |
-| random -9e | **5.72** | 4.89 | 4.67 | 1.22x |
+| Data, preset | xz-native | lzma-rust2 | C liblzma, tuned | C liblzma, `liblzma-sys` | xz-native / tuned | xz-native / `liblzma-sys` |
+|---|---|---|---|---|---|---|
+| text -0 | **30.2** | 22.2 | 19.7 | 19.0 | 1.53x | 1.61x |
+| text -1 | **21.1** | 17.2 | 15.2 | 14.7 | 1.39x | 1.46x |
+| text -6 | 3.63 | 3.33 | **3.66** | 3.47 | 0.99x | 1.05x |
+| text -9 | 3.51 | 3.23 | **3.52** | 3.38 | 1.00x | 1.04x |
+| text -9e | **3.54** | 3.23 | 3.53 | 3.41 | 1.00x | 1.04x |
+| binary -0 | **25.0** | 19.0 | 17.4 | 16.7 | 1.44x | 1.52x |
+| binary -1 | **20.3** | 16.4 | 15.2 | 14.8 | 1.34x | 1.39x |
+| binary -6 | 4.04 | 3.44 | **4.16** | 3.70 | 0.97x | 1.10x |
+| binary -9 | 3.82 | 3.27 | **3.89** | 3.51 | 0.98x | 1.09x |
+| binary -9e | 2.66 | **3.26** | 2.86 | 2.65 | 0.93x | 1.01x |
+| random -0 | **11.7** | 8.31 | 7.97 | 7.65 | 1.47x | 1.56x |
+| random -1 | **10.8** | 8.05 | 7.45 | 7.26 | 1.45x | 1.50x |
+| random -6 | **7.76** | 6.38 | 6.06 | 6.04 | 1.28x | 1.28x |
+| random -9 | **5.67** | 4.83 | 4.69 | 4.67 | 1.21x | 1.22x |
+| random -9e | **5.69** | 4.84 | 4.69 | 4.67 | 1.21x | 1.22x |
+
+With fast unaligned access, liblzma's binary tree match finder (presets 6
+and up) catches up: there xz-native is at 0.93-1.00x on text and binary.
+The fast presets keep their lead, which comes from the range encoder (see
+below).
 
 **Windows (i7-12800H)**, at da40bf3
 
@@ -178,8 +222,10 @@ implementations, so the gains there are smaller.
 
 Both encoders write the same bytes as `xz -T<n>`.
 
-**Windows (i7-12800H)**, 64 MiB input, best of 3, xz-native vs liblzma's
-multithreaded encoder:
+**Windows (i7-12800H)**, from [#45] (the library before 45d7607), 64 MiB
+input, xz-native vs liblzma's multithreaded encoder, with
+`examples/profile_encode` (`profile_encode <data> <preset> <iterations> all
+<threads> 64`). A cell with a range shows the spread over three runs.
 
 | Data, preset | 1 thread* | 4 threads | 8 threads | 20 threads |
 |---|---|---|---|---|
@@ -211,7 +257,8 @@ count.
 
 ### Why compression is faster
 
-`perf` on the EPYC at -1, single thread, time per MiB of input:
+`perf` on the EPYC at -1, single thread, time per MiB of input, from [#51]
+(the library at ebb6928's parent):
 
 | | text xz-native | text liblzma | binary xz-native | binary liblzma |
 |---|---|---|---|---|
@@ -230,7 +277,8 @@ and is bound by memory latency, so the gain is smaller.
 i7-12800H at da40bf3, GiB/s, over 4 KiB to 1 MiB buffers. xz-native picks
 PCLMULQDQ, VPCLMULQDQ, SHA-NI or the ARMv8 CRC and SHA2 instructions at run
 time. The `liblzma-sys` build used here has no CLMUL CRC, so a
-distribution's liblzma is faster than this column suggests.
+distribution's liblzma is faster than this column suggests (see the EPYC
+numbers below).
 
 | Check | xz-native | C liblzma (`liblzma-sys`) |
 |---|---|---|
@@ -238,7 +286,9 @@ distribution's liblzma is faster than this column suggests.
 | CRC64 | **65-70** | 1.5-1.6 |
 | SHA-256 | 1.9-2.0 | |
 
-On the EPYC 7543 (Zen 3, no VPCLMULQDQ) CRC32 and CRC64 reach 27.0-27.5 GiB/s, against 2.1 and 1.2 GiB/s for `liblzma-sys`, and SHA-256 1.4-1.5 GiB/s.
+On the EPYC 7543 (Zen 3, no VPCLMULQDQ) CRC32 and CRC64 reach 27.0-27.5
+GiB/s, against 13.7-13.8 GiB/s for the tuned liblzma (CLMUL, 2.0x) and
+2.1 and 1.2 GiB/s for `liblzma-sys`; SHA-256 runs at 1.4-1.5 GiB/s.
 
 ## Small Linux machine
 
@@ -282,9 +332,11 @@ published for it.
 ## Against the `xz` CLI
 
 i7-12800H, MSYS2's `xz` 5.8.4 (GCC/MinGW), single thread, best of 5,
-`examples/cli_compare.rs`. The inputs are each dataset repeated 4 times
-(32 MiB), compressed with `xz -6 -T1`, so they compress better than usual
-and the numbers are high.
+`examples/cli_compare.rs`. The inputs are each dataset repeated to 32 MiB
+(text and binary 4 times, random 8 times), compressed with `xz -6 -T1`, so
+they compress better than usual and the numbers are high. The "random"
+input is 8 copies of the same 4 MiB, so after the first copy it is long
+matches at a distance of 4 MiB, not incompressible data.
 
 | Input | xz-native one-shot | xz-native XzReader (file) | `xz -dc -T1` |
 |---|---|---|---|
