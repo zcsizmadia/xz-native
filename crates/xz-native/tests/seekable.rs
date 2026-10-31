@@ -868,12 +868,10 @@ fn block_header_sizes_must_match_the_index() {
 #[test]
 fn memlimit_counts_index_records_exactly() {
     let threshold = |blocks: usize| {
-        let Some(c) = xz(
+        let c = xz(
             &["-c", "-T1", "--block-size=1000"],
             &text(blocks * 1000, 21),
-        ) else {
-            return None;
-        };
+        )?;
         let opens = |m: u64| {
             XzSeekableReader::with_options(Cursor::new(&c), DecoderOptions::default().memlimit(m))
                 .is_ok()

@@ -220,7 +220,7 @@ fn riscv_special_auipc_matches_xz() {
     let mut data = Vec::new();
     for low in [0x3117u32, 0x3097, 0x3197, 0x2117] {
         for rs1 in 0..32u32 {
-            let auipc = low | (rs1 * 0x0004_1000 & 0xFFFF_C000);
+            let auipc = low | ((rs1 * 0x0004_1000) & 0xFFFF_C000);
             let inst2 = 0x0000_0067 | (rs1 << 15) | (rs1 << 20);
             data.extend_from_slice(&auipc.to_le_bytes());
             data.extend_from_slice(&inst2.to_le_bytes());
