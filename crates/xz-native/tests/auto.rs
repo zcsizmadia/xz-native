@@ -140,9 +140,11 @@ fn picky_lzma_headers() {
         );
     }
     assert_eq!(decompress_auto(&ok_size).unwrap(), d);
-    // 2^n + 2^(n-1) and an unknown dictionary size pass.
+    // 2^n + 2^(n-1) and an unknown dictionary size pass. With the size
+    // known, the dictionary is no larger than the data, so an unknown one
+    // fits on 32-bit targets too.
     for dict in [3u32 << 19, u32::MAX] {
-        let mut m = packed.clone();
+        let mut m = ok_size.clone();
         m[1..5].copy_from_slice(&dict.to_le_bytes());
         assert_eq!(decompress_auto(&m).unwrap(), d, "dict {dict:#x}");
     }
