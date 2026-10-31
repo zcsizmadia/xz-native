@@ -174,9 +174,14 @@ macro_rules! adapters {
         /// takes any other, such as a [`RawDecoder`](crate::RawDecoder).
         ///
         /// Decoding is CPU work done inside `poll_read`, a buffer at a
-        /// time; only the I/O is asynchronous. Input after the end of the
-        /// data is left unread in the inner reader. The inner reader must be
-        /// [`Unpin`]; wrap others in `Box::pin`.
+        /// time; only the I/O is asynchronous. Data after the end is
+        /// handled as by the push decoder: with the default options, data
+        /// after concatenated .xz Streams is an error, like `xz -d`; with
+        /// [`DecoderOptions::concatenated`]`(false)` it is left unread in
+        /// the inner reader. After [`Error::MemLimit`](crate::Error::MemLimit),
+        /// raise the limit through [`decoder_mut`](Self::decoder_mut) and
+        /// poll again. The inner reader must be [`Unpin`]; wrap others in
+        /// `Box::pin`.
         #[derive(Debug)]
         pub struct Reader<R, D> {
             inner: R,
@@ -203,6 +208,12 @@ macro_rules! adapters {
             /// Returns the decoder, for example for its `memusage()`.
             pub fn decoder(&self) -> &D {
                 &self.core.dec
+            }
+
+            /// Returns the decoder, mutably, for example to raise its memory
+            /// limit after [`Error::MemLimit`](crate::Error::MemLimit).
+            pub fn decoder_mut(&mut self) -> &mut D {
+                &mut self.core.dec
             }
 
             /// Returns a reference to the inner reader.

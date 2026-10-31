@@ -19,13 +19,22 @@
 //!
 //! The constructors, `total_in`/`total_out`, `get_ref`/`get_mut`/
 //! `into_inner` and `finish`/`try_finish` behave like `xz2`'s. As there,
-//! `XzDecoder::new` decodes one .xz stream and `new_multi_decoder` decodes
-//! concatenated streams, writers finish the stream when dropped (ignoring
-//! errors; call `finish` to see them), and an invalid preset panics.
+//! `XzDecoder::new` decodes one .xz stream; the readers'
+//! `new_multi_decoder` decodes concatenated streams of any format (.xz,
+//! legacy .lzma or .lz, detected from the first byte, like liblzma's
+//! `lzma_auto_decoder`), the writer's concatenated .xz streams. Writers
+//! finish the stream when dropped (ignoring errors; call `finish` to see
+//! them) unless the thread is panicking, `flush` on the encoder is a full
+//! flush, and an invalid preset panics. Like `std::io::Write` requires,
+//! an error from the underlying writer means nothing was consumed: the
+//! output is kept and written first on the next call.
 //! `xz2::stream::Stream` and `MtStreamBuilder` have no equivalent here; use
 //! [`crate::DecoderOptions`] and [`crate::EncoderOptions`] instead.
 
-use crate::{Action, DecoderOptions, Status, XzDecoder as PushDecoder, XzEncoder as PushEncoder};
+use crate::{
+    Action, DecoderOptions, LzipDecoder, LzmaDecoder, Status, XzDecoder as PushDecoder,
+    XzEncoder as PushEncoder,
+};
 use alloc::vec;
 use alloc::vec::Vec;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -43,6 +52,44 @@ fn push_encoder(level: u32) -> PushEncoder {
     PushEncoder::new(level).expect("invalid xz preset")
 }
 
+/// The readers' decoder: .xz, or for `new_multi_decoder` any format,
+/// chosen by the first input byte like liblzma's `lzma_auto_decoder`.
+#[derive(Debug)]
+// Like the std readers, the .xz decoder stays inline.
+#[allow(clippy::large_enum_variant)]
+enum Decoder {
+    Auto,
+    Xz(PushDecoder),
+    Lzma(LzmaDecoder),
+    Lzip(LzipDecoder),
+}
+
+impl Decoder {
+    fn decode(
+        &mut self,
+        input: &[u8],
+        out: &mut [u8],
+        finish: bool,
+    ) -> crate::Result<(usize, usize, Status)> {
+        if let Decoder::Auto = self {
+            let opts = DecoderOptions::default();
+            *self = match input.first() {
+                None if finish => return Err(crate::Error::Truncated),
+                None => return Ok((0, 0, Status::Ok)),
+                Some(0xFD) => Decoder::Xz(PushDecoder::with_options(opts)),
+                Some(b'L') => Decoder::Lzip(LzipDecoder::with_options(opts)),
+                Some(_) => Decoder::Lzma(LzmaDecoder::with_options(opts)),
+            };
+        }
+        match self {
+            Decoder::Auto => unreachable!(),
+            Decoder::Xz(d) => d.decode(input, out, finish),
+            Decoder::Lzma(d) => d.decode(input, out, finish),
+            Decoder::Lzip(d) => d.decode(input, out, finish),
+        }
+    }
+}
+
 /// Readers over an already buffered source.
 pub mod bufread {
     use super::*;
@@ -51,7 +98,7 @@ pub mod bufread {
     #[derive(Debug)]
     pub struct XzDecoder<R> {
         inner: R,
-        dec: PushDecoder,
+        dec: Decoder,
         done: bool,
         total_in: u64,
         total_out: u64,
@@ -60,15 +107,17 @@ pub mod bufread {
     impl<R: BufRead> XzDecoder<R> {
         /// Decodes a single .xz stream; data after it is left unread.
         pub fn new(inner: R) -> Self {
-            Self::with_decoder(inner, push_decoder(false))
+            Self::with_decoder(inner, Decoder::Xz(push_decoder(false)))
         }
 
-        /// Decodes concatenated .xz streams (like `xz -d`).
+        /// Decodes concatenated streams, like `xz -d`: .xz, or legacy
+        /// .lzma or .lz, detected from the first byte (`xz2` uses
+        /// liblzma's auto decoder here).
         pub fn new_multi_decoder(inner: R) -> Self {
-            Self::with_decoder(inner, push_decoder(true))
+            Self::with_decoder(inner, Decoder::Auto)
         }
 
-        fn with_decoder(inner: R, dec: PushDecoder) -> Self {
+        fn with_decoder(inner: R, dec: Decoder) -> Self {
             Self {
                 inner,
                 dec,
@@ -135,6 +184,7 @@ pub mod bufread {
     pub struct XzEncoder<R> {
         inner: R,
         enc: PushEncoder,
+        finishing: bool,
         done: bool,
         total_in: u64,
         total_out: u64,
@@ -152,6 +202,7 @@ pub mod bufread {
             Self {
                 inner,
                 enc,
+                finishing: false,
                 done: false,
                 total_in: 0,
                 total_out: 0,
@@ -192,14 +243,24 @@ pub mod bufread {
                 return Ok(0);
             }
             loop {
-                let input = self.inner.fill_buf()?;
-                let action = if input.is_empty() {
-                    Action::Finish
+                // Once the input has ended, the stream is being finished;
+                // input that shows up later isn't read.
+                let (input, action) = if self.finishing {
+                    (&[][..], Action::Finish)
                 } else {
-                    Action::Run
+                    let input = self.inner.fill_buf()?;
+                    self.finishing = input.is_empty();
+                    let action = if self.finishing {
+                        Action::Finish
+                    } else {
+                        Action::Run
+                    };
+                    (input, action)
                 };
                 let (used, written, status) = self.enc.encode(input, out, action)?;
-                self.inner.consume(used);
+                if !self.finishing {
+                    self.inner.consume(used);
+                }
                 self.total_in += used as u64;
                 self.total_out += written as u64;
                 if action == Action::Finish && status == Status::StreamEnd {
@@ -231,7 +292,8 @@ pub mod read {
             }
         }
 
-        /// Decodes concatenated .xz streams (like `xz -d`).
+        /// Decodes concatenated streams of any format, like `xz -d` (see
+        /// [`bufread::XzDecoder::new_multi_decoder`]).
         pub fn new_multi_decoder(inner: R) -> Self {
             Self {
                 inner: bufread::XzDecoder::new_multi_decoder(BufReader::with_capacity(
@@ -340,6 +402,9 @@ pub mod write {
         inner: Option<W>,
         enc: PushEncoder,
         buf: Vec<u8>,
+        /// `buf[pos..len]` is waiting to be written.
+        pos: usize,
+        len: usize,
         finished: bool,
         total_in: u64,
         total_out: u64,
@@ -357,6 +422,8 @@ pub mod write {
                 inner: Some(inner),
                 enc,
                 buf: vec![0; BUF_SIZE],
+                pos: 0,
+                len: 0,
                 finished: false,
                 total_in: 0,
                 total_out: 0,
@@ -383,35 +450,38 @@ pub mod write {
             self.inner.as_mut().unwrap()
         }
 
-        /// Runs the encoder until `input` is consumed and, for flushes and
-        /// finishing, until it reports the end.
-        fn run(&mut self, mut input: &[u8], action: Action) -> io::Result<()> {
+        /// Writes out the pending output. On an error, what wasn't written
+        /// stays pending.
+        fn dump(&mut self) -> io::Result<()> {
+            dump(
+                self.inner.as_mut().unwrap(),
+                &self.buf,
+                &mut self.pos,
+                &mut self.len,
+            )
+        }
+
+        /// Runs a flush or Finish to the end, writing out the output.
+        fn run_to_end(&mut self, action: Action) -> io::Result<()> {
             loop {
-                let (used, written, status) = self.enc.encode(input, &mut self.buf, action)?;
-                input = &input[used..];
-                self.total_in += used as u64;
+                self.dump()?;
+                let (_, written, status) = self.enc.encode(&[], &mut self.buf, action)?;
+                self.len = written;
                 self.total_out += written as u64;
-                self.inner
-                    .as_mut()
-                    .unwrap()
-                    .write_all(&self.buf[..written])?;
-                let done = match action {
-                    Action::Run => input.is_empty(),
-                    _ => input.is_empty() && status == Status::StreamEnd,
-                };
-                if done {
-                    return Ok(());
+                if status == Status::StreamEnd {
+                    return self.dump();
                 }
             }
         }
 
         /// Finishes the stream without consuming the writer. Further writes
-        /// are an error.
+        /// are an error. Retrying after an error continues where it stopped.
         pub fn try_finish(&mut self) -> io::Result<()> {
             if !self.finished {
-                self.run(&[], Action::Finish)?;
+                self.run_to_end(Action::Finish)?;
                 self.finished = true;
             }
+            self.dump()?;
             self.inner.as_mut().unwrap().flush()
         }
 
@@ -422,21 +492,45 @@ pub mod write {
         }
     }
 
+    /// Writes `buf[pos..len]` to `w`; on success both go back to 0.
+    fn dump<W: Write>(w: &mut W, buf: &[u8], pos: &mut usize, len: &mut usize) -> io::Result<()> {
+        while *pos < *len {
+            let n = w.write(&buf[*pos..*len])?;
+            if n == 0 {
+                return Err(io::ErrorKind::WriteZero.into());
+            }
+            *pos += n;
+        }
+        *pos = 0;
+        *len = 0;
+        Ok(())
+    }
+
     impl<W: Write> Write for XzEncoder<W> {
         fn write(&mut self, data: &[u8]) -> io::Result<usize> {
             if self.finished {
                 return Err(io::Error::other("write after finish"));
             }
-            self.run(data, Action::Run)?;
-            Ok(data.len())
+            loop {
+                self.dump()?;
+                let (used, written, _) = self.enc.encode(data, &mut self.buf, Action::Run)?;
+                self.len = written;
+                self.total_in += used as u64;
+                self.total_out += written as u64;
+                if used > 0 || data.is_empty() {
+                    return Ok(used);
+                }
+            }
         }
 
-        /// Makes everything written so far decodable (`LZMA_SYNC_FLUSH`, as
-        /// `xz2` does) and flushes the underlying writer.
+        /// Ends the current Block so that everything written so far is
+        /// decodable (`LZMA_FULL_FLUSH`, as `xz2` does), and flushes the
+        /// underlying writer.
         fn flush(&mut self) -> io::Result<()> {
             if !self.finished {
-                self.run(&[], Action::SyncFlush)?;
+                self.run_to_end(Action::FullFlush)?;
             }
+            self.dump()?;
             self.inner.as_mut().unwrap().flush()
         }
     }
@@ -455,6 +549,9 @@ pub mod write {
         inner: Option<W>,
         dec: PushDecoder,
         buf: Vec<u8>,
+        /// `buf[pos..len]` is waiting to be written.
+        pos: usize,
+        len: usize,
         done: bool,
         total_in: u64,
         total_out: u64,
@@ -476,6 +573,8 @@ pub mod write {
                 inner: Some(inner),
                 dec,
                 buf: vec![0; BUF_SIZE],
+                pos: 0,
+                len: 0,
                 done: false,
                 total_in: 0,
                 total_out: 0,
@@ -502,30 +601,58 @@ pub mod write {
             self.inner.as_mut().unwrap()
         }
 
-        fn run(&mut self, mut input: &[u8], finish: bool) -> io::Result<usize> {
-            let len = input.len();
-            while !self.done {
-                let (used, written, status) = self.dec.decode(input, &mut self.buf, finish)?;
-                input = &input[used..];
-                self.total_in += used as u64;
+        fn dump(&mut self) -> io::Result<()> {
+            dump(
+                self.inner.as_mut().unwrap(),
+                &self.buf,
+                &mut self.pos,
+                &mut self.len,
+            )
+        }
+
+        /// Decodes until `input` is used up (or the stream ends) and the
+        /// output is written out. Returns the input consumed. An error
+        /// after some input was consumed is reported by the next call.
+        fn run(&mut self, input: &[u8], finish: bool) -> io::Result<usize> {
+            let mut used = 0;
+            loop {
+                if let Err(e) = self.dump() {
+                    return if used > 0 { Ok(used) } else { Err(e) };
+                }
+                if self.done {
+                    return Ok(used);
+                }
+                let r = self.dec.decode(&input[used..], &mut self.buf, finish);
+                let (u, written, status) = match r {
+                    Ok(r) => r,
+                    // The decoder repeats the error on the next call.
+                    Err(_) if used > 0 => return Ok(used),
+                    Err(e) => return Err(e.into()),
+                };
+                used += u;
+                self.len = written;
+                self.total_in += u as u64;
                 self.total_out += written as u64;
-                self.inner
-                    .as_mut()
-                    .unwrap()
-                    .write_all(&self.buf[..written])?;
                 if status == Status::StreamEnd {
                     self.done = true;
-                } else if input.is_empty() && written < self.buf.len() {
-                    break;
+                } else if !finish && used == input.len() && written < self.buf.len() {
+                    // The input is consumed: a failed write of the output
+                    // is reported by the next call, which retries it.
+                    if let Err(e) = self.dump()
+                        && used == 0
+                    {
+                        return Err(e);
+                    }
+                    return Ok(used);
                 }
             }
-            Ok(len - input.len())
         }
 
         /// Checks that the stream is complete and flushes the underlying
         /// writer; truncated input is an error.
         pub fn try_finish(&mut self) -> io::Result<()> {
             self.run(&[], true)?;
+            self.dump()?;
             self.inner.as_mut().unwrap().flush()
         }
 
@@ -544,6 +671,7 @@ pub mod write {
         }
 
         fn flush(&mut self) -> io::Result<()> {
+            self.dump()?;
             self.inner.as_mut().unwrap().flush()
         }
     }

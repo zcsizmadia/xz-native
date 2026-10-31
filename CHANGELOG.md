@@ -24,6 +24,8 @@ minor version may change the API.
   continues. The readers have `memusage()` for error messages (#57).
 - `Error::Usage` for unsupported uses of the API, liblzma's
   `LZMA_PROG_ERROR` (#57).
+- `decoder_mut()` on the async readers, to raise the memory limit after
+  `Error::MemLimit` and continue (#72).
 - `PushDecoder` and `PushEncoder`: sealed traits implemented by every
   push decoder (`XzDecoder`, `LzmaDecoder`, `LzipDecoder`, `RawDecoder`)
   and encoder (`XzEncoder`, `LzmaEncoder`, `RawEncoder`), for code generic
@@ -50,6 +52,17 @@ minor version may change the API.
   `Finish` has started, every call must pass the same action and the rest
   of the same input until `Status::StreamEnd`, otherwise `Error::Usage`.
   The `.lzma` encoder rejects flushes before writing anything (#71).
+- `XzWriter::new`/`with_options` and `LzmaWriter::new`/`with_options`
+  return `xz_native::Result`, like the async writers and push encoders
+  (`?` still converts to `io::Error`) (#72).
+- `XzWriter` and `LzmaWriter` don't finish the stream when dropped during
+  a panic, so an interrupted stream stays detectably incomplete, as with
+  `compat::write::XzEncoder` (#72).
+- `compat::write::XzEncoder::flush` is a full flush, as in `xz2`, so it
+  also works with the multithreaded encoder (#72).
+- `compat::{read, bufread}::XzDecoder::new_multi_decoder` also decodes
+  .lzma and .lz, detected from the first byte, like `xz2`'s auto decoder
+  (#72).
 
 ### Fixed
 - One-shot decoding (`decompress`, `decompress_into`, the threaded
@@ -66,21 +79,12 @@ minor version may change the API.
   error could panic, or accept a Block whose check didn't match. `Run`
   after `Finish` made the raw LZMA2 encoder write data after its end
   marker, and the `.xz` encoder drop its input (#71).
-- Dictionary sizes that don't fit in memory (on 32-bit targets, from
-  2 GiB) give `Error::MemLimit` instead of a panic or a wrapped size; large
-  dictionaries are allocated fallibly (#70).
-
-### Fixed
-- One-shot decoding (`decompress`, `decompress_into`, the threaded
-  variants and the threaded `XzReader`) rejects matches that reach further
-  back than the LZMA2 dictionary size in the Block Header, like liblzma
-  and the streaming decoder (#70).
-- `decompress_into` keeps the caller's buffer, and its contents, when a
-  Block is corrupt; it was replaced with an empty `Vec` (#70).
-- Threaded one-shot decoding no longer allocates the output size claimed
-  by the Index before any Block is verified: implausible sizes, and
-  allocations that fail, go to the single-threaded decoder. A small
-  crafted file could abort the process (#70).
+- `compat::write::XzEncoder` and `XzDecoder` keep their output when the
+  underlying writer fails: the error consumes nothing, as `Write`
+  requires, and a retry continues. Before, output was lost and a retry fed
+  the input again (#72).
+- `compat::bufread::XzEncoder` no longer spins when its source has more
+  data after reporting the end (#72).
 - Dictionary sizes that don't fit in memory (on 32-bit targets, from
   2 GiB) give `Error::MemLimit` instead of a panic or a wrapped size; large
   dictionaries are allocated fallibly (#70).
