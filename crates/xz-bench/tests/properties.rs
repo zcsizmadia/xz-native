@@ -12,6 +12,7 @@ use xz_native::{BcjKind, Filter, LzmaOptions};
 
 /// `lzma_options_delta`, which `liblzma-sys` doesn't declare.
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct DeltaOptions {
     kind: u32,
     dist: u32,
@@ -46,6 +47,15 @@ fn c_decode(id: u64, props: &[u8]) -> Option<*mut c_void> {
     (r == sys::LZMA_OK).then_some(f.options)
 }
 
+/// [`c_decode`] for options of type `T`: `None` on an error, or if liblzma
+/// returned no options.
+fn c_decode_as<T: Copy>(id: u64, props: &[u8]) -> Option<T> {
+    let p = std::ptr::NonNull::new(c_decode(id, props)?)?.cast::<T>();
+    // SAFETY: liblzma returned non-null options of the type for this
+    // filter ID, allocated and left alive (leaked).
+    Some(unsafe { p.read() })
+}
+
 fn lzma_opts(dict_size: u32, lc: u32, lp: u32, pb: u32) -> sys::lzma_options_lzma {
     // SAFETY: an all-zero lzma_options_lzma is valid; the preset fills it.
     let mut o: sys::lzma_options_lzma = unsafe { std::mem::zeroed() };
@@ -76,9 +86,7 @@ fn lzma2_properties() {
     }
     for b in 0..=255u8 {
         let ours = Filter::from_properties(sys::LZMA_FILTER_LZMA2, &[b]).ok();
-        let theirs = c_decode(sys::LZMA_FILTER_LZMA2, &[b]).map(|p| {
-            // SAFETY: liblzma returned an lzma_options_lzma for LZMA2.
-            let o = unsafe { &*p.cast::<sys::lzma_options_lzma>() };
+        let theirs = c_decode_as::<sys::lzma_options_lzma>(sys::LZMA_FILTER_LZMA2, &[b]).map(|o| {
             Filter::Lzma2 {
                 dict_size: o.dict_size,
             }
@@ -106,13 +114,10 @@ fn delta_and_bcj_properties() {
     }
     for b in 0..=255u8 {
         let ours = Filter::from_properties(sys::LZMA_FILTER_DELTA, &[b]).ok();
-        let theirs = c_decode(sys::LZMA_FILTER_DELTA, &[b]).map(|p| {
-            // SAFETY: liblzma returned an lzma_options_delta for Delta.
-            let o = unsafe { &*p.cast::<DeltaOptions>() };
-            Filter::Delta {
+        let theirs =
+            c_decode_as::<DeltaOptions>(sys::LZMA_FILTER_DELTA, &[b]).map(|o| Filter::Delta {
                 distance: o.dist as u16,
-            }
-        });
+            });
         assert_eq!(ours, theirs, "byte {b}");
     }
     for kind in [BcjKind::X86, BcjKind::Arm64, BcjKind::RiscV, BcjKind::Ia64] {
@@ -168,11 +173,8 @@ fn lzma1_properties() {
         let ours = LzmaOptions::from_lzma1_properties(&props)
             .ok()
             .map(|o| (o.lc, o.lp, o.pb, o.dict_size));
-        let theirs = c_decode(sys::LZMA_FILTER_LZMA1, &props).map(|p| {
-            // SAFETY: liblzma returned an lzma_options_lzma for LZMA1.
-            let o = unsafe { &*p.cast::<sys::lzma_options_lzma>() };
-            (o.lc, o.lp, o.pb, o.dict_size)
-        });
+        let theirs = c_decode_as::<sys::lzma_options_lzma>(sys::LZMA_FILTER_LZMA1, &props)
+            .map(|o| (o.lc, o.lp, o.pb, o.dict_size));
         assert_eq!(ours, theirs, "byte {b}");
     }
     assert!(LzmaOptions::from_lzma1_properties(&[0x5D; 4]).is_err());
