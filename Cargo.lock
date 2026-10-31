@@ -697,6 +697,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "xz-native-cli"
+version = "0.3.0+xz.5.8.4"
+dependencies = [
+ "xz-native",
+]
+
+[[package]]
 name = "zerocopy"
 version = "0.8.63"
 source = "registry+https://github.com/rust-lang/crates.io-index"

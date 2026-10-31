@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/xz-native", "crates/xz-bench"]
+members = ["crates/xz-native", "crates/xz-native-cli", "crates/xz-bench"]
 default-members = ["crates/xz-native"]
 exclude = ["fuzz", "third_party"]
 

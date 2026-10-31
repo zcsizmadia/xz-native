@@ -15,6 +15,10 @@ minor version may change the API.
   and lc/lp/pb within a Block after a sync flush (single-threaded). The
   output is byte-identical to liblzma for the same calls, single-threaded
   and multithreaded (#97).
+- `xz-native`, an `xz`-compatible command line tool (`crates/xz-native-cli`,
+  not on crates.io yet): compress, decompress and test .xz, .lzma and .lz
+  with xz 5.8.4's options, defaults, memory limit handling, file handling
+  and exit statuses, writing the same bytes as `xz` (#14).
 
 ## [0.3.0+xz.5.8.4]
 

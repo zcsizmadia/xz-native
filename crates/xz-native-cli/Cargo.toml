@@ -1,0 +1,22 @@
+[package]
+name = "xz-native-cli"
+description = "xz-compatible command line tool built on xz-native, a pure Rust XZ/LZMA library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+# Not on crates.io until the command line settles.
+publish = false
+
+# `xz-native`, not `xz`, so installing it doesn't shadow the system tool.
+[[bin]]
+name = "xz-native"
+path = "src/main.rs"
+
+[dependencies]
+xz-native = { path = "../xz-native" }
+
+[lints]
+workspace = true
