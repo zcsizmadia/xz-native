@@ -8,6 +8,12 @@ minor version may change the API.
 
 ## [Unreleased]
 
+### Added
+- Preset dictionaries for raw LZMA1/LZMA2 streams:
+  `RawEncoder::with_preset_dict` and `RawDecoder::with_preset_dict`
+  (liblzma's `preset_dict`). Small inputs similar to the dictionary
+  compress much better; the output is byte-identical with liblzma's (#95).
+
 ## [0.2.0+xz.5.8.4]
 
 Still compatible with xz/liblzma 5.8.4. Some changes below change behavior
