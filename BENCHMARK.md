@@ -68,16 +68,16 @@ The decode benchmarks decompress them after compressing with `xz -1` and
 "One-shot" is `decompress`, "XzReader" is the streaming `std::io::Read`
 adapter.
 
-**Linux (EPYC 7543)**: xz-native and the tuned liblzma at 50313e9, the
+**Linux (EPYC 7543)**: xz-native and the tuned liblzma at de510eb, the
 `liblzma-sys` build at 223f72c (the C library is the same source in both)
 
 | Input | xz-native one-shot | xz-native XzReader | lzma-rust2 | C liblzma, tuned | C liblzma, `liblzma-sys` |
 |---|---|---|---|---|---|
-| text, xz -1 | **123.1** | 121.3 | 73.5 | 122.1 | 109.1 |
-| text, xz -6 | **133.7** | 131.2 | 79.9 | 132.1 | 117.9 |
-| binary, xz -1 | **98.0** | 96.3 | 62.8 | 96.6 | 91.3 |
-| binary, xz -6 | **181.7** | 178.5 | 104.9 | 175.7 | 158.7 |
-| random (GiB/s) | **15.6** | 6.6-8.2 | 0.42-0.43 | 6.5 | 1.07 |
+| text, xz -1 | 121.3 | 118.5 | 74.0 | **125.6** | 109.1 |
+| text, xz -6 | 130.7 | 128.3 | 80.3 | **135.7** | 117.9 |
+| binary, xz -1 | 97.5 | 95.4 | 62.5 | **98.7** | 91.3 |
+| binary, xz -6 | 178.9 | 175.4 | 105.7 | **179.4** | 158.7 |
+| random (GiB/s) | **15.1-15.5** | 6.2-8.2 | 0.42-0.43 | 6.5-6.6 | 1.07 |
 
 **Windows (i7-12800H)**, at da40bf3
 
@@ -90,14 +90,16 @@ adapter.
 | random (GiB/s) | **3.72-3.76** | 1.90-2.71 | 0.38-0.44 | 0.82-0.97 |
 
 Against the tuned liblzma (assembly decoder, CLMUL CRC64), xz-native is
-even: 1.01-1.03x one-shot and 0.99-1.02x through `XzReader` (the
-like-for-like comparison: the liblzma column is its streaming `Read`
-adapter). It was 3-6% behind until [#87] ported the last range decoder
-assembly that mattered ([#81]); `perf stat` cycle counts of the decode
-loops alone put it 1-2% behind on text and 1-2% ahead on binary, which is
-about the run-to-run spread. Against the `liblzma-sys` build, whose CRC64
-costs it about 10%, xz-native is 1.07-1.15x one-shot and 1.05-1.13x
-streaming. Against the MSVC build (at da40bf3) it is 1.3-1.4x faster. On
+about even. This run has it at 0.96-1.00x one-shot and 0.94-0.98x through
+`XzReader` (the like-for-like comparison: the liblzma column is its
+streaming `Read` adapter); the run before, at 50313e9, had 1.01-1.03x and
+0.99-1.02x. Both libraries executed the same instructions in both runs
+(`perf stat`, to 0.002%): the ratio moves by about 3% between builds and
+runs with code layout. In cycles of the decode loops alone, xz-native is
+0.5-1.5% behind on text and even on binary. It was 3-6% behind until [#87]
+ported the last range decoder assembly that mattered ([#81]). Against the
+`liblzma-sys` build, whose CRC64 costs it about 10%, xz-native is
+1.07-1.13x one-shot and 1.04-1.11x streaming. Against the MSVC build (at da40bf3) it is 1.3-1.4x faster. On
 every machine, xz-native is about 1.5x faster than lzma-rust2
 (1.42-1.73x).
 
@@ -175,30 +177,30 @@ single-threaded decoding.
 xz-native and C liblzma produce identical output. lzma-rust2 has no extreme
 mode, so its -9e column is its plain -9.
 
-**Linux (EPYC 7543)**, at 50313e9 (the `liblzma-sys` column at 223f72c;
+**Linux (EPYC 7543)**, at de510eb (the `liblzma-sys` column at 223f72c;
 the encoder is the same in both). Ratios are xz-native over the tuned
 build, then over the `liblzma-sys` build.
 
 | Data, preset | xz-native | lzma-rust2 | C liblzma, tuned | C liblzma, `liblzma-sys` | xz-native / tuned | xz-native / `liblzma-sys` |
 |---|---|---|---|---|---|---|
-| text -0 | **30.5** | 22.3 | 19.6 | 19.0 | 1.56x | 1.61x |
-| text -1 | **21.1** | 17.2 | 15.5 | 14.7 | 1.36x | 1.44x |
-| text -6 | **3.65** | 3.32 | 3.63 | 3.47 | 1.01x | 1.05x |
-| text -9 | **3.53** | 3.23 | 3.50 | 3.38 | 1.01x | 1.04x |
-| text -9e | **3.55** | 3.23 | 3.54 | 3.41 | 1.00x | 1.04x |
-| binary -0 | **25.4** | 19.0 | 17.5 | 16.7 | 1.45x | 1.52x |
-| binary -1 | **20.3** | 16.2 | 15.4 | 14.8 | 1.32x | 1.37x |
-| binary -6 | 4.02 | 3.41 | **4.15** | 3.70 | 0.97x | 1.09x |
-| binary -9 | 3.82 | 3.26 | **3.85** | 3.51 | 0.99x | 1.09x |
-| binary -9e | 2.88 | **3.26** | 2.86 | 2.65 | 1.01x | 1.09x |
-| random -0 | **11.9** | 8.26 | 7.94 | 7.65 | 1.50x | 1.56x |
-| random -1 | **11.0** | 7.95 | 7.42 | 7.26 | 1.48x | 1.52x |
-| random -6 | **7.55** | 6.36 | 6.02 | 6.04 | 1.25x | 1.25x |
-| random -9 | **5.62** | 4.84 | 4.67 | 4.67 | 1.20x | 1.20x |
-| random -9e | **5.60** | 4.84 | 4.67 | 4.67 | 1.20x | 1.20x |
+| text -0 | **30.6** | 22.1 | 19.8 | 19.0 | 1.55x | 1.61x |
+| text -1 | **21.0** | 17.2 | 15.5 | 14.7 | 1.35x | 1.43x |
+| text -6 | **3.66** | 3.32 | 3.62 | 3.47 | 1.01x | 1.05x |
+| text -9 | **3.53** | 3.23 | 3.51 | 3.38 | 1.01x | 1.04x |
+| text -9e | **3.54** | 3.22 | 3.53 | 3.41 | 1.00x | 1.04x |
+| binary -0 | **25.2** | 18.9 | 17.3 | 16.7 | 1.46x | 1.51x |
+| binary -1 | **20.2** | 16.3 | 15.4 | 14.8 | 1.31x | 1.36x |
+| binary -6 | 3.99 | 3.41 | **4.16** | 3.70 | 0.96x | 1.08x |
+| binary -9 | 3.79 | 3.26 | **3.89** | 3.51 | 0.97x | 1.08x |
+| binary -9e | 2.87 | **3.25** | 2.86 | 2.65 | 1.00x | 1.08x |
+| random -0 | **11.9** | 8.31 | 7.92 | 7.65 | 1.50x | 1.56x |
+| random -1 | **11.0** | 8.03 | 7.47 | 7.26 | 1.47x | 1.52x |
+| random -6 | **7.76** | 6.34 | 6.03 | 6.04 | 1.29x | 1.28x |
+| random -9 | **5.70** | 4.86 | 4.66 | 4.67 | 1.22x | 1.22x |
+| random -9e | **5.68** | 4.85 | 4.67 | 4.67 | 1.22x | 1.22x |
 
 With fast unaligned access, liblzma's binary tree match finder (presets 6
-and up) catches up: there xz-native is at 0.97-1.01x on text and binary.
+and up) catches up: there xz-native is at 0.96-1.01x on text and binary.
 Binary -9e was the one gap (0.93x) until [#89] priced long matches once
 per distance ([#88]).
 The fast presets keep their lead, which comes from the range encoder (see
@@ -299,8 +301,8 @@ numbers below).
 | CRC64 | **65-70** | 1.5-1.6 |
 | SHA-256 | 1.9-2.0 | |
 
-On the EPYC 7543 (Zen 3, no VPCLMULQDQ) CRC32 and CRC64 reach 25.9-27.5
-GiB/s, against 13.3-13.8 GiB/s for the tuned liblzma (CLMUL, 1.9-2.0x) and
+On the EPYC 7543 (Zen 3, no VPCLMULQDQ) CRC32 and CRC64 reach 27.0-27.5
+GiB/s, against 13.7-13.8 GiB/s for the tuned liblzma (CLMUL, 2.0x) and
 2.1 and 1.2 GiB/s for `liblzma-sys`; SHA-256 runs at 1.4-1.5 GiB/s.
 
 ## Small Linux machine
