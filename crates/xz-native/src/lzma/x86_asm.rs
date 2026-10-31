@@ -361,3 +361,139 @@ pub(super) unsafe fn direct_bits(
         dest
     }
 }
+
+/// One step of the 4-bit reverse bit tree. The node of step `k` is
+/// `2^k + sym`, where `sym` holds the bits decoded so far (liblzma's
+/// indexing, which builds the result in `sym` directly). `$add` is `2^k`;
+/// `$cur` is the byte offset of node `2^k` and `$next0`/`$next1` those of
+/// the next step's nodes for a 0 and a 1 bit.
+macro_rules! rev {
+    (first, $a:literal, $b:literal) => {
+        concat!(
+            "movzwl 2({base}), {",
+            $a,
+            ":e}\n",
+            "xor {sym:e}, {sym:e}\n",
+            "movzwl 4({base}), {",
+            $b,
+            ":e}\n",
+            normalize!(),
+            calc!($a),
+            "cmovae {t0:e}, {range:e}\n",
+            "movzwl 6({base}), {t0:e}\n",
+            "cmovae {t0:e}, {",
+            $b,
+            ":e}\n",
+            "lea 1({sym:r}), {t0:e}\n",
+            "cmovb {t1:e}, {code:e}\n",
+            "cmovae {t0:e}, {sym:e}\n",
+            rev!(@update, $a),
+            "mov {",
+            $a,
+            ":x}, 2({base})\n",
+        )
+    };
+    (middle, $a:literal, $b:literal, $add:literal, $cur:literal, $next0:literal, $next1:literal) => {
+        concat!(
+            "movzwl ",
+            $next0,
+            "({base},{sym:r},2), {",
+            $b,
+            ":e}\n",
+            normalize!(),
+            calc!($a),
+            "cmovae {t0:e}, {range:e}\n",
+            "movzwl ",
+            $next1,
+            "({base},{sym:r},2), {t0:e}\n",
+            "cmovae {t0:e}, {",
+            $b,
+            ":e}\n",
+            rev!(@bit, $a, $add, $cur),
+        )
+    };
+    (last, $a:literal, $add:literal, $cur:literal) => {
+        concat!(
+            normalize!(),
+            calc!($a),
+            "cmovae {t0:e}, {range:e}\n",
+            rev!(@bit, $a, $add, $cur),
+        )
+    };
+    (@bit, $a:literal, $add:literal, $cur:literal) => {
+        concat!(
+            "lea ",
+            $add,
+            "({sym:r}), {t0:e}\n",
+            "cmovb {t1:e}, {code:e}\n",
+            "mov {sym:e}, {t1:e}\n",
+            "cmovae {t0:e}, {sym:e}\n",
+            rev!(@update, $a),
+            "mov {",
+            $a,
+            ":x}, ",
+            $cur,
+            "({base},{t1:r},2)\n",
+        )
+    };
+    (@update, $a:literal) => {
+        concat!(
+            "lea {off}({",
+            $a,
+            ":r}), {t0:e}\n",
+            "cmovae {",
+            $a,
+            ":e}, {t0:e}\n",
+            "shr $5, {t0:e}\n",
+            "sub {t0:e}, {",
+            $a,
+            ":e}\n",
+        )
+    };
+}
+
+/// Decodes the 4-bit reverse bit tree whose root is `probs[1]` (the align
+/// bits of a distance), node `2^k + sym` at step `k` (liblzma's
+/// `rc_bittree_rev4`). Returns the 4 bits, the first decoded lowest.
+///
+/// # Safety
+///
+/// `probs[..16]` must be in bounds, and the input must have enough bytes
+/// left (the fast path guarantees one symbol's worth).
+#[inline(always)]
+pub(super) unsafe fn bittree_rev4(
+    range: &mut u32,
+    code: &mut u32,
+    input: &[u8],
+    pos: &mut usize,
+    probs: *mut u16,
+) -> u32 {
+    // SAFETY: the caller guarantees the input bytes and the tree.
+    unsafe {
+        let mut in_ptr = input.as_ptr().add(*pos);
+        let sym: usize;
+        asm!(
+            rev!(first, "p0", "p1"),
+            rev!(middle, "p1", "p0", "2", "4", "8", "12"),
+            rev!(middle, "p0", "p1", "4", "8", "16", "24"),
+            rev!(last, "p1", "8", "16"),
+            range = inout(reg) *range,
+            code = inout(reg) *code,
+            t0 = out(reg) _,
+            t1 = out(reg) _,
+            p0 = out(reg) _,
+            p1 = out(reg) _,
+            sym = out(reg) sym,
+            in_ptr = inout(reg) in_ptr,
+            base = in(reg) probs,
+            top = const 1 << 24,
+            off = const -2017,
+            options(att_syntax, nostack),
+        );
+        // A symbol reads at most 20 bytes and the fast path keeps FAST_MIN
+        // available, so the end of the input is never passed.
+        debug_assert!(in_ptr <= input.as_ptr_range().end);
+        *pos = in_ptr.offset_from(input.as_ptr()) as usize;
+        sym as u32
+    }
+}
