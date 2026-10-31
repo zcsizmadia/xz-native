@@ -336,6 +336,12 @@ impl Lzma1Encoder {
 }
 
 impl LzEncoder<Lzma1Encoder> {
+    /// Ends the stream without the end of payload marker (LZMA1EXT without
+    /// `LZMA_LZMA1EXT_ALLOW_EOPM`).
+    pub(crate) fn without_end_marker(&mut self) {
+        self.codec.lzma.use_eopm = false;
+    }
+
     /// Starts with a preset dictionary. Must be called before any input; an
     /// empty one is no preset dictionary.
     pub(crate) fn preset_dict(&mut self, dict: &[u8]) {

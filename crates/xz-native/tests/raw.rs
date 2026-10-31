@@ -314,3 +314,52 @@ fn memusage() {
     let o = RawOptions::preset(RawMethod::Lzma1, 6).unwrap();
     assert_eq!(o.decoder_memusage(), (8 << 20) + 65_984 + extra);
 }
+
+/// LZMA1EXT: the memory figures are LZMA1's, and a stream without the end
+/// marker decodes in one-byte steps once its size is given.
+#[test]
+fn lzma1ext() {
+    use xz_native::{RawDecoder, RawMethod, RawOptions, Status};
+    let data = b"lzma1ext without an end marker ".repeat(100);
+    let ext = |size, end_marker| {
+        RawOptions::preset(
+            RawMethod::Lzma1Ext {
+                uncompressed_size: size,
+                end_marker,
+            },
+            6,
+        )
+        .unwrap()
+    };
+    let lzma1 = RawOptions::preset(RawMethod::Lzma1, 6).unwrap();
+    assert_eq!(
+        ext(None, false).decoder_memusage(),
+        lzma1.decoder_memusage()
+    );
+    assert_eq!(
+        ext(None, false).encoder_memusage(),
+        lzma1.encoder_memusage()
+    );
+
+    let packed = xz_native::compress_raw(&data, &ext(None, false)).unwrap();
+    let with_marker = xz_native::compress_raw(&data, &ext(None, true)).unwrap();
+    assert!(packed.len() < with_marker.len());
+    assert_eq!(with_marker, xz_native::compress_raw(&data, &lzma1).unwrap());
+
+    let mut dec = RawDecoder::with_options(&ext(Some(data.len() as u64), false)).unwrap();
+    let (mut ip, mut out, mut buf) = (0, Vec::new(), [0u8; 64]);
+    loop {
+        let end = (ip + 1).min(packed.len());
+        let (u, w, s) = dec
+            .decode(&packed[ip..end], &mut buf, end == packed.len())
+            .unwrap();
+        ip += u;
+        out.extend_from_slice(&buf[..w]);
+        if s == Status::StreamEnd {
+            break;
+        }
+    }
+    assert_eq!((ip, out), (packed.len(), data.clone()));
+    // Without a size, the end marker is required.
+    assert!(xz_native::decompress_raw(&packed, &ext(None, true)).is_err());
+}
