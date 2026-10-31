@@ -129,10 +129,12 @@ pub use filter::{BcjKind, Filter};
 pub use io::{AutoReader, LzipReader, LzmaReader, LzmaWriter, XzReader, XzWriter};
 pub use lzip::LzipDecoder;
 pub use oneshot::{
-    compress, compress_lzma, compress_lzma_with_options, compress_raw, compress_with_options,
-    decompress, decompress_auto, decompress_auto_with_options, decompress_into, decompress_lzip,
+    compress, compress_bound, compress_lzma, compress_lzma_with_options, compress_raw,
+    compress_to_slice, compress_with_options, compress_with_options_to_slice, decompress,
+    decompress_auto, decompress_auto_with_options, decompress_into, decompress_lzip,
     decompress_lzip_with_options, decompress_lzma, decompress_lzma_with_options, decompress_raw,
-    decompress_streaming, decompress_with_options, decompress_with_options_into,
+    decompress_streaming, decompress_to_slice, decompress_with_options,
+    decompress_with_options_into, decompress_with_options_to_slice,
 };
 pub use options::{
     DICT_SIZE_MAX, DICT_SIZE_MIN, EncoderOptions, LzmaOptions, MatchFinder, Mode, PRESET_DEFAULT,

@@ -158,3 +158,59 @@ fn lying_index_is_not_allocated() {
         }
     }
 }
+
+/// The fixed-buffer functions with options and threads: the same bytes as
+/// the `Vec` functions, and exact sizes.
+#[test]
+fn slices_with_options() {
+    use xz_native::{
+        DecoderOptions, EncoderOptions, Error, compress_with_options,
+        compress_with_options_to_slice, decompress_with_options_to_slice,
+    };
+    let data = b"slices with threads and Blocks ".repeat(20_000);
+    let opts = EncoderOptions::preset(1)
+        .unwrap()
+        .threads(2)
+        .block_size(100_000);
+    let packed = compress_with_options(&data, &opts).unwrap();
+    let mut out = vec![0u8; packed.len()];
+    assert_eq!(
+        compress_with_options_to_slice(&data, &opts, &mut out),
+        Ok(packed.len())
+    );
+    assert!(out == packed);
+
+    for threads in [1, 3] {
+        let dopts = DecoderOptions::default().threads(threads);
+        let mut out = vec![0u8; data.len()];
+        assert_eq!(
+            decompress_with_options_to_slice(&packed, dopts, &mut out),
+            Ok(data.len())
+        );
+        assert!(out == data);
+        let mut short = vec![0u8; data.len() - 1];
+        assert_eq!(
+            decompress_with_options_to_slice(&packed, dopts, &mut short),
+            Err(Error::BufferTooSmall),
+            "threads {threads}"
+        );
+    }
+    // Concatenated Streams, and data after the end.
+    let mut cat = packed.clone();
+    cat.extend_from_slice(&packed);
+    let mut out = vec![0u8; 2 * data.len()];
+    assert_eq!(
+        xz_native::decompress_to_slice(&cat, &mut out),
+        Ok(2 * data.len())
+    );
+    let single = DecoderOptions::default().concatenated(false);
+    assert_eq!(
+        decompress_with_options_to_slice(&cat, single, &mut out),
+        Ok(data.len())
+    );
+    cat.extend_from_slice(b"junk longer than a Stream Header");
+    assert_eq!(
+        xz_native::decompress_to_slice(&cat, &mut out),
+        Err(Error::Data)
+    );
+}

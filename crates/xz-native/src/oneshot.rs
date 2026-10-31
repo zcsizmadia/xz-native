@@ -102,6 +102,138 @@ pub fn decompress_auto_with_options(input: &[u8], opts: DecoderOptions) -> Resul
     decode_all(input, !opts.concatenated, |i, o, f| d.decode(i, o, f))
 }
 
+/// The most bytes [`compress`] can write for `len` bytes of input, at any
+/// preset and check: liblzma's `lzma_stream_buffer_bound()`. It also bounds
+/// [`compress_with_options`] with one thread and one Block (no
+/// `block_size`); more Blocks add their headers and Index records. 0 if the
+/// bound doesn't fit in a `usize`, like liblzma.
+///
+/// ```
+/// let data = b"bounded output".repeat(100);
+/// let mut out = vec![0u8; xz_native::compress_bound(data.len())];
+/// let n = xz_native::compress_to_slice(&data, 6, &mut out)?;
+/// assert_eq!(xz_native::decompress(&out[..n])?, data);
+/// # Ok::<(), xz_native::Error>(())
+/// ```
+pub const fn compress_bound(len: usize) -> usize {
+    const VLI_MAX: u64 = u64::MAX / 2;
+    // `COMPRESSED_SIZE_MAX`, `LZMA2_CHUNK_MAX` and the two
+    // `HEADERS_BOUND`s of block_buffer_encoder.c and
+    // stream_buffer_encoder.c.
+    const COMPRESSED_SIZE_MAX: u64 = (VLI_MAX - 1024 - 64) & !3;
+    const CHUNK_MAX: u64 = 1 << 16;
+    const BLOCK_HEADERS: u64 = (1 + 1 + 2 * 9 + 3 + 4 + 64 + 3) & !3;
+    const STREAM_HEADERS: u64 = 2 * 12 + ((1 + 1 + 2 * 9 + 4 + 3) & !3);
+    let n = len as u64;
+    if n > COMPRESSED_SIZE_MAX {
+        return 0;
+    }
+    // Uncompressed LZMA2 chunks: a 3-byte header per 64 KiB and the end.
+    let overhead = n.div_ceil(CHUNK_MAX) * 3 + 1;
+    if COMPRESSED_SIZE_MAX - overhead < n {
+        return 0;
+    }
+    let block = BLOCK_HEADERS + ((n + overhead + 3) & !3);
+    let limit = if (usize::MAX as u64) < VLI_MAX {
+        usize::MAX as u64
+    } else {
+        VLI_MAX
+    };
+    if block > limit || limit - block < STREAM_HEADERS {
+        return 0;
+    }
+    (block + STREAM_HEADERS) as usize
+}
+
+/// Like [`compress`], but writes into `out` and returns the size: the
+/// same bytes, or [`Error::BufferTooSmall`] if they don't fit. A buffer of
+/// [`compress_bound`]`(data.len())` bytes is always enough. No allocation
+/// beyond the encoder's own state.
+///
+/// [`Error::BufferTooSmall`]: crate::Error::BufferTooSmall
+pub fn compress_to_slice(data: &[u8], preset: u32, out: &mut [u8]) -> Result<usize> {
+    compress_with_options_to_slice(data, &EncoderOptions::preset(preset)?, out)
+}
+
+/// [`compress_to_slice`] with options: the bytes of
+/// [`compress_with_options`].
+pub fn compress_with_options_to_slice(
+    data: &[u8],
+    opts: &EncoderOptions,
+    out: &mut [u8],
+) -> Result<usize> {
+    let mut enc = XzEncoder::with_options(opts.clone())?;
+    let (mut ip, mut op) = (0, 0);
+    loop {
+        let (u, w, s) = enc.encode(&data[ip..], &mut out[op..], Action::Finish)?;
+        ip += u;
+        op += w;
+        if s == Status::StreamEnd {
+            return Ok(op);
+        }
+        if op == out.len() {
+            return Err(crate::Error::BufferTooSmall);
+        }
+    }
+}
+
+/// Like [`decompress`], but writes into `out` and returns the size, or
+/// [`Error::BufferTooSmall`] if the data doesn't fit (liblzma's
+/// `lzma_stream_buffer_decode()`). No allocation beyond the decoder's
+/// own state.
+///
+/// ```
+/// let packed = xz_native::compress(b"into a fixed buffer", 6)?;
+/// let mut out = [0u8; 64];
+/// let n = xz_native::decompress_to_slice(&packed, &mut out)?;
+/// assert_eq!(&out[..n], b"into a fixed buffer");
+/// let mut small = [0u8; 4];
+/// assert_eq!(
+///     xz_native::decompress_to_slice(&packed, &mut small),
+///     Err(xz_native::Error::BufferTooSmall)
+/// );
+/// # Ok::<(), xz_native::Error>(())
+/// ```
+///
+/// [`Error::BufferTooSmall`]: crate::Error::BufferTooSmall
+pub fn decompress_to_slice(input: &[u8], out: &mut [u8]) -> Result<usize> {
+    decompress_with_options_to_slice(input, DecoderOptions::default(), out)
+}
+
+/// [`decompress_to_slice`] with options. Data after the end is an error
+/// unless [`DecoderOptions::concatenated`] is off, as in
+/// [`decompress_with_options`].
+pub fn decompress_with_options_to_slice(
+    input: &[u8],
+    opts: DecoderOptions,
+    out: &mut [u8],
+) -> Result<usize> {
+    let mut dec = XzDecoder::with_options(opts);
+    let (mut ip, mut op) = (0, 0);
+    // Once `out` is full, the rest of the stream (end of the LZMA2 data,
+    // check, Index, footer) is read with one byte of room: any output
+    // there means the data doesn't fit.
+    let mut spare = [0u8; 1];
+    loop {
+        let full = op == out.len();
+        let dst = if full { &mut spare[..] } else { &mut out[op..] };
+        let (u, w, s) = dec.decode(&input[ip..], dst, true)?;
+        if full && w > 0 {
+            return Err(crate::Error::BufferTooSmall);
+        }
+        ip += u;
+        op += w;
+        if s == Status::StreamEnd {
+            return Ok(op);
+        }
+        if u == 0 && w == 0 {
+            // No progress without an error: can't happen with `finish`
+            // and output room, but don't loop forever.
+            return Err(crate::Error::BufferTooSmall);
+        }
+    }
+}
+
 /// Like [`decompress`], but appends to `out` and reuses its capacity.
 ///
 /// Decoding many files into one reused buffer avoids paying for fresh memory

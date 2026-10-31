@@ -24,6 +24,11 @@ minor version may change the API.
   `lzma_raw_encoder_memusage`, `lzma_easy_encoder_memusage` and, with
   threads, `lzma_stream_encoder_mt_memusage` (64-bit figures), for
   choosing a preset or thread count under a memory limit (#99).
+- One-shot functions into a caller's buffer: `compress_to_slice`,
+  `compress_with_options_to_slice`, `decompress_to_slice` and
+  `decompress_with_options_to_slice`, with `Error::BufferTooSmall` when it
+  doesn't fit, and `compress_bound`, equal to liblzma's
+  `lzma_stream_buffer_bound` (#106).
 
 ### Changed
 - `LzmaDecoder` checks the .lzma properties byte as soon as it arrives,
