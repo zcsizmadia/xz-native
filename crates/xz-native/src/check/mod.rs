@@ -283,9 +283,14 @@ mod tests {
     /// CI names the SIMD paths each runner has in `XZ_NATIVE_REQUIRE_SIMD`
     /// (comma-separated: clmul, vpclmul, sha, crc). If detection fails for
     /// one, the tests above would compare the generic code with itself
-    /// and pass; this fails instead.
+    /// and pass; this fails instead. The SIMD paths exist only on x86-64
+    /// and AArch64 (CI also runs the tests as 32-bit x86).
     #[test]
-    #[cfg(all(feature = "std", not(feature = "portable")))]
+    #[cfg(all(
+        feature = "std",
+        not(feature = "portable"),
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     fn required_simd_is_detected() {
         let Ok(req) = std::env::var("XZ_NATIVE_REQUIRE_SIMD") else {
             return;
