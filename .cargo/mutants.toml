@@ -14,3 +14,27 @@ exclude_globs = [
 ]
 test_package = ["xz-native"]
 profile = "ci"
+
+# Mutants that can't change any output or error, found in the first full
+# run (#22). Each pattern is narrow; the reasons:
+exclude_re = [
+    # BCJ: the bit fields joined with `|` are disjoint, so `^` is the same.
+    'filter/bcj\.rs:.*: replace \| with \^ in ',
+    # x86 BCJ: five shifts of prev_mask (masked with 0x77) clear it just
+    # like the reset, so `>`, `>=` and `==` against 5 give the same output.
+    'filter/bcj\.rs:.*: replace > with (>=|==) in Bcj::x86$',
+    # .lzma encoder: the header is incomplete only when the output is full,
+    # so encoding on writes nothing either way.
+    'alone\.rs:.*: replace < with > in LzmaEncoder::encode$',
+    # Seekable reader: refilling at the top of `step` is an optimization
+    # (the decoder takes chunk framing even without output space, so a call
+    # never consumes input without output), and when the skip buffer is
+    # allocated changes nothing.
+    'seek\.rs:.* in step$',
+    'seek\.rs:.*: replace (&&|<) .* in XzSeekableReader<R>::read_inner$',
+    # One-shot decoding with threads: parse_slice and the parallel Block
+    # decoding only choose the fast path; on any failure the single-threaded
+    # decoder runs and gives the same result.
+    'seek\.rs:.*: replace parse_slice -> ',
+    'xz/flat\.rs:.* in (decompress_threads_into|decode_entry)$',
+]
