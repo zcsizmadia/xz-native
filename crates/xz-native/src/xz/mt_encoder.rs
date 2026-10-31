@@ -66,12 +66,25 @@ fn lzma2_bound(n: u64) -> u64 {
     n + n.div_ceil(LZMA2_CHUNK_MAX as u64) * 3 + 1
 }
 
+/// How much larger each of the MT encoder's structs below is than on
+/// Windows: each holds one mutex and one condition variable, which are
+/// pthread types elsewhere (measured on Linux x86-64 and arm64 and macOS
+/// arm64; other targets take the Linux x86-64 figure).
+const PTHREAD_EXTRA: u64 = if cfg!(windows) {
+    0
+} else if cfg!(target_vendor = "apple") {
+    64
+} else if cfg!(target_arch = "aarch64") {
+    48
+} else {
+    40
+};
 /// `sizeof(lzma_stream_coder)` of `stream_encoder_mt.c` on 64-bit
 /// platforms.
-const STREAM_CODER_STRUCT: u64 = 520;
+const STREAM_CODER_STRUCT: u64 = 520 + PTHREAD_EXTRA;
 /// `sizeof(worker_thread)` plus two `sizeof(lzma_outbuf)` (the output
 /// queue holds two buffers per thread) on 64-bit platforms.
-const PER_THREAD_STRUCTS: u64 = 624;
+const PER_THREAD_STRUCTS: u64 = 624 + PTHREAD_EXTRA;
 
 /// `lzma_stream_encoder_mt_memusage()`: `raw` is the filter chain's
 /// `lzma_raw_encoder_memusage()`. Sums that overflow are `u64::MAX`.
