@@ -32,6 +32,10 @@ minor version may change the API.
 - The C liblzma reference in xz-bench is built with its lzip decoder in
   `lzma_auto_decoder` (`HAVE_LZIP_DECODER`, on in liblzma's own builds;
   `liblzma-sys` leaves it out) (#100).
+- Compression at presets 6-9e is 4-7% faster on the EPYC 7543 (and 10-18%
+  on a laptop i7): the match finders prefetch the next position's hash
+  bucket, as proposed upstream in tukaani-project/xz#247. The output is
+  unchanged (#94).
 
 ## [0.2.0+xz.5.8.4]
 
