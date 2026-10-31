@@ -289,12 +289,13 @@ pub fn compress(data: &[u8], preset: u32) -> Result<Vec<u8>> {
 }
 
 /// Compresses `data` to .xz with options. With
-/// [`EncoderOptions::threads`] other than 1, the Blocks are encoded in
-/// parallel and the output is byte-identical to liblzma's multithreaded
-/// encoder (`xz -T`) for any thread count.
+/// [`EncoderOptions::threads`] other than 1 or
+/// [`EncoderOptions::multithreaded`], the Blocks are encoded in parallel
+/// and the output is byte-identical to liblzma's multithreaded encoder
+/// (`xz -T`) for any thread count.
 pub fn compress_with_options(data: &[u8], opts: &EncoderOptions) -> Result<Vec<u8>> {
     #[cfg(feature = "std")]
-    if opts.threads != 1 {
+    if opts.is_multithreaded() {
         return crate::xz::mt_encoder::compress(data, opts);
     }
     let mut enc = XzEncoder::with_options(opts.clone())?;

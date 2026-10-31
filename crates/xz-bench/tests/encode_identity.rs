@@ -872,14 +872,16 @@ fn check_mt(what: &str, data: &[u8], o: &EncoderOptions, threads: &[u32]) {
                 &theirs,
             );
         }
-        let mo = o.clone().threads(if t == 1 { 0 } else { t as usize });
+        let mo = o.clone().threads(t as usize).multithreaded(true);
         let ours = xz_native::compress_with_options(data, &mo).unwrap();
         assert_same(&format!("{what}: {} threads", mo.threads), &ours, &theirs);
     }
-    let mo = o.clone().threads(3);
     let chunks = run_chunks(data, data.len() as u64);
-    let ours = run_ours(xz_native::XzEncoder::with_options(mo).unwrap(), &chunks);
-    assert_same(&format!("{what}: streaming"), &ours, &theirs);
+    for t in [1, 3] {
+        let mo = o.clone().threads(t).multithreaded(true);
+        let ours = run_ours(xz_native::XzEncoder::with_options(mo).unwrap(), &chunks);
+        assert_same(&format!("{what}: streaming, {t} threads"), &ours, &theirs);
+    }
     assert!(
         xz_native::decompress(&theirs).unwrap() == data,
         "{what}: xz-native decode"
