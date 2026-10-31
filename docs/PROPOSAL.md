@@ -62,7 +62,14 @@ crates/xz-native/   the library (no_std + alloc; `std` feature for io)
   src/options.rs    encoder options and presets 0-9/extreme
   src/alone.rs      .lzma
   src/lzip.rs       .lz (lzip)
+  src/raw.rs        raw LZMA1/LZMA2 streams (lzma_raw_decoder/encoder)
+  src/oneshot.rs    one-call functions (decompress, compress, ...)
+  src/push.rs       PushDecoder/PushEncoder traits, liblzma's call rules
   src/io.rs         std::io readers and writers
+  src/compat.rs     xz2-compatible read/bufread/write types
+  src/async_core.rs async readers and writers, shared by tokio.rs and
+  src/tokio.rs      futures.rs (features `tokio`, `futures-io`)
+  src/futures.rs
   src/seek.rs       seekable .xz reader (Index parsed backwards, per-Block decoding)
   tests/            xz test files, xz CLI interop (decode and encode), seekable
                     and threaded readers, encoder round trips
@@ -86,7 +93,8 @@ third_party/xz/     xz 5.8.4 source (reference only)
   (Lzma.Net) and distance 0 is a fill.
 - **CPU features:** detected at run time with `is_x86_feature_detected!` /
   `is_aarch64_feature_detected!` (compile-time `cfg` without `std`). The
-  `portable` feature disables all SIMD so CI tests both paths.
+  `portable` feature disables all SIMD so CI tests both paths, and CI
+  fails if a runner's SIMD paths aren't detected (`XZ_NATIVE_REQUIRE_SIMD`).
 - **Multithreaded decoding** (`DecoderOptions::threads`, std only). One-shot
   (`flat.rs`): the Index locates the Blocks, workers decode them with
   reused scratch buffers into one output allocation, and any failure re-runs
@@ -144,8 +152,10 @@ third_party/xz/     xz 5.8.4 source (reference only)
   (`lzma/x86_asm.rs`, `core::arch::asm!`, baseline x86-64 only), a few
   benchmarked hot-path reads and the prefetch hints of the binary tree
   match finder (`lzma/lz_encoder.rs`, +2-7% at presets 4-9). Each has a SAFETY comment and debug assertions
-  and a safe Rust fallback that `portable` selects; tests and fuzzers
-  compare both. New `unsafe` needs a benchmark showing the gain.
+  and a safe Rust fallback that `portable` selects (the decoder's hot-path
+  reads become checked indexing), so a `portable` build runs no `unsafe`
+  code; CI runs the whole test suite both ways. New `unsafe` needs a
+  benchmark showing the gain.
 
 ## Benchmarks
 
@@ -196,9 +206,9 @@ runs weekly and on demand on all CI platforms.
 |---|---|---|
 | M1 | LZMA/LZMA2 decoder, `.xz`/`.lzma`, checks with SIMD, BCJ/Delta decode, tests, fuzzing, CI, benchmarks | done |
 | M2 | Range encoder, match finders, presets 0-9/extreme, byte-identical `.xz` output | done |
-| M3 | Seekable reader, lzip decoding, raw LZMA1/LZMA2 API, filter encoders | seekable, lzip, filter encoders done |
+| M3 | Seekable reader, lzip decoding, raw LZMA1/LZMA2 API, filter encoders | done |
 | M4 | Decoder and check tuning (decode into the caller's buffer, VPCLMULQDQ CRC, branchless bits, x86-64 asm) | done; incompressible one-shot on Windows (#34) open |
-| M5 | Multithreaded encode/decode, async adapters, CLI; first release `0.1.0+xz.5.8.4`, 1.0 once the API is settled | multithreaded encode and decode done |
+| M5 | Multithreaded encode/decode, async adapters, CLI; first release `0.1.0+xz.5.8.4`, 1.0 once the API is settled | multithreaded encode and decode, async adapters (tokio, futures-io) and 0.1.0 done; CLI (#14) and threaded push decoding (#58) open |
 
 ## Decisions
 

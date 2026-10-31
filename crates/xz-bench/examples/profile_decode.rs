@@ -7,9 +7,9 @@
 //! and `liblzma-bufread` swap the input buffering: `XzReader` behind an
 //! 8 KiB `BufReader`, liblzma reading the slice directly. With `threads`
 //! given, the input is a multi-Block file (1 MiB Blocks, the dataset
-//! repeated 8 times) and the decoder uses that many threads (0 = one per
-//! CPU). `XZ_PROBE_BLOCK_MIB` changes the Block size; 0 makes the 64 MiB a
-//! single Block. `XZ_PROBE_DUMP=file` writes the compressed input and exits;
+//! repeated 8 times: 64 MiB, 32 MiB for random) and the decoder uses that
+//! many threads (0 = one per CPU). `XZ_PROBE_BLOCK_MIB` changes the Block
+//! size; 0 makes the whole input a single Block. `XZ_PROBE_DUMP=file` writes the compressed input and exits;
 //! `XZ_PROBE_LOAD=file` decodes that file instead (no compression first).
 
 use std::io::Read;

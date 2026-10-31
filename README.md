@@ -1,7 +1,7 @@
 # xz-native
 
 **xz/liblzma 5.8.4, rewritten in Rust:** the same file format and the same
-strictness on bad input, at liblzma's speed or faster, without the C, the
+strictness on bad input, at liblzma's speed, without the C, the
 build scripts or the memory-safety risk. Sibling of the C# library
 [Lzma.Net](https://github.com/zcsizmadia/Lzma.Net).
 
@@ -28,21 +28,28 @@ build scripts or the memory-safety risk. Sibling of the C# library
   dependency-free crate, 0BSD, with OpenSSF Scorecard, cargo-deny and
   SHA-pinned CI.
 - **Memory safety on untrusted input.** Decompressors parse hostile data.
-  `unsafe` is limited to a few SIMD and assembly modules, each with a safe
-  fallback. Every push is fuzzed, and the results are compared with C
-  liblzma on millions of mutated files.
-- **As fast as liblzma, often faster** (machines, methods and full tables
-  in [BENCHMARK.md](BENCHMARK.md)):
+  `unsafe` is limited to the SIMD and assembly modules and a few
+  benchmarked hot-path reads, each with a safe fallback that the
+  `portable` feature selects (no `unsafe` code runs then). Every push is
+  fuzzed, and the results are compared with C liblzma on millions of
+  mutated files.
+- **As fast as liblzma: about even at decompression and the slow presets,
+  faster at fast compression, checksums and incompressible data.** Two C
+  references: liblzma configured like its own build (fast unaligned
+  access, CLMUL CRC, assembly decoder), and the `liblzma-sys` build that
+  `xz2`/`liblzma` give Rust users, which has neither of the first two.
+  Machines, methods and full tables in [BENCHMARK.md](BENCHMARK.md):
 
-  | | xz-native speed / C liblzma 5.8.4 (1.25x = 25% faster) |
-  |---|---|
-  | Compression, single thread, Linux (liblzma built with GCC) | 1.21-1.65x at presets 0-1, 0.94-1.27x at 6-9e |
-  | Compression, multithreaded, Linux | 1.30-1.48x at preset 1, 1.04-1.13x at 6 |
-  | Decompression, single thread, Linux (liblzma built with GCC and its assembly) | 1.00-1.06x |
-  | Decompression, single thread, Windows (MSVC build, as `xz2`/`liblzma` give Rust users there) | 1.3-1.4x |
-  | Decompression, multithreaded, Linux | 1.04-1.06x at 1-8 threads, 1.10-1.50x at 16-32 |
-  | Decompression of incompressible data | 4-14x |
-  | CRC32 / CRC64 (SIMD detected at run time; this liblzma build has no CLMUL) | 13-45x |
+  | xz-native speed / C liblzma 5.8.4 (1.25x = 25% faster) | vs liblzma's own configuration | vs `liblzma-sys` (`xz2`, `liblzma` crates) |
+  |---|---|---|
+  | Compression, single thread, Linux, presets 0-1 | 1.32-1.51x | 1.37-1.58x |
+  | Compression, single thread, Linux, presets 6-9e | 0.93-1.29x | 1.01-1.29x |
+  | Compression, multithreaded, Linux | | 1.30-1.48x at preset 1, 1.04-1.13x at 6 |
+  | Decompression, single thread, Linux (streaming) | 0.97-1.01x | 1.03-1.12x |
+  | Decompression, single thread, Windows (MSVC) | | 1.3-1.4x |
+  | Decompression, multithreaded, Linux | | 1.04-1.06x at 1-8 threads, 1.10-1.50x at 16-32 |
+  | Decompression of incompressible data, Linux | 2.4x | 14x |
+  | CRC32 / CRC64, Linux (Zen 3) | 1.9-2.0x | 13-23x |
 
   About 1.5x faster than [lzma-rust2](https://crates.io/crates/lzma-rust2),
   the fastest pure-Rust alternative, at decompression, and 1.1-1.5x at
@@ -204,16 +211,16 @@ behavior, so testing is layered:
 | **Encoder byte identity** | Our compressed output is compared byte for byte with C liblzma 5.8.4: single-threaded (presets 0-9 and extreme, every match finder, mode, `nice_len`, depth, lc/lp/pb, dictionaries from 4 KiB to 64 MiB, every check and filter chain, Block sizes, flushes, `.lzma`, and 150 random option sets) and multithreaded (1-20 threads, Block sizes from 1 byte, flushes and barriers), plus positions past 4 GiB. It is also compared with the `xz` CLI (`-T1`, `-T4`, `-T0`) on the interop corpus. All output must decode with both decoders. |
 | **Fuzzing (CI)** | cargo-fuzz with libFuzzer: streaming vs one-shot consistency for `.xz` and `.lzma`, a differential target against C liblzma, and an encoder round-trip and byte-identity target. Runs 3 minutes per target on every push and PR, and 30 minutes nightly, with a persistent corpus seeded from xz's test files. |
 | **Mutation testing** | [cargo-mutants](https://mutants.rs) over the validation code (`xz/`, `lzip.rs`, `seek.rs`, `filter/`, `alone.rs`, LZMA2). Every surviving mutant becomes a test or is documented as equivalent ([#22](https://github.com/zcsizmadia/xz-native/issues/22)). |
-| **SIMD and assembly paths** | Each CRC/SHA kernel is compared with the portable code for every length 0-2100 at several alignments. The whole suite also runs with `--features portable`, which disables all SIMD and assembly. Hot-path `unsafe` has debug assertions that the CI-profile tests and the fuzzers run with. |
+| **SIMD and assembly paths** | Each CRC/SHA kernel is compared with the portable code for every length 0-2100 at several alignments, and CI fails if a runner's SIMD paths aren't detected (`XZ_NATIVE_REQUIRE_SIMD`), so the comparison can't silently become generic against generic. The whole suite also runs with `--features portable`, which disables all SIMD and assembly and checks the decoder's hot-path reads, so no `unsafe` code runs. Hot-path `unsafe` has debug assertions that the CI-profile tests and the fuzzers run with. |
 | **Miri** | On x86-64 and big-endian s390x. Every push and PR runs the tests of the `unsafe` code (checksums, decoder, match finder) and the xz test files, about 3 minutes; all unit tests, including the encoder, run after each merge that changes the library and weekly. |
 
 **CI** (GitHub Actions, every PR, all required before merging to `main`):
 
 - fmt, clippy with `-D warnings`, docs with `-D warnings`
-- tests (SIMD and `portable`) on Linux x64/arm64, Windows x64/arm64 and macOS arm64
+- tests (SIMD and `portable`) on Linux x64/arm64, Windows x64/arm64 and macOS arm64, and on 32-bit Windows (i686)
 - builds for `no_std` (thumbv7em), wasm32, i686 and aarch64
 - MSRV (Rust 1.89)
-- the three fuzz targets
+- the four fuzz targets
 - cargo-deny (RustSec advisories, licenses, sources)
 
 The OpenSSF Scorecard and CodeQL watch the workflows themselves: actions are pinned by SHA and tokens are read-only.
@@ -224,7 +231,8 @@ The crate follows SemVer for its own API, and the build metadata names the
 xz release whose behavior and encoder output it matches: `0.1.0+xz.5.8.4` is
 release 0.1.0, compatible with xz 5.8.4. Depend on it as
 `xz-native = "0.1"`; Cargo ignores the metadata. Until 1.0, a minor bump
-(0.2, 0.3, ...) may change the API. Git tags are `vX.Y.Z`.
+(0.2, 0.3, ...) may change the API or behavior, and a patch release
+(0.1.1) doesn't. Git tags are `vX.Y.Z`.
 
 Issues and pull requests in the upstream
 [xz repository](https://github.com/tukaani-project/xz) are tracked
