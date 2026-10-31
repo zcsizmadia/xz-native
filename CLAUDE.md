@@ -21,7 +21,10 @@ decisions and roadmap: [docs/PROPOSAL.md](docs/PROPOSAL.md).
 - `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt`
 - `cargo bench -p xz-bench` (decode, encode, check); `--bench encode` for
   compression only. The encoder must stay byte-identical to liblzma:
-  `cargo test -p xz-bench --profile ci --test encode_identity`
+  `cargo test -p xz-bench --profile ci --test encode_identity`.
+  `.cargo/config.toml` builds the C liblzma like liblzma's own CMake build
+  (CLMUL/ARM64 CRC, fast unaligned access); see there for measuring the
+  plain `liblzma-sys` build.
 - Fuzzing needs Linux/macOS + nightly: `cd fuzz && cargo +nightly fuzz run diff_liblzma`
 
 On this Windows machine, cargo is in `~/.cargo/bin` (not on PATH in Bash)

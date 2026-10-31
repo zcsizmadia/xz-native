@@ -295,13 +295,22 @@ fn corrupt_and_truncated() {
 #[test]
 fn memusage() {
     let mut o = RawOptions::preset(RawMethod::Lzma2, 6).unwrap();
-    // liblzma's lzma_raw_decoder_memusage on 64-bit platforms.
+    // liblzma's lzma_raw_decoder_memusage on 64-bit platforms, with 32 bytes
+    // more on x86 for its SSE2 dictionary copy.
+    let extra = if cfg!(any(
+        target_arch = "x86_64",
+        all(target_arch = "x86", target_feature = "sse2")
+    )) {
+        32
+    } else {
+        0
+    };
     let base = o.decoder_memusage();
-    assert_eq!(base, (8 << 20) + 66_168);
+    assert_eq!(base, (8 << 20) + 66_168 + extra);
     o.filters.push(Filter::Delta { distance: 2 });
     assert_eq!(o.decoder_memusage(), base + 352);
     o.lzma = o.lzma.dict_size(4096);
-    assert_eq!(o.decoder_memusage(), 4096 + 66_168 + 352);
+    assert_eq!(o.decoder_memusage(), 4096 + 66_168 + 352 + extra);
     let o = RawOptions::preset(RawMethod::Lzma1, 6).unwrap();
-    assert_eq!(o.decoder_memusage(), (8 << 20) + 65_984);
+    assert_eq!(o.decoder_memusage(), (8 << 20) + 65_984 + extra);
 }

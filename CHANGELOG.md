@@ -66,7 +66,9 @@ minor version may change the API.
 - `memusage()`, `RawOptions::decoder_memusage()` and the memory limit
   checks use liblzma's figures (64-bit): the dictionary size plus the
   decoder state, so a limit accepts and rejects the same files as
-  liblzma (#75).
+  liblzma (#75). On x86 and x86-64 they include the 32 bytes liblzma's own
+  builds reserve for their SSE2 dictionary copy, matching the `xz` CLI's
+  `--memlimit-decompress` (#85).
 - The `portable` feature also replaces the decoder's unchecked input and
   probability reads with checked ones, so no `unsafe` code runs (#75).
 - `LzmaProps` is no longer public (no public API used it) (#75).
