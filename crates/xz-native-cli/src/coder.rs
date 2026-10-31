@@ -4,6 +4,7 @@
 
 use crate::Ctx;
 use crate::args::{Format, Limit, Threads, V_DEBUG, V_WARNING};
+use crate::num::{int as group, mib};
 use std::cell::RefCell;
 use std::io::{self, BufReader, Read, Write};
 use xz_native::{
@@ -40,31 +41,13 @@ impl Hardware {
     }
 
     /// A limit option in bytes; 0 (no limit) or unset is None.
-    fn bytes(&self, l: Option<Limit>) -> Option<u64> {
+    pub fn bytes(&self, l: Option<Limit>) -> Option<u64> {
         match l? {
             Limit::Bytes(0) => None,
             Limit::Bytes(n) => Some(n),
             Limit::Percent(p) => Some((u128::from(p) * u128::from(self.total_ram) / 100) as u64),
         }
     }
-}
-
-/// MiB rounded up with thousands separators, as xz shows memory sizes.
-fn mib(n: u64) -> String {
-    group(n.div_ceil(MIB))
-}
-
-/// `n` with thousands separators (`uint64_to_str()`).
-fn group(n: u64) -> String {
-    let digits = n.to_string();
-    let mut s = String::with_capacity(digits.len() * 4 / 3);
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            s.push(',');
-        }
-        s.push(c);
-    }
-    s
 }
 
 /// `message_mem_needed()`.
@@ -423,19 +406,4 @@ fn copy_through(head: &[u8], input: &mut dyn Read, output: &mut dyn Write) -> Re
 /// The memory-needed line of a memory limit error.
 pub fn memlimit_detail(usage: u64, limit: Option<u64>) -> String {
     mem_needed(usage, limit)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn thousands_separators() {
-        assert_eq!(group(0), "0");
-        assert_eq!(group(999), "999");
-        assert_eq!(group(1000), "1,000");
-        assert_eq!(group(1_234_567), "1,234,567");
-        assert_eq!(mib(1), "1");
-        assert_eq!(mib(3000 << 20), "3,000");
-    }
 }

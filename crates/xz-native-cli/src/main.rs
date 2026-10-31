@@ -6,6 +6,8 @@
 mod args;
 mod coder;
 mod files;
+mod list;
+mod num;
 mod ram;
 
 use args::{Action, Opts, V_ERROR, V_WARNING};
@@ -148,8 +150,11 @@ built on the pure Rust xz-native library).
   -V, --version       display the version number and exit
 
 With no FILE, or when FILE is -, read standard input.
-Not supported yet: --list, --format=raw, custom filter chains,
---block-list, --robot, --files.
+  -l, --list          list information about .xz files (-v, -vv for more)
+      --robot         use machine-parsable messages (with --list)
+
+Not supported yet: --format=raw, custom filter chains,
+--block-list, --files.
 "
     )
 }

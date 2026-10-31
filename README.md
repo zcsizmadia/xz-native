@@ -197,9 +197,10 @@ xz-native -dc big.tar.xz | tar x
 
 It handles `-z`/`-d`/`-t`, presets and `-e`, `-T`, `-F auto|xz|lzma|lzip`,
 `-C`, `--block-size`, the `--memlimit` options, `-S`, `-k`, `-f`, `-c`,
-`--single-stream`, `--ignore-check`, `-q`/`-v`/`-Q`, and the `unxz`,
-`xzcat`, `lzma`, `unlzma` and `lzcat` names. Not yet: `--list`, raw
-format, custom filter chains, `--block-list`, `--robot`, `--files`.
+`--single-stream`, `--ignore-check`, `-q`/`-v`/`-Q`, `--list` (with `-v`, `-vv`
+and `--robot`, the same output as `xz`), and the `unxz`, `xzcat`, `lzma`,
+`unlzma` and `lzcat` names. Not yet: raw format, custom filter chains,
+`--block-list`, `--files`.
 
 ## Supported
 

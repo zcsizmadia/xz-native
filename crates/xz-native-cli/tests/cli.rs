@@ -347,3 +347,99 @@ fn symlinks_and_permissions() {
     let mode = fs::metadata(dir.join("f.xz")).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o640);
 }
+
+/// Runs `cmd` in `dir` with the C locale (no thousands separators, except
+/// in xz's Windows builds, which always group, as xz-native does there).
+fn in_c_locale(mut cmd: Command, dir: &Path, args: &[&str]) -> Output {
+    cmd.current_dir(dir).args(args).env("LC_ALL", "C");
+    run(cmd, b"")
+}
+
+#[test]
+fn list_matches_xz() {
+    use xz_native::{BcjKind, Check, EncoderOptions, Filter};
+    let dir = tmpdir("list");
+    let data = sample(300_000, 7);
+    let opts = |f: &dyn Fn(&mut EncoderOptions)| {
+        let mut o = EncoderOptions::preset(1).unwrap();
+        o.lzma.dict_size = 1 << 20;
+        f(&mut o);
+        xz_native::compress_with_options(&data, &o).unwrap()
+    };
+    // Several Blocks with sizes in the headers.
+    fs::write(
+        dir.join("a.xz"),
+        opts(&|o| {
+            o.threads = 3;
+            o.block_size = 100_000;
+        }),
+    )
+    .unwrap();
+    fs::write(dir.join("b.xz"), opts(&|o| o.check = Check::Sha256)).unwrap();
+    // Two Streams with padding, check None, and filters before LZMA2.
+    let mut c = opts(&|o| o.check = Check::None);
+    c.extend_from_slice(&[0; 8]);
+    c.extend_from_slice(&opts(&|o| {
+        o.check = Check::Crc32;
+        o.lzma.dict_size = 6 << 10;
+        o.filters = vec![
+            Filter::Delta { distance: 4 },
+            Filter::Bcj {
+                kind: BcjKind::X86,
+                start_offset: 0,
+            },
+        ];
+    }));
+    c.extend_from_slice(&[0; 4]);
+    fs::write(dir.join("c.xz"), c).unwrap();
+    fs::write(dir.join("e.xz"), xz_native::compress(&[], 6).unwrap()).unwrap();
+    fs::write(dir.join("empty.xz"), b"").unwrap();
+    fs::write(dir.join("small.xz"), b"tiny").unwrap();
+    fs::write(dir.join("bad.xz"), [0u8; 64]).unwrap();
+
+    for args in [
+        &["-l"][..],
+        &["-lv"],
+        &["-lvv"],
+        &["-l", "--robot"],
+        &["-lv", "--robot"],
+        &["-lvv", "--robot"],
+        &["-lq"],
+    ] {
+        for files in [
+            &["a.xz"][..],
+            &["c.xz"],
+            &["e.xz"],
+            &["a.xz", "b.xz", "c.xz", "e.xz"],
+            &["b.xz", "empty.xz", "small.xz", "bad.xz", "missing.xz"],
+        ] {
+            let all: Vec<&str> = args.iter().chain(files).copied().collect();
+            let theirs = match Command::new("xz").arg("--version").output() {
+                Ok(_) => in_c_locale(Command::new("xz"), &dir, &all),
+                Err(_) => {
+                    assert!(
+                        std::env::var_os("XZ_NATIVE_REQUIRE_XZ").is_none(),
+                        "xz not found"
+                    );
+                    return;
+                }
+            };
+            let ours = in_c_locale(bin(), &dir, &all);
+            let text = |b: &[u8]| String::from_utf8_lossy(b).replace('\r', "");
+            assert_eq!(text(&ours.stdout), text(&theirs.stdout), "{all:?}: stdout");
+            assert_eq!(
+                text(&ours.stderr).replace("xz-native:", "xz:"),
+                text(&theirs.stderr),
+                "{all:?}: stderr"
+            );
+            assert_eq!(status(&ours), status(&theirs), "{all:?}: status");
+        }
+    }
+    // Standard input and other formats.
+    let o = ours(&["-l"], b"");
+    assert_eq!(status(&o), 1);
+    assert!(stderr(&o).contains("--list does not support reading from standard input"));
+    let o = file_cmd(&dir, &["-l", "--format=lzma", "a.xz"]);
+    assert_eq!(status(&o), 1);
+    assert!(stderr(&o).contains("Try 'lzmainfo'"));
+}
