@@ -174,3 +174,34 @@ fn bcj_data_triggers_conversions() {
         assert!(changed > 100, "{name}: only {changed} bytes converted");
     }
 }
+
+/// An input that is exactly one branch instruction: the filters convert
+/// only whole instructions, and one that fills the whole buffer must still
+/// be converted.
+#[test]
+fn single_instruction_matches_xz() {
+    let cases: [(BcjKind, &str, &[u8]); 7] = [
+        (BcjKind::X86, "x86", &[0xE8, 0x12, 0x34, 0x00, 0x00]),
+        (BcjKind::PowerPc, "powerpc", &[0x48, 0x00, 0x10, 0x01]),
+        (BcjKind::Arm, "arm", &[0x12, 0x34, 0x00, 0xEB]),
+        (BcjKind::ArmThumb, "armthumb", &[0x12, 0xF0, 0x34, 0xF8]),
+        (BcjKind::Sparc, "sparc", &[0x40, 0x00, 0x10, 0x00]),
+        (BcjKind::Arm64, "arm64", &[0x10, 0x00, 0x00, 0x94]),
+        (BcjKind::RiscV, "riscv", &[0xEF, 0x00, 0x40, 0x00]),
+    ];
+    for (kind, name, data) in cases {
+        let opts = EncoderOptions::default()
+            .lzma(LzmaOptions::preset(0).unwrap())
+            .filters(vec![Filter::Bcj {
+                kind,
+                start_offset: 0,
+            }]);
+        let ours = compress_with_options(data, &opts).unwrap();
+        let filter = format!("--{name}");
+        let Some(theirs) = xz(&["-zc", "-T1", &filter, "--lzma2=preset=0"], data) else {
+            return;
+        };
+        assert!(ours == theirs, "{name}: differs from xz");
+        assert_eq!(decompress(&theirs).unwrap(), data, "{name}");
+    }
+}
