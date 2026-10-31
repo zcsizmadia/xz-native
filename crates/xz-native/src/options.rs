@@ -288,13 +288,13 @@ pub struct EncoderOptions {
     pub filters: Vec<Filter>,
     /// Uncompressed size of each Block.
     ///
-    /// Single-threaded (`threads == 1`): start a new Block after this many
-    /// bytes (0 = one Block per stream unless flushed), like
-    /// `xz -T1 --block-size`. Block Headers store no sizes, as in liblzma's
-    /// `lzma_stream_encoder()`.
+    /// Single-threaded (`threads == 1`, `multithreaded` false): start a new
+    /// Block after this many bytes (0 = one Block per stream unless
+    /// flushed), like `xz -T1 --block-size`. Block Headers store no sizes,
+    /// as in liblzma's `lzma_stream_encoder()`.
     ///
-    /// Multithreaded (`threads != 1`): the Block size of liblzma's
-    /// `lzma_stream_encoder_mt()` and `xz -T`; 0 picks its default, three
+    /// Multithreaded (`threads != 1` or `multithreaded`): the Block size of
+    /// liblzma's `lzma_stream_encoder_mt()` and `xz -T`; 0 picks its default, three
     /// times the dictionary size but at least 1 MiB. Every Block starts
     /// with an empty dictionary, Block Headers store both sizes, and a Block
     /// that doesn't fit in its output bound is stored uncompressed. The
@@ -304,12 +304,18 @@ pub struct EncoderOptions {
     pub block_size: u64,
     /// Worker threads (default 1; 0 = one per CPU). Anything other than 1
     /// selects the multithreaded encoder, even if that ends up with one
-    /// thread (like `xz -T0`), so the output doesn't depend on the machine.
+    /// thread (like `xz -T0`), so the output doesn't depend on the machine;
+    /// [`multithreaded`](Self::multithreaded) selects it for exactly one.
     /// Ignored without the `std` feature.
     ///
     /// Memory: up to `threads` LZMA2 encoders, `threads` Blocks of input and
     /// `2 * threads` Blocks of output, like liblzma.
     pub threads: usize,
+    /// Use the multithreaded encoder even with `threads == 1` (default
+    /// false), like `xz -T+1` and liblzma's `lzma_stream_encoder_mt()` with
+    /// one thread: the same output as with more threads, with the memory
+    /// of one. Ignored without the `std` feature.
+    pub multithreaded: bool,
 }
 
 impl Default for EncoderOptions {
@@ -320,6 +326,7 @@ impl Default for EncoderOptions {
             filters: Vec::new(),
             block_size: 0,
             threads: 1,
+            multithreaded: false,
         }
     }
 }
@@ -330,6 +337,7 @@ setters!(EncoderOptions {
     filters: Vec<Filter>,
     block_size: u64,
     threads: usize,
+    multithreaded: bool,
 });
 
 impl EncoderOptions {
@@ -365,11 +373,17 @@ impl EncoderOptions {
             + crate::raw::filters_memusage(&self.filters)
             + crate::lzma::MEMUSAGE_BASE;
         #[cfg(feature = "std")]
-        if self.threads != 1 {
+        if self.is_multithreaded() {
             let threads = crate::xz::mt::thread_count(self.threads);
             return crate::xz::mt_encoder::memusage(self, raw, threads);
         }
         Ok(raw)
+    }
+
+    /// Whether the multithreaded encoder is used.
+    #[cfg(feature = "std")]
+    pub(crate) fn is_multithreaded(&self) -> bool {
+        self.threads != 1 || self.multithreaded
     }
 
     /// Validates the options and the filter chain.

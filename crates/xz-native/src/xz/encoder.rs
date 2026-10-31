@@ -2,8 +2,8 @@
 //! `block_header_encoder.c`, `index_encoder.c` and
 //! `stream_flags_encoder.c`), single-threaded: Block Headers store no
 //! sizes, as liblzma's `lzma_stream_encoder()` writes them. With
-//! [`EncoderOptions::threads`] other than 1, [`XzEncoder`] hands the work to
-//! the multithreaded encoder (`mt_encoder.rs`).
+//! [`EncoderOptions::threads`] other than 1 or [`EncoderOptions::multithreaded`],
+//! [`XzEncoder`] hands the work to the multithreaded encoder (`mt_encoder.rs`).
 
 use super::format::HEADER_MAGIC;
 use crate::check::{Check, CheckState, crc32};
@@ -198,7 +198,8 @@ enum Seq {
 /// calls (the window fills differently); passing all input in one call
 /// gives the same bytes as liblzma does for the same options.
 ///
-/// With [`EncoderOptions::threads`] other than 1 (and the `std` feature),
+/// With [`EncoderOptions::threads`] other than 1 or
+/// [`EncoderOptions::multithreaded`] (and the `std` feature),
 /// Blocks are encoded in parallel like liblzma's `lzma_stream_encoder_mt()`:
 /// the output is the same as liblzma's multithreaded encoder for any number
 /// of threads and any input split; only the options and the flushes
@@ -227,7 +228,7 @@ impl XzEncoder {
     /// Creates an encoder with options.
     pub fn with_options(opts: EncoderOptions) -> Result<Self> {
         #[cfg(feature = "std")]
-        if opts.threads != 1 {
+        if opts.is_multithreaded() {
             let mt = super::mt_encoder::MtEncoder::new(opts)?;
             return Ok(Self {
                 inner: Inner::Multi(Box::new(mt)),
@@ -613,6 +614,33 @@ mod tests {
                 return;
             }
         }
+    }
+
+    /// `multithreaded` with one thread gives the multithreaded encoder's
+    /// output, the same as with more threads.
+    #[cfg(feature = "std")]
+    #[test]
+    fn multithreaded_with_one_thread() {
+        let data = sample(200_000);
+        let mut opts = EncoderOptions::preset(1).unwrap();
+        opts.block_size = 50_000;
+        let single = compress_with(&data, &opts);
+        opts.multithreaded = true;
+        let one = compress_with(&data, &opts);
+        assert_eq!(crate::compress_with_options(&data, &opts).unwrap(), one);
+        assert!(one != single);
+        opts.threads = 3;
+        assert_eq!(compress_with(&data, &opts), one);
+        assert_eq!(crate::decompress(&one).unwrap(), data);
+        opts.threads = 1;
+        assert!(
+            opts.encoder_memusage().unwrap()
+                > opts
+                    .clone()
+                    .multithreaded(false)
+                    .encoder_memusage()
+                    .unwrap()
+        );
     }
 
     #[test]

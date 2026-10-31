@@ -128,7 +128,7 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
         } else {
             limit
         };
-        let usage_with = |n: u32| mt_memusage(&opts, n).map_err(invalid);
+        let usage_with = |n: u32| mt_options(&opts, n).encoder_memusage().map_err(invalid);
         let mut usage = usage_with(threads)?;
         while mt_limit.is_some_and(|l| usage > l) && threads > 1 {
             threads -= 1;
@@ -164,23 +164,12 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
     Ok(Encoder::Xz(opts))
 }
 
-/// Multithreaded options with `n` threads. `threads == 1` would select
-/// the single-threaded encoder, whose output differs; the multithreaded
-/// output is the same for any thread count, so one thread runs as two.
+/// Multithreaded options with `n` threads, also for one (`xz -T+1`).
 fn mt_options(opts: &EncoderOptions, n: u32) -> EncoderOptions {
     let mut o = opts.clone();
-    o.threads = (n as usize).max(2);
+    o.threads = n as usize;
+    o.multithreaded = true;
     o
-}
-
-/// The multithreaded encoder's memory for `n` threads. It grows by the
-/// same amount per thread, which gives the size for one thread too.
-fn mt_memusage(opts: &EncoderOptions, n: u32) -> xz_native::Result<u64> {
-    let at = |n: u32| mt_options(opts, n).encoder_memusage();
-    match n {
-        1 => Ok((2 * at(2)?).saturating_sub(at(3)?)),
-        n => at(n),
-    }
 }
 
 fn too_small(usage: u64, limit: Option<u64>) -> String {

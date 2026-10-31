@@ -185,8 +185,7 @@ fn raw_encoder_memusage_matches_liblzma() {
 
 /// The MT structs hold the platform's mutexes and condition variables, so
 /// their sizes differ by OS: on a mismatch, report the constants that
-/// would match this platform (from two and three threads; one thread is
-/// the single-threaded encoder).
+/// would match this platform (from two and three threads).
 #[test]
 fn mt_struct_sizes_for_this_platform() {
     let e = EncoderOptions::preset(0).unwrap();
@@ -217,9 +216,13 @@ fn easy_and_mt_encoder_memusage_match_liblzma() {
                 easy,
                 "preset {preset} {extreme:#x}"
             );
-            for threads in [2u32, 3, 8] {
+            for threads in [1u32, 2, 3, 8] {
                 for block_size in [0, 1 << 20, 3_000_001] {
-                    let e = e.clone().threads(threads as usize).block_size(block_size);
+                    let e = e
+                        .clone()
+                        .threads(threads as usize)
+                        .multithreaded(true)
+                        .block_size(block_size);
                     let ours = e.encoder_memusage().unwrap();
                     let theirs = c_mt(&e, threads);
                     assert_eq!(

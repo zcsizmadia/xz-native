@@ -317,7 +317,7 @@ fn store(p: &Params, input: &[u8], out: &mut BlockBuf) -> (u64, u64) {
     ((hs + compressed + check_size) as u64, n as u64)
 }
 
-/// Multithreaded one-shot compression (`threads != 1`).
+/// Multithreaded one-shot compression (`threads != 1` or `multithreaded`).
 pub(crate) fn compress(data: &[u8], opts: &EncoderOptions) -> Result<Vec<u8>> {
     let p = Params::new(opts)?;
     let blocks = data.len().div_ceil(p.block_size);

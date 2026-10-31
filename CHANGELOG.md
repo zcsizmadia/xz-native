@@ -19,6 +19,10 @@ minor version may change the API.
   not on crates.io yet): compress, decompress and test .xz, .lzma and .lz
   with xz 5.8.4's options, defaults, memory limit handling, file handling
   and exit statuses, writing the same bytes as `xz` (#14).
+- `EncoderOptions::multithreaded`: the multithreaded encoder with exactly
+  one thread, like `xz -T+1` and liblzma's `lzma_stream_encoder_mt()` with
+  one thread (`threads == 1` alone still selects the single-threaded
+  encoder). `xz-native` uses it instead of running two threads (#123).
 
 ## [0.3.0+xz.5.8.4]
 
