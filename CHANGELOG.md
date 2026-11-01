@@ -18,6 +18,9 @@ minor version may change the API.
   (`FilterStringFormat`) (#101).
 - `FilterStringFormat::list_filters` lists the filters and their options
   like liblzma's `lzma_str_list_filters()` (#101).
+- Filter Flags like liblzma's `lzma_filter_flags_encode()` and
+  `lzma_filter_flags_decode()`: `Filter::flags` and `Filter::from_flags`,
+  with liblzma's bytes and errors (#101).
 - Changing filters mid-stream like liblzma's `lzma_filters_update()`:
   `XzEncoder::update_filters` sets the filter chain and LZMA2 options for
   the next Block (after a full flush or barrier, or before any input),
@@ -71,6 +74,8 @@ minor version may change the API.
   the basic and the long help like xz's (#123).
 - `xz-native --filters-help`: the filter string syntax and the filters
   with their options, as xz shows them (#123).
+- `xz-native` keeps its default thread memory budget 64 MiB below the
+  data and address space limits (`ulimit -d`/`-v`), as xz does (#123).
 
 ## [0.3.0+xz.5.8.4]
 

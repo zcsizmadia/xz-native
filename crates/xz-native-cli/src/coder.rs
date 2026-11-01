@@ -12,9 +12,9 @@ use std::io::{self, BufReader, Read, Write};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, sync_channel};
 use std::time::{Duration, Instant};
 use xz_native::{
-    Action, AutoReader, Check, DecoderOptions, EncoderOptions, Filter, LzipReader, LzmaOptions,
-    LzmaReader, LzmaWriter, PRESET_EXTREME, RawDecoder, RawEncoder, RawMethod, RawOptions, Status,
-    XzEncoder, XzReader, XzWriter,
+    Action, AutoReader, Check, DecoderOptions, EncoderOptions, Filter, FilterOptions,
+    FilterStringFormat, LzipReader, LzmaOptions, LzmaReader, LzmaWriter, PRESET_EXTREME,
+    RawDecoder, RawEncoder, RawMethod, RawOptions, Status, XzEncoder, XzReader, XzWriter,
 };
 
 /// `ASSUME_RAM`: the RAM size xz assumes when it can't find it, in MiB.
@@ -85,6 +85,11 @@ impl Hardware {
     pub fn detect() -> Self {
         let total_ram = crate::ram::total().unwrap_or(ASSUME_RAM * MIB);
         let mut memlimit_mt_default = total_ram / 4;
+        // Below the resource limits, with a margin for xz itself; at least
+        // 1, as 0 means no limit.
+        if let Some(limit) = crate::ram::rlimit() {
+            memlimit_mt_default = memlimit_mt_default.min(limit.saturating_sub(64 * MIB).max(1));
+        }
         if cfg!(target_pointer_width = "32") {
             memlimit_mt_default = memlimit_mt_default.min(1400 * MIB);
         }
@@ -184,14 +189,7 @@ pub fn raw_options(ctx: &Ctx, hw: &Hardware) -> Result<RawOptions, String> {
     } else {
         (raw.decoder_memusage(), hw.bytes(o.memlimit_decompress))
     };
-    let lzma1 = raw.method == RawMethod::Lzma1;
-    ctx.note(
-        V_DEBUG,
-        format!(
-            "Filter chain: {}",
-            chain_string(&raw.filters, &raw.lzma, lzma1)
-        ),
-    );
+    ctx.note(V_DEBUG, format!("Filter chain: {}", chain_string(&raw)));
     let compress = o.mode == crate::args::Mode::Compress;
     debug_memory(ctx, usage, limit, compress.then(|| raw.decoder_memusage()));
     if limit.is_some_and(|l| usage > l) {
@@ -202,55 +200,8 @@ pub fn raw_options(ctx: &Ctx, hw: &Hardware) -> Result<RawOptions, String> {
 
 /// A filter chain as xz's `-vv` shows it (`lzma_str_from_filters()` with
 /// `LZMA_STR_ENCODER | LZMA_STR_GETOPT_LONG`).
-fn chain_string(filters: &[Filter], lzma: &LzmaOptions, lzma1: bool) -> String {
-    fn size(mut v: u32) -> String {
-        let mut suffix = "";
-        for s in ["KiB", "MiB", "GiB"] {
-            if v == 0 || v & 1023 != 0 {
-                break;
-            }
-            v >>= 10;
-            suffix = s;
-        }
-        format!("{v}{suffix}")
-    }
-    let mut parts: Vec<String> = filters
-        .iter()
-        .map(|f| match *f {
-            Filter::Delta { distance } => format!("--delta=dist={distance}"),
-            Filter::Bcj { kind, start_offset } => {
-                let name = crate::chain::bcj_name(kind);
-                if start_offset == 0 {
-                    format!("--{name}")
-                } else {
-                    format!("--{name}=start={}", size(start_offset))
-                }
-            }
-            _ => "--unknown".into(),
-        })
-        .collect();
-    let mode = match lzma.mode {
-        xz_native::Mode::Fast => "fast",
-        _ => "normal",
-    };
-    let mf = match lzma.mf {
-        xz_native::MatchFinder::Hc3 => "hc3",
-        xz_native::MatchFinder::Hc4 => "hc4",
-        xz_native::MatchFinder::Bt2 => "bt2",
-        xz_native::MatchFinder::Bt3 => "bt3",
-        _ => "bt4",
-    };
-    parts.push(format!(
-        "--lzma{}=dict={},lc={},lp={},pb={},mode={mode},nice={},mf={mf},depth={}",
-        if lzma1 { 1 } else { 2 },
-        size(lzma.dict_size),
-        lzma.lc,
-        lzma.lp,
-        lzma.pb,
-        lzma.nice_len,
-        lzma.depth
-    ));
-    parts.join(" ")
+fn chain_string(raw: &RawOptions) -> String {
+    raw.to_filter_string(FilterStringFormat::new(FilterOptions::Encoder).getopt_long(true))
 }
 
 /// The `-vv` lines about the settings: the filter chain, then the memory
@@ -364,10 +315,7 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
             _ => return Err("The .lzma format supports only the LZMA1 filter".into()),
         }
         let usage = raw.encoder_memusage().map_err(|_| unsupported())?;
-        ctx.note(
-            V_DEBUG,
-            format!("Filter chain: {}", chain_string(&[], &raw.lzma, true)),
-        );
+        ctx.note(V_DEBUG, format!("Filter chain: {}", chain_string(&raw)));
         debug_memory(ctx, usage, limit, Some(raw.decoder_memusage()));
         let lzma = fit_dict(ctx, raw.lzma, limit, "LZMA1 dictionary size", |lzma| {
             let mut r = raw.clone();
@@ -420,7 +368,15 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
     if let Some(c) = &chains[0] {
         ctx.note(
             V_DEBUG,
-            format!("Filter chain: {}", chain_string(&c.0, &c.1, false)),
+            format!(
+                "Filter chain: {}",
+                chain_string(
+                    &RawOptions::default()
+                        .method(RawMethod::Lzma2)
+                        .lzma(c.1)
+                        .filters(c.0.clone())
+                )
+            ),
         );
     }
     // What decoding needs: the largest chain.

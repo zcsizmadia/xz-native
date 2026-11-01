@@ -1,8 +1,9 @@
-//! Total physical RAM (`lzma_physmem()`), for the default memory budget
-//! of the threads (a quarter of it, like xz).
+//! Total physical RAM (`lzma_physmem()`) and the resource limits, for the
+//! default memory budget of the threads (a quarter of the RAM, below the
+//! limits, like xz).
 //!
-//! Windows and macOS need one OS call each; that is the only `unsafe` in
-//! the command line tool.
+//! Windows and macOS need one OS call each for the RAM, and Unix one for
+//! the limits.
 
 /// Total RAM in bytes, or None if unknown.
 pub fn total() -> Option<u64> {
@@ -103,6 +104,36 @@ mod imp {
     pub fn total() -> Option<u64> {
         None
     }
+}
+
+/// The lowest soft limit on the data segment and the address space
+/// (`getrlimit()`), or None if there is none.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+pub fn rlimit() -> Option<u64> {
+    let mut resources = vec![libc::RLIMIT_DATA];
+    // OpenBSD has no RLIMIT_AS.
+    #[cfg(not(target_os = "openbsd"))]
+    resources.push(libc::RLIMIT_AS);
+    resources
+        .into_iter()
+        .filter_map(|r| {
+            let mut rl = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            // SAFETY: `rl` is valid and writable.
+            let ok = unsafe { libc::getrlimit(r, &mut rl) } == 0;
+            // `rlim_t` is signed on FreeBSD.
+            #[allow(clippy::unnecessary_cast)]
+            (ok && rl.rlim_cur != libc::RLIM_INFINITY).then_some(rl.rlim_cur as u64)
+        })
+        .min()
+}
+
+#[cfg(not(unix))]
+pub fn rlimit() -> Option<u64> {
+    None
 }
 
 #[cfg(test)]

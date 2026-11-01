@@ -86,6 +86,49 @@ impl Filter {
         Self::from_props(id, props)
     }
 
+    /// The filter's Filter Flags, as in an .xz Block Header
+    /// (`lzma_filter_flags_encode()`): the ID and the size of the
+    /// properties as variable-length integers, then the properties. Its
+    /// length is `lzma_filter_flags_size()`.
+    ///
+    /// ```
+    /// use xz_native::Filter;
+    ///
+    /// let f = Filter::Delta { distance: 4 };
+    /// assert_eq!(f.flags(), [0x03, 1, 3]);
+    /// assert_eq!(Filter::from_flags(&[0x03, 1, 3, 0xff])?, (f, 3));
+    /// # Ok::<(), xz_native::Error>(())
+    /// ```
+    pub fn flags(&self) -> Vec<u8> {
+        let props = self.properties();
+        let mut out = Vec::with_capacity(2 + props.len());
+        crate::xz::encoder::write_vli(&mut out, self.id());
+        crate::xz::encoder::write_vli(&mut out, props.len() as u64);
+        out.extend_from_slice(&props);
+        out
+    }
+
+    /// Decodes the Filter Flags at the start of `buf`
+    /// (`lzma_filter_flags_decode()`), returning the filter and the number
+    /// of bytes they took. As in liblzma, truncated or non-minimal
+    /// integers, a reserved ID and properties past the end of `buf` are
+    /// [`Error::Data`]; an unsupported filter or bad properties are
+    /// [`Error::Options`] (see [`from_properties`](Self::from_properties)).
+    pub fn from_flags(buf: &[u8]) -> Result<(Self, usize)> {
+        use crate::xz::format::read_vli;
+        let mut pos = 0;
+        let id = read_vli(buf, &mut pos)?;
+        if id >= FILTER_RESERVED_START {
+            return Err(Error::Data);
+        }
+        let size = read_vli(buf, &mut pos)?;
+        if size > (buf.len() - pos) as u64 {
+            return Err(Error::Data);
+        }
+        let end = pos + size as usize;
+        Ok((Self::from_props(id, &buf[pos..end])?, end))
+    }
+
     /// Decodes a filter from its .xz ID and properties.
     pub(crate) fn from_props(id: u64, props: &[u8]) -> Result<Self> {
         if id >= FILTER_RESERVED_START {
