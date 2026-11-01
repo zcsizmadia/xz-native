@@ -30,6 +30,7 @@ fn coders_options_and_errors() {
     check::<Format>();
     check::<Status>();
     check::<Action>();
+    check::<UnsupportedCheck>();
     check::<Error>();
 }
 
