@@ -4,12 +4,14 @@
 
 use crate::Ctx;
 use crate::args::{Format, Limit, Threads, V_DEBUG, V_WARNING};
+use crate::chain::Item;
 use crate::num::{int as group, mib};
 use std::cell::RefCell;
 use std::io::{self, BufReader, Read, Write};
 use xz_native::{
-    AutoReader, Check, DecoderOptions, EncoderOptions, LzipReader, LzmaOptions, LzmaReader,
-    LzmaWriter, PRESET_EXTREME, RawMethod, RawOptions, XzReader, XzWriter,
+    Action, AutoReader, Check, DecoderOptions, EncoderOptions, Filter, LzipReader, LzmaOptions,
+    LzmaReader, LzmaWriter, PRESET_EXTREME, RawMethod, RawOptions, Status, XzEncoder, XzReader,
+    XzWriter,
 };
 
 /// `ASSUME_RAM`: the RAM size xz assumes when it can't find it, in MiB.
@@ -68,13 +70,53 @@ fn mem_needed(usage: u64, limit: Option<u64>) -> String {
 
 /// The encoder for every file.
 pub enum Encoder {
-    Xz(EncoderOptions),
+    Xz(Box<XzPlan>),
     Lzma(LzmaOptions),
 }
 
-/// `coder_set_compression_settings()` for the default filter chain:
-/// fewer threads, then single-threaded mode, then a smaller dictionary
-/// until the memory limit is met.
+/// A filter chain for .xz: the filters before LZMA2, and LZMA2.
+pub type XzChain = (Vec<Filter>, LzmaOptions);
+
+/// .xz settings: the encoder options with the first Block's chain, and
+/// with `--block-list`, the Blocks and the chains they use.
+pub struct XzPlan {
+    pub opts: EncoderOptions,
+    pub chains: [Option<XzChain>; 10],
+    pub list: Option<Vec<(usize, u64)>>,
+    /// Single-threaded `--block-size` with `--block-list`: Blocks longer
+    /// than this are split (xz's `split_block()`).
+    pub split: u64,
+}
+
+/// A custom chain for .xz (`lzma_validate_chain()`: Delta and BCJ
+/// filters, then LZMA2).
+fn xz_chain(items: &[Item]) -> Result<XzChain, String> {
+    let unsupported = || "Unsupported filter chain or filter options".to_owned();
+    let (last, first) = items.split_last().ok_or_else(unsupported)?;
+    let Item::Lzma2(lzma) = last else {
+        return Err(unsupported());
+    };
+    let filters = first
+        .iter()
+        .map(|i| match *i {
+            Item::Bcj(kind, start_offset) => Ok(Filter::Bcj { kind, start_offset }),
+            Item::Delta(distance) => Ok(Filter::Delta { distance }),
+            _ => Err(unsupported()),
+        })
+        .collect::<Result<_, _>>()?;
+    Ok((filters, *lzma))
+}
+
+pub fn with_chain(opts: &EncoderOptions, chain: &XzChain) -> EncoderOptions {
+    let mut o = opts.clone();
+    o.filters = chain.0.clone();
+    o.lzma = chain.1;
+    o
+}
+
+/// `coder_set_compression_settings()`: the preset or the custom chains,
+/// then fewer threads, single-threaded mode and a smaller dictionary until
+/// the memory limit is met.
 pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
     let o = &ctx.o;
     let preset = o.preset | if o.extreme { PRESET_EXTREME } else { 0 };
@@ -83,9 +125,16 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
     if o.format == Format::Lzip {
         return Err("Compression of lzip files (.lz) is not supported".into());
     }
+    let unsupported = || "Unsupported filter chain or filter options".to_owned();
     if o.format == Format::Lzma {
-        let raw = RawOptions::preset(RawMethod::Lzma1, preset).map_err(invalid)?;
-        let lzma = fit_dict(ctx, raw.lzma, limit, '1', |lzma| {
+        let mut raw = RawOptions::preset(RawMethod::Lzma1, preset).map_err(invalid)?;
+        match o.chain.as_slice() {
+            [] => {}
+            [Item::Lzma1(l)] => raw.lzma = *l,
+            _ => return Err("The .lzma format supports only the LZMA1 filter".into()),
+        }
+        raw.encoder_memusage().map_err(|_| unsupported())?;
+        let lzma = fit_dict(ctx, raw.lzma, limit, "LZMA1 dictionary size", |lzma| {
             let mut r = raw.clone();
             r.lzma = lzma;
             r.encoder_memusage()
@@ -93,13 +142,76 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
         return Ok(Encoder::Lzma(lzma));
     }
 
+    // The chains in use: chain 0 (the preset or the custom chain), or
+    // those `--block-list` names (`chains_used_mask`).
+    let used: Vec<usize> = match &o.block_list {
+        Some(list) => {
+            let mut u: Vec<usize> = list.iter().map(|e| e.0).collect();
+            u.sort_unstable();
+            u.dedup();
+            if let Some(&n) = u.iter().find(|&&n| n != 0 && o.block_chains[n].is_none()) {
+                return Err(format!(
+                    "filter chain {n} used by --block-list but not specified with --filters{n}="
+                ));
+            }
+            u
+        }
+        None => vec![0],
+    };
+    let mut chains: [Option<XzChain>; 10] = Default::default();
+    for &n in &used {
+        chains[n] = Some(match &o.block_chains[n] {
+            Some(items) if n != 0 => xz_chain(items)?,
+            _ if o.chain.is_empty() => {
+                let l = LzmaOptions::preset(preset).map_err(invalid)?;
+                (Vec::new(), l)
+            }
+            _ => {
+                if o.chain.iter().any(|i| matches!(i, Item::Lzma1(_))) {
+                    return Err("LZMA1 cannot be used with the .xz format".into());
+                }
+                xz_chain(&o.chain)?
+            }
+        });
+    }
     let mut opts = EncoderOptions::preset(preset).map_err(invalid)?;
     opts.check = o.check.unwrap_or(Check::Crc64);
     opts.block_size = o.block_size;
+    for c in chains.iter().flatten() {
+        with_chain(&opts, c)
+            .encoder_memusage()
+            .map_err(|_| unsupported())?;
+    }
+    let first = o.block_list.as_ref().map_or(0, |l| l[0].0);
+    let list = o.block_list.clone();
     let (mut threads, mut mt) = match o.threads {
         Threads::Auto => (hw.cpus, true),
         Threads::Single => (1, false),
         Threads::Mt(n) => (n, true),
+    };
+    if mt
+        && opts.block_size == 0
+        && let Some(list) = &list
+    {
+        // `lzma_mt_block_size()` of the chains, but no larger than the
+        // largest Block of the list.
+        let size = chains
+            .iter()
+            .flatten()
+            .map(|c| (u64::from(c.1.dict_size) * 3).max(1 << 20))
+            .max()
+            .unwrap_or(1 << 20);
+        let largest = list.iter().map(|e| e.1).max().unwrap_or(0);
+        opts.block_size = size.min(largest);
+    }
+    // The memory of the largest chain (`get_chains_memusage()`).
+    let usage_of = |opts: &EncoderOptions| {
+        chains
+            .iter()
+            .flatten()
+            .map(|c| with_chain(opts, c).encoder_memusage())
+            .try_fold(0, |m, u| u.map(|u| m.max(u)))
+            .map_err(invalid)
     };
     if mt {
         // The default budget applies only to an automatic thread count
@@ -111,11 +223,10 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
         } else {
             limit
         };
-        let usage_with = |n: u32| mt_options(&opts, n).encoder_memusage().map_err(invalid);
-        let mut usage = usage_with(threads)?;
+        let mut usage = usage_of(&mt_options(&opts, threads))?;
         while mt_limit.is_some_and(|l| usage > l) && threads > 1 {
             threads -= 1;
-            usage = usage_with(threads)?;
+            usage = usage_of(&mt_options(&opts, threads))?;
         }
         ctx.note(V_DEBUG, format!("Using up to {threads} threads."));
         if mt_limit.is_some_and(|l| usage > l) && !soft {
@@ -129,22 +240,46 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
                 V_WARNING,
                 format!(
                     "Switching to single-threaded mode to not exceed the memory usage \
-                 limit of {} MiB",
+                     limit of {} MiB",
                     mib(mt_limit.unwrap_or_default())
                 ),
             );
         }
     }
+    let mut split = 0;
     if mt {
-        return Ok(Encoder::Xz(mt_options(&opts, threads)));
+        opts = mt_options(&opts, threads);
+    } else {
+        opts.threads = 1;
+        if list.is_some() {
+            // With a Block list, the Blocks are cut here, as xz does.
+            split = opts.block_size;
+            opts.block_size = 0;
+        }
+        // Every chain over the limit gets a smaller dictionary.
+        if limit.is_some_and(|l| usage_of(&opts).is_ok_and(|u| u > l)) {
+            for (n, c) in chains.iter_mut().enumerate() {
+                let Some(c) = c else { continue };
+                let label = if n == 0 {
+                    "LZMA2 dictionary size".to_owned()
+                } else {
+                    format!("LZMA2 dictionary size for --filters{n}")
+                };
+                let base = opts.clone();
+                let filters = c.0.clone();
+                c.1 = fit_dict(ctx, c.1, limit, &label, |lzma| {
+                    with_chain(&base, &(filters.clone(), lzma)).encoder_memusage()
+                })?;
+            }
+        }
     }
-    opts.threads = 1;
-    opts.lzma = fit_dict(ctx, opts.lzma, limit, '2', |lzma| {
-        let mut o = opts.clone();
-        o.lzma = lzma;
-        o.encoder_memusage()
-    })?;
-    Ok(Encoder::Xz(opts))
+    let first_chain = chains[first].clone().expect("a used chain");
+    Ok(Encoder::Xz(Box::new(XzPlan {
+        opts: with_chain(&opts, &first_chain),
+        chains,
+        list,
+        split,
+    })))
 }
 
 /// Multithreaded options with `n` threads, also for one (`xz -T+1`).
@@ -169,7 +304,7 @@ fn fit_dict(
     ctx: &mut Ctx,
     mut lzma: LzmaOptions,
     limit: Option<u64>,
-    lzma_num: char,
+    label: &str,
     memusage: impl Fn(LzmaOptions) -> xz_native::Result<u64>,
 ) -> Result<LzmaOptions, String> {
     let Some(limit) = limit else {
@@ -199,8 +334,8 @@ fn fit_dict(
     ctx.note(
         V_WARNING,
         format!(
-            "Adjusted LZMA{lzma_num} dictionary size from {} MiB to {} MiB to not exceed the \
-         memory usage limit of {} MiB",
+            "Adjusted {label} from {} MiB to {} MiB to not exceed the memory usage \
+             limit of {} MiB",
             group(u64::from(orig >> 20)),
             group(u64::from(lzma.dict_size >> 20)),
             mib(limit)
@@ -289,15 +424,106 @@ pub fn compress(
         finish(w).map_err(write_failure)
     }
     match enc {
-        Encoder::Xz(opts) => {
-            let w =
-                XzWriter::with_options(output, opts.clone()).map_err(|e| Failure::Coder(e, 0))?;
+        Encoder::Xz(plan) if plan.list.is_some() => compress_blocks(plan, input, output),
+        Encoder::Xz(plan) => {
+            let w = XzWriter::with_options(output, plan.opts.clone())
+                .map_err(|e| Failure::Coder(e, 0))?;
             run(w, input, |w| w.finish().map(drop))
         }
         Encoder::Lzma(lzma) => {
             let w = LzmaWriter::with_options(output, *lzma).map_err(|e| Failure::Coder(e, 0))?;
             run(w, input, |w| w.finish().map(drop))
         }
+    }
+}
+
+/// Reads until `buf` is full or the input ends (`io_read()`); true at the
+/// end.
+fn read_full(input: &mut dyn Read, buf: &mut [u8]) -> Result<(usize, bool), Failure> {
+    let mut n = 0;
+    while n < buf.len() {
+        match input.read(&mut buf[n..]) {
+            Ok(0) => return Ok((n, true)),
+            Ok(k) => n += k,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(Failure::Read(e)),
+        }
+    }
+    Ok((n, false))
+}
+
+/// Compresses with `--block-list` like xz's `coder_normal()`: each Block
+/// ends with a full barrier, and the chain changes with
+/// [`XzEncoder::update_filters`] where the list says so (`split_block()`).
+fn compress_blocks(
+    plan: &XzPlan,
+    input: &mut dyn Read,
+    output: &mut dyn Write,
+) -> Result<(), Failure> {
+    let list = plan.list.as_deref().expect("a Block list");
+    let coder = |e| Failure::Coder(e, 0);
+    let mut enc = XzEncoder::with_options(plan.opts.clone()).map_err(coder)?;
+    let mt = plan.opts.threads != 1 || plan.opts.multithreaded;
+    let split = plan.split;
+    let mut pos = 0;
+    let mut next_remaining = 0;
+    let mut remaining = if !mt && split > 0 { split } else { u64::MAX };
+    if remaining < list[0].1 {
+        next_remaining = list[0].1 - remaining;
+    } else {
+        remaining = list[0].1;
+    }
+    let mut inbuf = vec![0u8; BUF_SIZE];
+    let mut outbuf = vec![0u8; BUF_SIZE];
+    let (mut start, mut end) = (0, 0);
+    let mut action = Action::Run;
+    loop {
+        if start == end && action == Action::Run {
+            let size = (BUF_SIZE as u64).min(remaining) as usize;
+            let (n, eof) = read_full(input, &mut inbuf[..size])?;
+            (start, end) = (0, n);
+            if eof {
+                action = Action::Finish;
+            } else if remaining != u64::MAX {
+                remaining -= n as u64;
+                if remaining == 0 {
+                    action = Action::FullBarrier;
+                }
+            }
+        }
+        let (used, written, status) = enc
+            .encode(&inbuf[start..end], &mut outbuf, action)
+            .map_err(coder)?;
+        start += used;
+        output
+            .write_all(&outbuf[..written])
+            .map_err(Failure::Write)?;
+        if status != Status::StreamEnd {
+            continue;
+        }
+        if action == Action::Finish {
+            return Ok(());
+        }
+        // `split_block()`: the next piece of a long Block, or the next
+        // entry of the list (the last one repeats).
+        if next_remaining > 0 {
+            remaining = next_remaining.min(split);
+            next_remaining -= remaining;
+        } else {
+            if pos + 1 < list.len() {
+                pos += 1;
+                if list[pos - 1].0 != list[pos].0 {
+                    let (filters, lzma) = plan.chains[list[pos].0].as_ref().expect("a used chain");
+                    enc.update_filters(filters, *lzma).map_err(coder)?;
+                }
+            }
+            remaining = list[pos].1;
+            if !mt && split > 0 && remaining > split {
+                next_remaining = remaining - split;
+                remaining = split;
+            }
+        }
+        action = Action::Run;
     }
 }
 

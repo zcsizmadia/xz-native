@@ -31,6 +31,12 @@ minor version may change the API.
   threads it counts what the workers have actually encoded or decoded
   (decoding by whole Blocks), for progress bars and throughput metrics
   (#126).
+- `xz-native` custom filter chains: `--lzma1=`, `--lzma2=`, `--x86` and the
+  other BCJ filters, `--delta` and `--filters=` strings, with xz's rules
+  for presets and chains and its error messages (#123).
+- `xz-native --block-list` with `--filters1..9`: Block sizes and a filter
+  chain per Block, changed with `XzEncoder::update_filters`, the same
+  output as `xz` single-threaded and multithreaded (#123).
 
 ## [0.3.0+xz.5.8.4]
 
