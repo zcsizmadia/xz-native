@@ -69,7 +69,7 @@ minor version may change the API.
 - `xz-native --flush-timeout=MS`: when compressing standard input, a sync
   flush after MS milliseconds without input, so that the data so far can be
   decompressed (LZMA2 and Delta only, single-threaded, as in xz; also on
-  Windows, where xz ignores it) (#123).
+  Windows, where xz ignores it), also with `--block-list` (#123).
 - `xz-native -vv`: xz's debug lines, the filter chain with all its options,
   the thread count and the memory needed for compressing and decompressing
   (#123).

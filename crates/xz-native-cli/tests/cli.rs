@@ -573,6 +573,27 @@ fn block_lists_match_xz() {
             "--block-list=1:500000,2:300000,1:1MiB,0",
         ],
         &["-c", "-T2", "--filters3=6e", "--block-list=3:400000,800000"],
+        // With --flush-timeout (standard input, no pause: no flush).
+        &[
+            "-c",
+            "-T1",
+            "--flush-timeout=60000",
+            "--block-list=100000,200000,0",
+        ],
+        &[
+            "-c",
+            "-T1",
+            "--flush-timeout=60000",
+            "--block-list=150000,700000",
+            "--block-size=300000",
+        ],
+        &[
+            "-c",
+            "-T1",
+            "--flush-timeout=60000",
+            "--filters1=x86 lzma2:preset=1",
+            "--block-list=1:100000,200000,1:50000,0",
+        ],
         // Every chain over the memory limit gets a smaller dictionary.
         &[
             "-c",
@@ -947,12 +968,48 @@ fn memory_budget_below_rlimit() {
 /// the output and decodes; the errors and the warning are xz's.
 #[test]
 fn flush_timeout() {
+    // With a Block list too: Blocks of 30000 bytes besides the flushes.
+    for (args, blocks) in [
+        (&["-c", "--flush-timeout=100"][..], 1),
+        (&["-c", "--flush-timeout=100", "--block-list=30000"], 5),
+    ] {
+        flush_timeout_pause(args, blocks);
+    }
+    for args in [
+        &["-c", "--flush-timeout=100"][..],
+        &["-c", "-T1", "--flush-timeout=100", "--x86", "--lzma2"],
+        &["-c", "-T1", "--flush-timeout=100", "-F", "lzma"],
+        &[
+            "-c",
+            "-T1",
+            "--flush-timeout=100",
+            "--delta",
+            "--lzma2=preset=1",
+        ],
+    ] {
+        let a = ours(args, b"data");
+        let Some(b) = xz(args, b"data") else { return };
+        assert_eq!(status(&a), status(&b), "{args:?}");
+        assert_eq!(
+            stderr(&a).replace("xz-native:", "xz:"),
+            stderr(&b).replace('\r', ""),
+            "{args:?}"
+        );
+        if status(&a) == 0 {
+            assert!(a.stdout == b.stdout, "{args:?}");
+        }
+    }
+}
+
+/// Writes some input, pauses past the timeout, checks that it decodes from
+/// the output so far, then the rest; `blocks` in the result.
+fn flush_timeout_pause(args: &[&str], blocks: usize) {
     use std::io::Read;
     use std::sync::{Arc, Mutex};
     let first = sample(100_000, 13);
     let second = sample(50_000, 14);
     let mut child = bin()
-        .args(["-c", "--flush-timeout=100"])
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -983,41 +1040,18 @@ fn flush_timeout() {
     let (_, n, _) = dec.decode(&so_far, &mut out, false).unwrap();
     assert!(
         out[..n] == first[..],
-        "decoded {n} of {} bytes",
+        "{args:?}: decoded {n} of {} bytes",
         first.len()
     );
     stdin.write_all(&second).unwrap();
     drop(stdin);
     let exit = child.wait().unwrap();
     reader.join().unwrap();
-    assert!(exit.success());
+    assert!(exit.success(), "{args:?}");
     let all = got.lock().unwrap().clone();
     assert!(xz_native::decompress(&all).unwrap() == [first, second].concat());
-
-    for args in [
-        &["-c", "--flush-timeout=100"][..],
-        &["-c", "-T1", "--flush-timeout=100", "--x86", "--lzma2"],
-        &["-c", "-T1", "--flush-timeout=100", "-F", "lzma"],
-        &[
-            "-c",
-            "-T1",
-            "--flush-timeout=100",
-            "--delta",
-            "--lzma2=preset=1",
-        ],
-    ] {
-        let a = ours(args, b"data");
-        let Some(b) = xz(args, b"data") else { return };
-        assert_eq!(status(&a), status(&b), "{args:?}");
-        assert_eq!(
-            stderr(&a).replace("xz-native:", "xz:"),
-            stderr(&b).replace('\r', ""),
-            "{args:?}"
-        );
-        if status(&a) == 0 {
-            assert!(a.stdout == b.stdout, "{args:?}");
-        }
-    }
+    let r = xz_native::XzSeekableReader::new(std::io::Cursor::new(all)).unwrap();
+    assert_eq!(r.block_count(), blocks, "{args:?}");
 }
 
 /// `-vv`: the filter chain, the threads and the memory needed, as in xz.

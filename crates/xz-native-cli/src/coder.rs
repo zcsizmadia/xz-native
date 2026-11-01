@@ -705,50 +705,36 @@ fn stdin_chunks() -> Receiver<io::Result<Vec<u8>>> {
 /// Compresses standard input with `--flush-timeout` (xz's `coder_normal()`
 /// with `flush_needed`): when no input arrives for `timeout_ms` after
 /// some has, the encoder sync-flushes and the output is written out, so
-/// that what came so far can be decompressed.
+/// that what came so far can be decompressed. With `--block-list`, Blocks
+/// end where the list says, as in [`compress_blocks`].
 pub fn compress_flushing(
     enc: &Encoder,
     timeout_ms: u64,
     output: &mut dyn Write,
     meter: &mut Meter,
 ) -> Result<(), Failure> {
-    enum Push {
-        Xz(XzEncoder),
-        Raw(RawEncoder),
-    }
     let coder = |e| Failure::Coder(e, 0);
-    let mut push = match enc {
-        Encoder::Xz(plan) => Push::Xz(XzEncoder::with_options(plan.opts.clone()).map_err(coder)?),
-        Encoder::Raw(opts) => Push::Raw(RawEncoder::with_options(opts).map_err(coder)?),
+    let (push, blocks) = match enc {
+        Encoder::Xz(plan) => {
+            let e = XzEncoder::with_options(plan.opts.clone()).map_err(coder)?;
+            (
+                Push::Xz(e),
+                plan.list.is_some().then(|| BlockSplit::new(plan)),
+            )
+        }
+        Encoder::Raw(opts) => (
+            Push::Raw(RawEncoder::with_options(opts).map_err(coder)?),
+            None,
+        ),
         Encoder::Lzma(_) => unreachable!("--flush-timeout rejects .lzma"),
     };
-    let mut outbuf = vec![0u8; BUF_SIZE];
-    let mut totals = (0u64, 0u64);
-    // Encodes `input` with `action`: Run until it is used, the others until
-    // the end of the flush or the stream.
-    let mut code = |input: &[u8], action: Action, output: &mut dyn Write| {
-        let mut pos = 0;
-        loop {
-            let (used, written, status) = match &mut push {
-                Push::Xz(e) => e.encode(&input[pos..], &mut outbuf, action),
-                Push::Raw(e) => e.encode(&input[pos..], &mut outbuf, action),
-            }
-            .map_err(coder)?;
-            pos += used;
-            totals.0 += used as u64;
-            totals.1 += written as u64;
-            output
-                .write_all(&outbuf[..written])
-                .map_err(Failure::Write)?;
-            meter.tick(totals);
-            let done = match action {
-                Action::Run => pos == input.len() && written < outbuf.len(),
-                _ => status == Status::StreamEnd,
-            };
-            if done {
-                return Ok(());
-            }
-        }
+    let mut f = Flushing {
+        push,
+        blocks,
+        outbuf: vec![0u8; BUF_SIZE],
+        totals: (0, 0),
+        output,
+        meter,
     };
     let chunks = stdin_chunks();
     let timeout = Duration::from_millis(timeout_ms);
@@ -767,18 +753,147 @@ pub fn compress_flushing(
         match chunks.recv_timeout(wait) {
             Ok(Ok(chunk)) => {
                 deadline.get_or_insert_with(|| Instant::now() + timeout);
-                code(&chunk, Action::Run, output)?;
+                f.feed(&chunk)?;
             }
             Ok(Err(e)) => return Err(Failure::Read(e)),
             Err(RecvTimeoutError::Timeout) => {
                 if deadline.is_some_and(|d| Instant::now() >= d) {
-                    code(&[], Action::SyncFlush, output)?;
-                    output.flush().map_err(Failure::Write)?;
+                    f.code(&[], Action::SyncFlush)?;
+                    f.output.flush().map_err(Failure::Write)?;
                     deadline = None;
                 }
             }
-            Err(RecvTimeoutError::Disconnected) => return code(&[], Action::Finish, output),
+            Err(RecvTimeoutError::Disconnected) => return f.code(&[], Action::Finish),
         }
+    }
+}
+
+enum Push {
+    Xz(XzEncoder),
+    Raw(RawEncoder),
+}
+
+/// The state of [`compress_flushing`].
+struct Flushing<'a, 'p> {
+    push: Push,
+    blocks: Option<BlockSplit<'p>>,
+    outbuf: Vec<u8>,
+    totals: (u64, u64),
+    output: &'a mut dyn Write,
+    meter: &'a mut Meter,
+}
+
+impl Flushing<'_, '_> {
+    /// Encodes `input`, ending Blocks where the Block list says.
+    fn feed(&mut self, mut input: &[u8]) -> Result<(), Failure> {
+        while !input.is_empty() {
+            let n = self.blocks.as_ref().map_or(input.len(), |b| {
+                b.remaining.min(input.len() as u64) as usize
+            });
+            self.code(&input[..n], Action::Run)?;
+            input = &input[n..];
+            let Some(b) = &mut self.blocks else { continue };
+            if b.remaining == u64::MAX {
+                continue;
+            }
+            b.remaining -= n as u64;
+            if b.remaining == 0 {
+                self.code(&[], Action::FullBarrier)?;
+                let (Some(b), Push::Xz(enc)) = (&mut self.blocks, &mut self.push) else {
+                    unreachable!("Block lists are for .xz only")
+                };
+                b.next(enc).map_err(|e| Failure::Coder(e, 0))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Encodes `input` with `action`: Run until it is used, the others
+    /// until the end of the flush or the stream.
+    fn code(&mut self, input: &[u8], action: Action) -> Result<(), Failure> {
+        let mut pos = 0;
+        loop {
+            let (used, written, status) = match &mut self.push {
+                Push::Xz(e) => e.encode(&input[pos..], &mut self.outbuf, action),
+                Push::Raw(e) => e.encode(&input[pos..], &mut self.outbuf, action),
+            }
+            .map_err(|e| Failure::Coder(e, 0))?;
+            pos += used;
+            self.totals.0 += used as u64;
+            self.totals.1 += written as u64;
+            self.output
+                .write_all(&self.outbuf[..written])
+                .map_err(Failure::Write)?;
+            self.meter.tick(self.totals);
+            let done = match action {
+                Action::Run => pos == input.len() && written < self.outbuf.len(),
+                _ => status == Status::StreamEnd,
+            };
+            if done {
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// Where the Blocks of `--block-list` end (`split_block()`): the input left
+/// in the current Block, and the filter chain of the next one.
+struct BlockSplit<'p> {
+    plan: &'p XzPlan,
+    list: &'p [(usize, u64)],
+    pos: usize,
+    /// Input left for the current Block (`block_remaining`).
+    remaining: u64,
+    /// The rest of a list entry longer than `--block-size`
+    /// (`next_block_remaining`, single-threaded only).
+    next_remaining: u64,
+    /// `--block-size` when single-threaded, else 0.
+    split: u64,
+}
+
+impl<'p> BlockSplit<'p> {
+    fn new(plan: &'p XzPlan) -> Self {
+        let list = plan.list.as_deref().expect("a Block list");
+        let mt = plan.opts.threads != 1 || plan.opts.multithreaded;
+        let split = if mt { 0 } else { plan.split };
+        let mut b = Self {
+            plan,
+            list,
+            pos: 0,
+            remaining: if split > 0 { split } else { u64::MAX },
+            next_remaining: 0,
+            split,
+        };
+        if b.remaining < list[0].1 {
+            b.next_remaining = list[0].1 - b.remaining;
+        } else {
+            b.remaining = list[0].1;
+        }
+        b
+    }
+
+    /// After a Block ended: the next piece of a long Block, or the next
+    /// entry of the list (the last one repeats), with its chain.
+    fn next(&mut self, enc: &mut XzEncoder) -> Result<(), xz_native::Error> {
+        if self.next_remaining > 0 {
+            self.remaining = self.next_remaining.min(self.split);
+            self.next_remaining -= self.remaining;
+            return Ok(());
+        }
+        if self.pos + 1 < self.list.len() {
+            self.pos += 1;
+            let chain = self.list[self.pos].0;
+            if self.list[self.pos - 1].0 != chain {
+                let (filters, lzma) = self.plan.chains[chain].as_ref().expect("a used chain");
+                enc.update_filters(filters, *lzma)?;
+            }
+        }
+        self.remaining = self.list[self.pos].1;
+        if self.split > 0 && self.remaining > self.split {
+            self.next_remaining = self.remaining - self.split;
+            self.remaining = self.split;
+        }
+        Ok(())
     }
 }
 
@@ -899,19 +1014,9 @@ fn compress_blocks(
     output: &mut dyn Write,
     meter: &mut Meter,
 ) -> Result<(), Failure> {
-    let list = plan.list.as_deref().expect("a Block list");
     let coder = |e| Failure::Coder(e, 0);
     let mut enc = XzEncoder::with_options(plan.opts.clone()).map_err(coder)?;
-    let mt = plan.opts.threads != 1 || plan.opts.multithreaded;
-    let split = plan.split;
-    let mut pos = 0;
-    let mut next_remaining = 0;
-    let mut remaining = if !mt && split > 0 { split } else { u64::MAX };
-    if remaining < list[0].1 {
-        next_remaining = list[0].1 - remaining;
-    } else {
-        remaining = list[0].1;
-    }
+    let mut blocks = BlockSplit::new(plan);
     let mut inbuf = vec![0u8; BUF_SIZE];
     let mut outbuf = vec![0u8; BUF_SIZE];
     let (mut start, mut end) = (0, 0);
@@ -921,14 +1026,14 @@ fn compress_blocks(
             return Err(Failure::Aborted);
         }
         if start == end && action == Action::Run {
-            let size = (BUF_SIZE as u64).min(remaining) as usize;
+            let size = (BUF_SIZE as u64).min(blocks.remaining) as usize;
             let (n, eof) = read_full(input, &mut inbuf[..size])?;
             (start, end) = (0, n);
             if eof {
                 action = Action::Finish;
-            } else if remaining != u64::MAX {
-                remaining -= n as u64;
-                if remaining == 0 {
+            } else if blocks.remaining != u64::MAX {
+                blocks.remaining -= n as u64;
+                if blocks.remaining == 0 {
                     action = Action::FullBarrier;
                 }
             }
@@ -947,25 +1052,7 @@ fn compress_blocks(
         if action == Action::Finish {
             return Ok(());
         }
-        // `split_block()`: the next piece of a long Block, or the next
-        // entry of the list (the last one repeats).
-        if next_remaining > 0 {
-            remaining = next_remaining.min(split);
-            next_remaining -= remaining;
-        } else {
-            if pos + 1 < list.len() {
-                pos += 1;
-                if list[pos - 1].0 != list[pos].0 {
-                    let (filters, lzma) = plan.chains[list[pos].0].as_ref().expect("a used chain");
-                    enc.update_filters(filters, *lzma).map_err(coder)?;
-                }
-            }
-            remaining = list[pos].1;
-            if !mt && split > 0 && remaining > split {
-                next_remaining = remaining - split;
-                remaining = split;
-            }
-        }
+        blocks.next(&mut enc).map_err(coder)?;
         action = Action::Run;
     }
 }
