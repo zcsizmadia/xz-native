@@ -8,6 +8,11 @@ minor version may change the API.
 
 ## [Unreleased]
 
+### Fixed
+- `RawEncoder` (and `compress_raw`) overflowed the stack in unoptimized
+  builds on Windows: the LZ encoder was moved through the stack before
+  being boxed (#156).
+
 ## [0.4.0+xz.5.8.4]
 
 Still compatible with xz/liblzma 5.8.4. New APIs that close the remaining
