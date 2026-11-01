@@ -165,6 +165,38 @@ let mut text = String::new();
 xz_native::tokio::XzReader::new(file).read_to_string(&mut text).await?;
 ```
 
+### Byte identity
+
+Every encoder writes the same bytes as liblzma 5.8.4 given the same options
+and the same sequence of calls:
+
+- **Single-threaded** (`threads == 1`): identical when all input is given
+  in one call, as the one-shot functions (`compress*`) do, and so to
+  `xz -T1` on a file. When input arrives in pieces (`XzEncoder::encode`,
+  `XzWriter`/`LzmaWriter` writes), the bytes depend on where the pieces
+  end, as they do in liblzma; the data decodes the same either way.
+- **Multithreaded** (`threads != 1` or `multithreaded`): identical to
+  liblzma's multithreaded encoder (and `xz -T2` and up) for any thread
+  count and any split of the input.
+- Flushes (`Action::SyncFlush`, `FullFlush`, `FullBarrier`) and
+  `update_filters` give liblzma's bytes for the same calls in the same
+  places.
+
+### Untrusted input
+
+The decoders reject malformed data exactly as liblzma does, but a valid
+file can still ask for a lot of memory or expand enormously. For input
+you don't control:
+
+- Set `DecoderOptions::memlimit` (the default is unlimited, as in
+  liblzma): a dictionary above it is `Error::MemLimit` before it is
+  allocated. `RawDecoder` has no limit; check `dict_size`
+  yourself when it comes from the data (as in .7z or .zip headers).
+- Bound the output: `decompress` and `decompress_with_options` grow their
+  `Vec` as far as the data says. Decode into a fixed buffer
+  (`decompress_to_slice`), or read through `XzReader` with
+  `std::io::Read::take`.
+
 ### Migrating from `xz2` or `liblzma`
 
 `xz_native::compat` mirrors those crates' `read`, `bufread` and `write`
@@ -260,6 +292,33 @@ release 0.4.0, compatible with xz 5.8.4. Depend on it as
 `xz-native = "0.4"`; Cargo ignores the metadata. Until 1.0, a minor bump
 (0.4, 0.5, ...) may change the API or behavior, and a patch release
 (0.4.1) doesn't. Git tags are `vX.Y.Z`.
+
+### Stability
+
+From 1.0, only a major release breaks code. What the promise covers:
+
+- **The API**: everything public in `xz_native`, except the doc-hidden
+  `__private` module. Enums, options and info structs are
+  `#[non_exhaustive]`, so variants, options and fields can be added in
+  minor releases: build options with `Default`, `preset` or the setters,
+  filters with their constructors (`Filter::delta(4)?`), and match with `..`.
+- **Output**: for the same options, the encoder writes the same bytes as
+  the liblzma release in the build metadata (see
+  [byte identity](#byte-identity) for when that holds). Following a new
+  xz release that changes the output or liblzma's behavior is a minor
+  release with new metadata (`1.1.0+xz.5.10.0`), never a patch.
+- **Errors**: which [`Error`](https://docs.rs/xz-native/latest/xz_native/enum.Error.html)
+  variant a failure returns follows liblzma's return code; a change that
+  makes it match liblzma is a bug fix. The `Display` text may change.
+- **Features**: `std` (default), `tokio` (tokio 1.x) and `futures-io`
+  (futures-io 0.3) are stable; a new major version of either would come
+  as a new feature beside the old one. `portable` turns off the
+  CPU-specific code to test the fallbacks: it changes speed, never
+  results, and isn't covered.
+- **Rust version**: the minimum (1.89) is raised only in minor releases,
+  and only to a release at least six months old.
+- Not promised: whether types are `UnwindSafe` (the threaded coders hold
+  thread handles), and performance.
 
 Issues and pull requests in the upstream
 [xz repository](https://github.com/tukaani-project/xz) are tracked

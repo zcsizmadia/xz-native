@@ -7,7 +7,7 @@
 //! output in L2-sized steps while it is still in cache.
 
 use super::format::*;
-use super::stream::{DecoderOptions, IndexDecoder, RecordHash};
+use super::stream::{DecoderOptions, IndexDecoder, RecordHash, UnsupportedCheck};
 use crate::check::{Check, CheckState};
 use crate::error::{Error, Result};
 use crate::filter::{ChainDecoder, Filter, InPlaceFilters};
@@ -249,7 +249,9 @@ fn decompress_append(input: &[u8], opts: &DecoderOptions, out: &mut Vec<u8>) -> 
             r => r?,
         };
         let check = flags.check;
-        if opts.fail_on_unsupported_check && matches!(check, Check::Unsupported { .. }) {
+        if opts.unsupported_check == UnsupportedCheck::Fail
+            && matches!(check, Check::Unsupported { .. })
+        {
             return Err(Error::Options);
         }
 

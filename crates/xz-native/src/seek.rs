@@ -5,6 +5,7 @@
 //! last to the first. The resulting table locates the Block that holds any
 //! uncompressed offset, and only that Block is decoded.
 
+use crate::UnsupportedCheck;
 use crate::check::Check;
 use crate::error::Error;
 use crate::filter::Filter;
@@ -259,7 +260,9 @@ pub(crate) fn parse<R: Read + Seek>(
         if header_flags != flags {
             return Err(Error::Data.into());
         }
-        if opts.fail_on_unsupported_check && matches!(flags.check, Check::Unsupported { .. }) {
+        if opts.unsupported_check == UnsupportedCheck::Fail
+            && matches!(flags.check, Check::Unsupported { .. })
+        {
             return Err(Error::Options.into());
         }
         streams.push(StreamInfo {

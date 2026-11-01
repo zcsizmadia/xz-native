@@ -571,7 +571,9 @@ pub fn decoder_options(ctx: &Ctx, hw: &Hardware) -> DecoderOptions {
     d.concatenated = !o.single_stream;
     d.ignore_check = o.ignore_check;
     // No warning about a check that is ignored anyway.
-    d.tell_unsupported_check = !o.ignore_check;
+    if !o.ignore_check {
+        d.unsupported_check = xz_native::UnsupportedCheck::Report;
+    }
     d.threads = match o.threads {
         Threads::Auto => hw.cpus as usize,
         Threads::Single => 1,
