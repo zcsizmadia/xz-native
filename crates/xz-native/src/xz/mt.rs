@@ -27,7 +27,9 @@
 
 use super::flat::decode_block;
 use super::format::*;
-use super::stream::{BlockDecoder, DecoderOptions, IndexDecoder, RecordHash, Status};
+use super::stream::{
+    BlockDecoder, DecoderOptions, IndexDecoder, RecordHash, Status, UnsupportedCheck,
+};
 use crate::check::Check;
 use crate::error::Error;
 use alloc::boxed::Box;
@@ -328,7 +330,7 @@ enum Item {
     /// once the limit is raised, decoding goes on from that header.
     MemLimit(usize),
     /// A Stream Header with a check type that can't be verified, with
-    /// [`DecoderOptions::tell_unsupported_check`](crate::DecoderOptions::tell_unsupported_check).
+    /// [`UnsupportedCheck::Report`](crate::UnsupportedCheck::Report).
     UnsupportedCheck,
     End,
 }
@@ -614,7 +616,7 @@ impl MtDecoder {
                     Err(Error::Format) if !self.first_stream => return Err(Error::Data.into()),
                     r => r?,
                 };
-                if self.opts.fail_on_unsupported_check
+                if self.opts.unsupported_check == UnsupportedCheck::Fail
                     && matches!(flags.check, Check::Unsupported(_))
                 {
                     return Err(Error::Options.into());
@@ -622,7 +624,8 @@ impl MtDecoder {
                 self.flags = Some(flags);
                 self.records = RecordHash::default();
                 self.parse = Parse::BlockStart;
-                if self.opts.tell_unsupported_check && matches!(flags.check, Check::Unsupported(_))
+                if self.opts.unsupported_check == UnsupportedCheck::Report
+                    && matches!(flags.check, Check::Unsupported(_))
                 {
                     self.queue.push_back(Item::UnsupportedCheck);
                 }

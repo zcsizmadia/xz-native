@@ -5,7 +5,8 @@ use std::io::{Read, Write};
 use xz_native::{
     Action, Check, DecoderOptions, EncoderOptions, Error, LzipDecoder, LzmaDecoder, LzmaEncoder,
     LzmaOptions, LzmaReader, LzmaWriter, MatchFinder, PushDecoder, PushEncoder, RawDecoder,
-    RawEncoder, RawMethod, RawOptions, Status, XzDecoder, XzEncoder, XzReader, XzWriter,
+    RawEncoder, RawMethod, RawOptions, Status, UnsupportedCheck, XzDecoder, XzEncoder, XzReader,
+    XzWriter,
 };
 
 #[test]
@@ -14,13 +15,13 @@ fn setters_match_field_assignment() {
         .memlimit(1 << 20)
         .concatenated(false)
         .ignore_check(true)
-        .fail_on_unsupported_check(true)
+        .unsupported_check(UnsupportedCheck::Fail)
         .threads(3);
     let mut b = DecoderOptions::default();
     b.memlimit = 1 << 20;
     b.concatenated = false;
     b.ignore_check = true;
-    b.fail_on_unsupported_check = true;
+    b.unsupported_check = UnsupportedCheck::Fail;
     b.threads = 3;
     assert_eq!(format!("{a:?}"), format!("{b:?}"));
 

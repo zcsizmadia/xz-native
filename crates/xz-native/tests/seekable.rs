@@ -7,7 +7,9 @@ use common::{Rng, corpus, xz};
 use std::fs;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::PathBuf;
-use xz_native::{BcjKind, Check, DecoderOptions, Error, Filter, XzSeekableReader, decompress};
+use xz_native::{
+    BcjKind, Check, DecoderOptions, Error, Filter, UnsupportedCheck, XzSeekableReader, decompress,
+};
 
 type Reader<'a> = XzSeekableReader<Cursor<&'a [u8]>>;
 
@@ -391,7 +393,7 @@ fn fail_on_unsupported_check() {
     let data = fs::read(files_dir().join("unsupported-check.xz")).unwrap();
     let r = XzSeekableReader::with_options(
         Cursor::new(&data),
-        DecoderOptions::default().fail_on_unsupported_check(true),
+        DecoderOptions::default().unsupported_check(UnsupportedCheck::Fail),
     );
     assert_eq!(r.map_err(xz_error).err(), Some(Error::Options));
 }

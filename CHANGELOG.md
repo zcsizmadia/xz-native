@@ -8,6 +8,12 @@ minor version may change the API.
 
 ## [Unreleased]
 
+### Changed
+- `DecoderOptions::unsupported_check` (`UnsupportedCheck::Ignore`,
+  `Report` or `Fail`) replaces the two flags `fail_on_unsupported_check`
+  and `tell_unsupported_check`, which allowed four combinations for three
+  behaviors. `Ignore` is the default, as before (#156).
+
 ## [0.4.0+xz.5.8.4]
 
 Still compatible with xz/liblzma 5.8.4. New APIs that close the remaining
