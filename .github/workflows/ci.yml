@@ -98,7 +98,7 @@ jobs:
         run: cargo test -p xz-native --profile ci --no-default-features --lib
       - name: Test (async adapters)
         run: |
-          cargo test -p xz-native --profile ci --features tokio,futures-io --test async_io
+          cargo test -p xz-native --profile ci --features tokio,futures-io --test async_io --test auto_traits
           cargo test -p xz-native --profile ci --features tokio,futures-io --doc
       - name: Test (doc examples, unoptimized)
         # Users' debug builds: large values on the stack overflow Windows'
