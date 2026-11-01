@@ -72,7 +72,7 @@ impl LzipDecoder {
 
     /// Creates a decoder with options. `memlimit` applies, `concatenated`
     /// decodes all members (otherwise decoding stops after the first one)
-    /// and `ignore_check` skips the CRC32. `fail_on_unsupported_check` and
+    /// and `ignore_check` skips the CRC32. `unsupported_check` and
     /// `threads` don't apply: .lz always uses CRC32.
     pub fn with_options(opts: DecoderOptions) -> Self {
         Self {

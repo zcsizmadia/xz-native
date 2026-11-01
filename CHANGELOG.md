@@ -8,6 +8,12 @@ minor version may change the API.
 
 ## [Unreleased]
 
+### Changed
+- `DecoderOptions::unsupported_check` (`UnsupportedCheck::Ignore`,
+  `Report` or `Fail`) replaces the two flags `fail_on_unsupported_check`
+  and `tell_unsupported_check`, which allowed four combinations for three
+  behaviors. `Ignore` is the default, as before (#156).
+
 ### Fixed
 - `RawEncoder` (and `compress_raw`) overflowed the stack in unoptimized
   builds on Windows: the LZ encoder was moved through the stack before

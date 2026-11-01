@@ -35,7 +35,7 @@ pub enum Error {
     /// The output buffer is too small for the result (`LZMA_BUF_ERROR` from
     /// liblzma's buffer functions); see [`crate::compress_bound`].
     BufferTooSmall,
-    /// With [`DecoderOptions::tell_unsupported_check`](crate::DecoderOptions::tell_unsupported_check),
+    /// With [`UnsupportedCheck::Report`](crate::UnsupportedCheck::Report),
     /// a Stream uses a check type this implementation can't verify
     /// (`LZMA_UNSUPPORTED_CHECK`). It is an event, not a failure: the
     /// next call goes on decoding, without verifying that Stream.

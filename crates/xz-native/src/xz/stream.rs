@@ -19,6 +19,25 @@ pub enum Status {
     StreamEnd,
 }
 
+/// What the .xz decoders do with a Stream whose check type this
+/// implementation can't verify ([`Check::Unsupported`]; xz 5.8.4 knows
+/// none it can't verify, but the format reserves IDs for future ones).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum UnsupportedCheck {
+    /// Decode without verifying the check, as liblzma does by default.
+    #[default]
+    Ignore,
+    /// Like `Ignore`, but first report it with [`Error::UnsupportedCheck`],
+    /// once per Stream; decoding goes on with the next call or read, like
+    /// liblzma's `LZMA_TELL_UNSUPPORTED_CHECK` (as `xz -d` uses it to
+    /// warn). [`XzDecoder`], [`crate::AutoDecoder`] and the readers report
+    /// it; the one-shot functions and `XzSeekableReader` ignore it.
+    Report,
+    /// Fail with [`Error::Options`].
+    Fail,
+}
+
 /// Options for the decoders ([`XzDecoder`], `XzReader`, the one-shot
 /// functions, and the `.lzma` and `.lz` decoders, which use the fields that
 /// apply to their format).
@@ -41,16 +60,9 @@ pub struct DecoderOptions {
     pub concatenated: bool,
     /// Don't verify the integrity check (default: false).
     pub ignore_check: bool,
-    /// Fail with [`Error::Options`] on a check type this implementation can't
-    /// verify (default: false; the check is skipped, as liblzma does).
-    pub fail_on_unsupported_check: bool,
-    /// Report a check type this implementation can't verify with
-    /// [`Error::UnsupportedCheck`], once per Stream, and go on decoding on
-    /// the next call, like liblzma's `LZMA_TELL_UNSUPPORTED_CHECK` (as
-    /// `xz -d` uses it to warn; default: false). [`XzDecoder`],
-    /// [`crate::AutoDecoder`] and the readers report it; the one-shot
-    /// functions and `XzSeekableReader` don't.
-    pub tell_unsupported_check: bool,
+    /// What to do with a check type this implementation can't verify
+    /// (default: [`UnsupportedCheck::Ignore`], as liblzma does).
+    pub unsupported_check: UnsupportedCheck,
     /// With threads, report a decoding error as soon as it is found, even
     /// if the output before it hasn't been returned yet, like liblzma's
     /// `LZMA_FAIL_FAST` (default: false). Without it, the threaded decoder
@@ -90,8 +102,7 @@ impl DecoderOptions {
             memlimit: u64::MAX,
             concatenated: true,
             ignore_check: false,
-            fail_on_unsupported_check: false,
-            tell_unsupported_check: false,
+            unsupported_check: UnsupportedCheck::Ignore,
             fail_fast: false,
             threads: 1,
             memlimit_threading: DEFAULT_MEMLIMIT_THREADING,
@@ -109,8 +120,7 @@ crate::options::setters!(DecoderOptions {
     memlimit: u64,
     concatenated: bool,
     ignore_check: bool,
-    fail_on_unsupported_check: bool,
-    tell_unsupported_check: bool,
+    unsupported_check: UnsupportedCheck,
     fail_fast: bool,
     threads: usize,
     memlimit_threading: u64,
@@ -709,7 +719,7 @@ impl XzDecoder {
                         Err(Error::Format) if !self.first_stream => return Err(Error::Data),
                         r => r?,
                     };
-                    if self.opts.fail_on_unsupported_check
+                    if self.opts.unsupported_check == UnsupportedCheck::Fail
                         && matches!(flags.check, Check::Unsupported(_))
                     {
                         return Err(Error::Options);
@@ -717,7 +727,7 @@ impl XzDecoder {
                     self.flags = Some(flags);
                     self.blocks = RecordHash::default();
                     self.expect(Seq::BlockHeaderFirst, 1);
-                    if self.opts.tell_unsupported_check
+                    if self.opts.unsupported_check == UnsupportedCheck::Report
                         && matches!(flags.check, Check::Unsupported(_))
                     {
                         return Err(Error::UnsupportedCheck);
