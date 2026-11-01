@@ -351,6 +351,7 @@ impl Lzma1Encoder {
         *out_pos += n;
         self.out_done += n;
         if self.out_done == self.lzma.rc.out.len() {
+            self.lzma.out_flushed += self.out_done as u64;
             self.lzma.rc.out.clear();
             self.out_done = 0;
             true
@@ -365,6 +366,19 @@ impl LzEncoder<Lzma1Encoder> {
     /// `LZMA_LZMA1EXT_ALLOW_EOPM`).
     pub(crate) fn without_end_marker(&mut self) {
         self.codec.lzma.use_eopm = false;
+    }
+
+    /// MicroLZMA (`lzma_lzma_set_out_limit()`): no end marker, and the
+    /// output is at most `limit` bytes; [`uncomp_size`](Self::uncomp_size)
+    /// tells how much input it holds.
+    pub(crate) fn set_out_limit(&mut self, limit: u64) {
+        self.codec.lzma.use_eopm = false;
+        self.codec.lzma.out_limit = limit;
+    }
+
+    /// Input bytes encoded so far.
+    pub(crate) fn uncomp_size(&self) -> u64 {
+        self.codec.lzma.uncomp_size()
     }
 
     /// Starts with a preset dictionary. Must be called before any input; an

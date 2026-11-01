@@ -110,6 +110,7 @@ pub mod futures;
 mod io;
 mod lzip;
 mod lzma;
+mod microlzma;
 mod oneshot;
 mod options;
 mod push;
@@ -128,6 +129,7 @@ pub use filter::{BcjKind, Filter, FilterOptions, FilterStringError, FilterString
 #[cfg(feature = "std")]
 pub use io::{AutoReader, LzipReader, LzmaReader, LzmaWriter, XzReader, XzWriter};
 pub use lzip::LzipDecoder;
+pub use microlzma::{microlzma_decode, microlzma_encode};
 pub use oneshot::{
     compress, compress_bound, compress_lzma, compress_lzma_with_options, compress_raw,
     compress_to_slice, compress_with_options, compress_with_options_to_slice, decompress,
