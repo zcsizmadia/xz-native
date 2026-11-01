@@ -37,4 +37,18 @@ exclude_re = [
     # decoder runs and gives the same result.
     'seek\.rs:.*: replace parse_slice -> ',
     'xz/flat\.rs:.* in (decompress_threads_into|decode_entry)$',
+    # Streaming BCJ decoder stage: the comparisons choose between copying
+    # held-back bytes or decoding straight into the output, or copy zero
+    # bytes (`pos` is 0 where `filtered - pos` is taken); every choice gives
+    # the same bytes, checked for every split of input and output by
+    # `filter::tests::bcj_stage_any_split`.
+    # (Only the classes whose every instance there survives; `>` with `==`
+    # at the first branch and `-` with `+` where `pos` is 0 are equivalent
+    # too, but other instances of those classes are caught.)
+    'filter/mod\.rs:.*: replace < with <= in BcjStage::decode$',
+    'filter/mod\.rs:.*: replace > with >= in BcjStage::decode$',
+    'filter/mod\.rs:.*: replace \|\| with && in BcjStage::decode$',
+    # One-shot Block decoding runs the in-place filters once, with `finish`,
+    # which sets `done` to the end whatever the BCJ converter returned.
+    'filter/mod\.rs:.*: replace \+= with \*= in InPlaceFilters::process$',
 ]
