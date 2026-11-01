@@ -143,6 +143,7 @@ fn hugepage_hint<T>(table: &[T]) {
     const HUGE: usize = 2 << 20;
     /// The same value on x86-64 and AArch64.
     const MADV_HUGEPAGE: i32 = 14;
+    #[allow(unsafe_code)]
     unsafe extern "C" {
         fn madvise(addr: *mut core::ffi::c_void, len: usize, advice: i32) -> i32;
     }
