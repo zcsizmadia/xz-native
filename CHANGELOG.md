@@ -37,6 +37,8 @@ minor version may change the API.
 - `xz-native --block-list` with `--filters1..9`: Block sizes and a filter
   chain per Block, changed with `XzEncoder::update_filters`, the same
   output as `xz` single-threaded and multithreaded (#123).
+- `xz-native -v`: xz's progress indicator, a line redrawn every second
+  on a terminal and a summary per file otherwise, from `progress()` (#123).
 
 ## [0.3.0+xz.5.8.4]
 
