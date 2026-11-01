@@ -44,6 +44,10 @@ minor version may change the API.
   and reads them (#123).
 - `xz-native --files`/`--files0`: file names from a file or standard input,
   newline or NUL separated, with xz's rules and errors (#123).
+- `xz-native --flush-timeout=MS`: when compressing standard input, a sync
+  flush after MS milliseconds without input, so that the data so far can be
+  decompressed (LZMA2 and Delta only, single-threaded, as in xz; also on
+  Windows, where xz ignores it) (#123).
 - `xz-native -d` writes sparse files: blocks of zeros become holes, as in xz
   (not on Windows, and not to standard output); `--no-sparse` turns it off
   (#123).

@@ -65,6 +65,9 @@ pub struct Opts {
     pub memlimit_decompress: Option<Limit>,
     pub memlimit_mt_decompress: Option<Limit>,
     pub auto_adjust: bool,
+    /// `--flush-timeout`: milliseconds without input before a sync flush
+    /// (0: never).
+    pub flush_timeout: u64,
     pub single_stream: bool,
     /// `--no-sparse`: don't make holes in decompressed files.
     pub no_sparse: bool,
@@ -108,6 +111,7 @@ impl Default for Opts {
             memlimit_decompress: None,
             memlimit_mt_decompress: None,
             auto_adjust: true,
+            flush_timeout: 0,
             single_stream: false,
             no_sparse: false,
             ignore_check: false,
@@ -269,6 +273,7 @@ const LONG: &[(&str, HasArg, &str)] = &[
     ("memlimit", HasArg::Yes, "M"),
     ("memory", HasArg::Yes, "M"),
     ("no-adjust", HasArg::No, "no-adjust"),
+    ("flush-timeout", HasArg::Yes, "flush-timeout"),
     ("threads", HasArg::Yes, "T"),
     ("extreme", HasArg::No, "e"),
     ("fast", HasArg::No, "0"),
@@ -491,6 +496,7 @@ fn apply(key: &str, value: Option<&str>, o: &mut Opts, action: &mut Action) -> R
         "no-sparse" => o.no_sparse = true,
         "ignore-check" => o.ignore_check = true,
         "no-adjust" => o.auto_adjust = false,
+        "flush-timeout" => o.flush_timeout = parse_u64("flush-timeout", v(), 0, u64::MAX)?,
         "S" => {
             let s = v();
             if s.is_empty() || s.contains('/') || (cfg!(windows) && s.contains(['\\', ':'])) {

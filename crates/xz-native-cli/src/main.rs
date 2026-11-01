@@ -200,6 +200,10 @@ Basic file format and compression options:
                       bytes, % of RAM, or 0 for defaults
       --no-adjust     if compression settings exceed the memory usage limit,
                       give an error instead of adjusting the settings downwards
+      --flush-timeout=TIMEOUT
+                      when compressing, if more than TIMEOUT milliseconds has
+                      passed since the previous flush and reading more input
+                      would block, all pending data is flushed out
 
 Custom filter chain for compression (alternative to using presets):
       --filters=FILTERS
