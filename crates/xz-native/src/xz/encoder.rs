@@ -8,7 +8,7 @@
 use super::format::HEADER_MAGIC;
 use crate::check::{Check, CheckState, crc32};
 use crate::error::{Error, Result};
-use crate::filter::{FILTER_DELTA, FILTER_LZMA2, Filter};
+use crate::filter::Filter;
 use crate::lzma::lz_encoder::MfAction;
 use crate::lzma::lzma2_encoder::{LzEncoder, Lzma2Encoder};
 use crate::options::{EncoderOptions, LzmaOptions};
@@ -49,27 +49,6 @@ pub(crate) fn write_vli(out: &mut Vec<u8>, mut v: u64) {
     out.push(v as u8);
 }
 
-/// Appends the Filter Flags of one filter.
-fn write_filter_flags(out: &mut Vec<u8>, f: &Filter, dict_byte: u8) {
-    let (id, props): (u64, &[u8]) = match *f {
-        Filter::Lzma2 { .. } => (FILTER_LZMA2, &[dict_byte]),
-        Filter::Delta { distance } => (FILTER_DELTA, &[(distance - 1) as u8]),
-        Filter::Bcj { kind, start_offset } => {
-            write_vli(out, kind.filter_id());
-            if start_offset == 0 {
-                write_vli(out, 0);
-            } else {
-                write_vli(out, 4);
-                out.extend_from_slice(&start_offset.to_le_bytes());
-            }
-            return;
-        }
-    };
-    write_vli(out, id);
-    write_vli(out, props.len() as u64);
-    out.extend_from_slice(props);
-}
-
 /// Number of bytes of a VLI (`lzma_vli_size()`).
 pub(crate) fn vli_len(v: u64) -> usize {
     (64 - (v | 1).leading_zeros() as usize).div_ceil(7)
@@ -77,19 +56,14 @@ pub(crate) fn vli_len(v: u64) -> usize {
 
 /// The Filter Flags of the whole chain: the filters, then LZMA2.
 pub(crate) fn filter_flags(opts: &EncoderOptions) -> Vec<u8> {
-    let mut flags = Vec::with_capacity(32);
-    let dict_byte = opts.lzma.lzma2_dict_byte();
-    for f in &opts.filters {
-        write_filter_flags(&mut flags, f, dict_byte);
-    }
-    write_filter_flags(
-        &mut flags,
-        &Filter::Lzma2 {
-            dict_size: opts.lzma.dict_size,
-        },
-        dict_byte,
-    );
-    flags
+    let lzma2 = Filter::Lzma2 {
+        dict_size: opts.lzma.dict_size,
+    };
+    opts.filters
+        .iter()
+        .chain([&lzma2])
+        .flat_map(Filter::flags)
+        .collect()
 }
 
 /// Size of a Block Header with `flags_len` bytes of Filter Flags and, if

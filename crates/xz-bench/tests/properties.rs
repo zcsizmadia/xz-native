@@ -180,3 +180,122 @@ fn lzma1_properties() {
     assert!(LzmaOptions::from_lzma1_properties(&[0x5D; 4]).is_err());
     assert!(c_decode(sys::LZMA_FILTER_LZMA1, &[0x5D; 4]).is_none());
 }
+
+/// `lzma_filter_flags_decode`: the result and the bytes taken.
+fn c_flags_decode(buf: &[u8]) -> (sys::lzma_ret, usize) {
+    let mut f = sys::lzma_filter {
+        id: 0,
+        options: std::ptr::null_mut(),
+    };
+    let mut pos = 0usize;
+    // SAFETY: `buf` is valid for its length; liblzma fills `f` (leaked).
+    let r = unsafe {
+        sys::lzma_filter_flags_decode(&mut f, std::ptr::null(), buf.as_ptr(), &mut pos, buf.len())
+    };
+    (r, pos)
+}
+
+#[test]
+fn filter_flags() {
+    // Encoding: the same bytes as liblzma.
+    let mut filters = vec![
+        Filter::Lzma2 { dict_size: 4096 },
+        Filter::Lzma2 { dict_size: 8 << 20 },
+        Filter::Lzma2 {
+            dict_size: u32::MAX,
+        },
+        Filter::Delta { distance: 1 },
+        Filter::Delta { distance: 256 },
+    ];
+    for kind in [BcjKind::X86, BcjKind::Arm64, BcjKind::RiscV] {
+        for start_offset in [0, 4096] {
+            filters.push(Filter::Bcj { kind, start_offset });
+        }
+    }
+    for f in &filters {
+        let mut lzma = lzma_opts(0, 3, 0, 2);
+        let mut delta = DeltaOptions {
+            kind: 0,
+            dist: 0,
+            reserved_int: [0; 4],
+            reserved_ptr: [std::ptr::null_mut(); 2],
+        };
+        let mut bcj = sys::lzma_options_bcj { start_offset: 0 };
+        let options: *mut c_void = match *f {
+            Filter::Lzma2 { dict_size } => {
+                lzma.dict_size = dict_size;
+                (&mut lzma as *mut sys::lzma_options_lzma).cast()
+            }
+            Filter::Delta { distance } => {
+                delta.dist = distance.into();
+                (&mut delta as *mut DeltaOptions).cast()
+            }
+            Filter::Bcj { start_offset, .. } => {
+                bcj.start_offset = start_offset;
+                (&mut bcj as *mut sys::lzma_options_bcj).cast()
+            }
+            _ => unreachable!(),
+        };
+        let c = sys::lzma_filter {
+            id: f.id(),
+            options,
+        };
+        let mut size = 0u32;
+        let mut out = vec![0u8; 16];
+        let mut pos = 0usize;
+        // SAFETY: `c` points at valid options, alive for the calls; `out`
+        // is large enough for any Filter Flags of these filters.
+        unsafe {
+            assert_eq!(sys::lzma_filter_flags_size(&mut size, &c), sys::LZMA_OK);
+            assert_eq!(
+                sys::lzma_filter_flags_encode(&c, out.as_mut_ptr(), &mut pos, out.len()),
+                sys::LZMA_OK
+            );
+        }
+        out.truncate(pos);
+        assert_eq!(f.flags(), out, "{f:?}");
+        assert_eq!(size as usize, out.len());
+    }
+
+    // Decoding: the same result and length as liblzma, for valid flags
+    // with trailing bytes, every truncation, and broken ones.
+    let mut inputs: Vec<Vec<u8>> = Vec::new();
+    for f in &filters {
+        let mut v = f.flags();
+        for n in 0..v.len() {
+            inputs.push(v[..n].to_vec());
+        }
+        v.extend([0xAA, 0]);
+        inputs.push(v);
+    }
+    inputs.extend([
+        vec![0x21, 1, 41],         // dictionary byte too large
+        vec![0x21, 2, 0, 0],       // LZMA2 properties too long
+        vec![0x03, 0],             // no Delta distance
+        vec![0x22, 0],             // unknown filter
+        vec![0x80, 0x00, 0],       // non-minimal ID
+        vec![0x21, 0x81, 0x00, 0], // non-minimal size
+        vec![0x21, 5, 0],          // properties past the end
+        vec![0x04, 4, 1, 2],       // BCJ properties cut short
+        vec![0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x40, 0], // 2^62, reserved
+        vec![0xFF; 10],            // VLI too long
+    ]);
+    for buf in &inputs {
+        let (r, pos) = c_flags_decode(buf);
+        let ours = Filter::from_flags(buf);
+        match ours {
+            Ok((f, n)) => {
+                assert_eq!((r, pos), (sys::LZMA_OK, n), "{buf:02x?}");
+                assert_eq!(f.flags(), buf[..n], "{buf:02x?}");
+            }
+            Err(e) => {
+                let want = match e {
+                    xz_native::Error::Data => sys::LZMA_DATA_ERROR,
+                    xz_native::Error::Options => sys::LZMA_OPTIONS_ERROR,
+                    e => panic!("{buf:02x?}: {e:?}"),
+                };
+                assert_eq!(r, want, "{buf:02x?}");
+            }
+        }
+    }
+}
