@@ -124,6 +124,51 @@ fn hash_byte(b: u8) -> u32 {
     CRC32_TABLE[0][b as usize]
 }
 
+/// Asks Linux to back the 2 MiB-aligned part of a match finder table with
+/// transparent huge pages (`madvise(MADV_HUGEPAGE)`). The binary tree
+/// search is bound by memory latency, and with 4 KiB pages most of its
+/// steps also miss the TLB: on Zen 3 at -6 this cuts TLB misses by 90% and
+/// compression time by 10-13% (#94). Where the kernel's THP mode is
+/// `madvise` (Ubuntu's default) nothing gets huge pages without it; with
+/// `always` it changes nothing, with `never` the call is ignored. Only a
+/// hint: the result is ignored and the output is the same either way.
+#[cfg(all(
+    feature = "std",
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(feature = "portable"),
+    not(miri)
+))]
+fn hugepage_hint<T>(table: &[T]) {
+    const HUGE: usize = 2 << 20;
+    /// The same value on x86-64 and AArch64.
+    const MADV_HUGEPAGE: i32 = 14;
+    #[allow(unsafe_code)]
+    unsafe extern "C" {
+        fn madvise(addr: *mut core::ffi::c_void, len: usize, advice: i32) -> i32;
+    }
+    let p = table.as_ptr() as usize;
+    let start = p.next_multiple_of(HUGE);
+    let end = (p + core::mem::size_of_val(table)) & !(HUGE - 1);
+    if end > start {
+        // SAFETY: an advice on whole pages inside `table`'s allocation; it
+        // changes how the kernel backs them, never their contents.
+        #[allow(unsafe_code)]
+        unsafe {
+            madvise(start as *mut _, end - start, MADV_HUGEPAGE);
+        }
+    }
+}
+
+#[cfg(not(all(
+    feature = "std",
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(feature = "portable"),
+    not(miri)
+)))]
+fn hugepage_hint<T>(_table: &[T]) {}
+
 /// The LZ window and match finder (`lzma_mf`).
 #[derive(Debug)]
 pub(crate) struct Mf {
@@ -277,6 +322,10 @@ impl Mf {
             match_len_max: o.match_len_max,
             action: MfAction::Run,
         };
+        // Before the first write, so the pages are huge from the start.
+        hugepage_hint(&mf.buf);
+        hugepage_hint(&mf.hash);
+        hugepage_hint(&mf.son);
         mf.init_positions();
         Ok(mf)
     }
@@ -1025,6 +1074,20 @@ impl Mf {
 mod tests {
     use super::*;
     use alloc::vec::Vec;
+
+    /// The huge page hint takes any table (empty, smaller than a huge page,
+    /// unaligned) and never changes its contents.
+    #[test]
+    fn hugepage_hint_any_table() {
+        hugepage_hint::<u32>(&[]);
+        hugepage_hint(&[1u8, 2, 3]);
+        let mut big: Vec<u32> = (0..(5u32 << 20)).collect();
+        hugepage_hint(&big);
+        hugepage_hint(&big[3..]);
+        assert!(big.iter().enumerate().all(|(i, &v)| v == i as u32));
+        big[4 << 20] = 7;
+        assert_eq!(big[4 << 20], 7);
+    }
 
     struct Rng(u64);
     impl Rng {

@@ -9,6 +9,12 @@ minor version may change the API.
 ## [Unreleased]
 
 ### Changed
+- Faster compression on Linux: the match finder asks for transparent huge
+  pages for its tables (`madvise(MADV_HUGEPAGE)`, x86-64 and AArch64; not
+  with `portable`). Where the kernel's THP mode is `madvise` (Ubuntu's and
+  Debian's default) presets 6-9e compress 10-13% faster on an EPYC 7543,
+  as the binary tree search misses the TLB 90% less often; small inputs
+  are no slower. The output is unchanged (#94).
 - The variants `Filter::Lzma2`, `Filter::Delta`, `Filter::Bcj`,
   `RawMethod::Lzma1Ext` and `Check::Unsupported` are `#[non_exhaustive]`,
   so invalid values can't be built outside the crate and fields can be

@@ -36,7 +36,8 @@ and `xz` 5.8.4 is in `/ucrt64/bin`.
   (`check/x86.rs`, `check/aarch64.rs`), the x86-64 decoder assembly
   (`lzma/x86_asm.rs`, a port of liblzma's range decoder asm), a few
   hot-path reads in `lzma/decoder.rs` and the prefetch hints of the binary
-  tree match finder (`lzma/lz_encoder.rs`), each with a SAFETY comment
+  tree match finder and its Linux huge page hint (`madvise`, the only OS
+  call) in `lzma/lz_encoder.rs`, each with a SAFETY comment
   and debug assertions. New `unsafe` needs a benchmark showing the gain and must keep
   a safe Rust fallback that the `portable` feature selects.
 - CPU-specific code goes behind runtime detection in `cpu.rs`, with a
