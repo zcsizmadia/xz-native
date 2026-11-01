@@ -3,7 +3,33 @@ use core::fmt;
 /// Errors returned by the decoders and encoders.
 ///
 /// The variants mirror the `lzma_ret` error codes of liblzma so that behavior
-/// can be compared one-to-one with xz 5.8.4.
+/// can be compared one-to-one with xz 5.8.4: which variant a failure gives
+/// follows liblzma's return code for the same input and calls. The
+/// `Display` text is for people and may change between releases.
+///
+/// Options problems come in two kinds: [`Options`](Error::Options) when they
+/// come from the data (a header, properties being decoded, a filter this
+/// implementation doesn't support), [`InvalidOptions`](Error::InvalidOptions)
+/// when the caller passed them (an out-of-range preset, dictionary size,
+/// filter chain or thread count). liblzma reports both as
+/// `LZMA_OPTIONS_ERROR`.
+///
+/// The readers and writers return [`std::io::Error`]s that wrap it: get it
+/// back with `get_ref()` and `downcast_ref`. The [`std::io::ErrorKind`] is
+/// `UnexpectedEof` for `Truncated`, `OutOfMemory` for `MemLimit`,
+/// `Unsupported` for `Options`, `InvalidOptions` and `UnsupportedCheck`,
+/// `InvalidInput` for `Usage`, `WriteZero` for `BufferTooSmall`, and
+/// `InvalidData` for the rest. Errors of the wrapped reader or writer come
+/// through unchanged.
+///
+/// ```
+/// use std::io::Read;
+/// use xz_native::{Error, XzReader};
+///
+/// let mut out = Vec::new();
+/// let e = XzReader::new(&b"plain text, not .xz"[..]).read_to_end(&mut out).unwrap_err();
+/// assert_eq!(e.get_ref().and_then(|e| e.downcast_ref()), Some(&Error::Format));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Error {
@@ -18,13 +44,14 @@ pub enum Error {
     /// liblzma reports this as `LZMA_DATA_ERROR`.
     CheckMismatch,
     /// Decoding would need more memory than the configured limit
-    /// (`LZMA_MEMLIMIT_ERROR`), or more than can be allocated
+    /// (`LZMA_MEMLIMIT_ERROR`), or a dictionary more than can be allocated
     /// (`LZMA_MEM_ERROR`).
     MemLimit,
     /// The input ended before the end of the stream (`LZMA_BUF_ERROR` at
     /// the end of input).
     Truncated,
-    /// An encoder option is out of range (`LZMA_OPTIONS_ERROR` on encode).
+    /// An option the caller passed is out of range or unsupported, for an
+    /// encoder or a decoder (`LZMA_OPTIONS_ERROR`).
     InvalidOptions,
     /// The API was used in a way it doesn't support, for example an
     /// [`Action`](crate::Action) the encoder doesn't accept
@@ -35,7 +62,7 @@ pub enum Error {
     /// The output buffer is too small for the result (`LZMA_BUF_ERROR` from
     /// liblzma's buffer functions); see [`crate::compress_bound`].
     BufferTooSmall,
-    /// With [`DecoderOptions::tell_unsupported_check`](crate::DecoderOptions::tell_unsupported_check),
+    /// With [`UnsupportedCheck::Report`](crate::UnsupportedCheck::Report),
     /// a Stream uses a check type this implementation can't verify
     /// (`LZMA_UNSUPPORTED_CHECK`). It is an event, not a failure: the
     /// next call goes on decoding, without verifying that Stream.
@@ -51,7 +78,7 @@ impl fmt::Display for Error {
             Error::CheckMismatch => "integrity check mismatch",
             Error::MemLimit => "memory usage limit reached",
             Error::Truncated => "unexpected end of input",
-            Error::InvalidOptions => "invalid encoder options",
+            Error::InvalidOptions => "invalid options",
             Error::Usage => "unsupported use of the API",
             Error::BufferTooSmall => "output buffer too small",
             Error::UnsupportedCheck => "unsupported integrity check type; not verified",

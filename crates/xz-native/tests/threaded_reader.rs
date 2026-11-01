@@ -646,6 +646,77 @@ fn memlimit_threading_limits_read_ahead() {
     assert_eq!(read_xz(&c, opts, 8192, 3).1, Some(Error::MemLimit));
 }
 
+/// `set_memlimit` below the cost of a Block parsed ahead: once the Blocks
+/// in flight are out, it is decoded on the calling thread instead of
+/// waiting for room that never comes.
+#[test]
+fn set_memlimit_below_a_held_block() {
+    let data = text(6_000_000, 15);
+    let opts = xz_native::EncoderOptions::preset(0)
+        .unwrap()
+        .threads(2)
+        .block_size(1_000_000);
+    let c = xz_native::compress_with_options(&data, &opts).unwrap();
+    let mut dec = XzDecoder::with_options(threads(2));
+    // No output space: parse ahead, then hold the next Block.
+    let (mut ip, _, _) = dec.decode(&c, &mut [], false).unwrap();
+    // Above one Block decoder's memory, below a Block's cost.
+    dec.set_memlimit(dec.memusage().max(1 << 20) - 1);
+    let mut out = Vec::new();
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let (u, w, s) = dec.decode(&c[ip..], &mut buf, true).unwrap();
+        ip += u;
+        out.extend_from_slice(&buf[..w]);
+        if s == Status::StreamEnd {
+            break;
+        }
+    }
+    assert!(out == data);
+}
+
+/// Block Headers whose sizes add up past `u64::MAX` don't overflow the
+/// in-flight accounting: the Blocks are corrupt, and that is the error.
+#[test]
+fn huge_block_sizes_with_unlimited_threading_memory() {
+    fn vli(out: &mut Vec<u8>, mut v: u64) {
+        while v >= 0x80 {
+            out.push(v as u8 | 0x80);
+            v >>= 7;
+        }
+        out.push(v as u8);
+    }
+    let mut f = vec![0xFD, b'7', b'z', b'X', b'Z', 0, 0, 0];
+    f.extend(xz_native::crc32(&[0, 0], 0).to_le_bytes());
+    for _ in 0..3 {
+        // LZMA2: one byte stored, then the end; the header claims 2^63 - 1.
+        let data = [0x01u8, 0x00, 0x00, b'A', 0x00];
+        let mut h = vec![0u8, 0xC0];
+        vli(&mut h, data.len() as u64);
+        vli(&mut h, (1 << 63) - 1);
+        h.extend([0x21, 0x01, 0x00]);
+        while h.len() % 4 != 0 {
+            h.push(0);
+        }
+        h[0] = (h.len() / 4) as u8;
+        h.extend(xz_native::crc32(&h, 0).to_le_bytes());
+        h.extend(data);
+        while h.len() % 4 != 0 {
+            h.push(0);
+        }
+        f.extend(h);
+    }
+    let opts = threads(2).memlimit_threading(u64::MAX);
+    let mut out = Vec::new();
+    let err = XzReader::with_options(&f[..], opts)
+        .read_to_end(&mut out)
+        .unwrap_err();
+    assert_eq!(
+        err.get_ref().and_then(|e| e.downcast_ref::<Error>()),
+        Some(&Error::Data)
+    );
+}
+
 /// The default `memlimit_threading`: 2 GiB, 512 MiB on 32-bit targets.
 #[test]
 fn memlimit_threading_default() {

@@ -6,7 +6,7 @@ mod common;
 
 use common::{Rng, xz};
 use std::io::{self, BufRead, BufReader, Read};
-use xz_native::{DecoderOptions, Status, XzDecoder, XzReader, crc32, decompress};
+use xz_native::{DecoderOptions, Status, UnsupportedCheck, XzDecoder, XzReader, crc32, decompress};
 
 /// A reader that can't seek and returns at most `max` bytes per read.
 struct NonSeekable<'a> {
@@ -301,7 +301,7 @@ fn stream_boundaries_on_all_paths() {
         assert_eq!(r.unwrap(), cat(&[&data, &data]));
     }
     // Check ID 2 is reserved (unsupported): decoded without the check, or
-    // an error with fail_on_unsupported_check.
+    // an error with `UnsupportedCheck::Fail`.
     let mut odd = s.clone();
     odd[7] = 2;
     let crc = crc32(&odd[6..8], 0);
@@ -310,7 +310,7 @@ fn stream_boundaries_on_all_paths() {
     odd[n - 3] = 2;
     let crc = crc32(&odd[n - 8..n - 2], 0);
     odd[n - 12..n - 8].copy_from_slice(&crc.to_le_bytes());
-    let strict = DecoderOptions::default().fail_on_unsupported_check(true);
+    let strict = DecoderOptions::default().unsupported_check(UnsupportedCheck::Fail);
     for r in all_paths(&odd, strict) {
         assert_eq!(r.err(), Some(Error::Options));
     }

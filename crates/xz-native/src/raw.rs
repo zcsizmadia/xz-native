@@ -239,15 +239,15 @@ impl RawDecoder {
 
 #[derive(Debug)]
 enum EncoderKind {
-    Lzma1(LzEncoder<Lzma1Encoder>),
-    Lzma2(LzEncoder<Lzma2Encoder>),
+    Lzma1(Box<LzEncoder<Lzma1Encoder>>),
+    Lzma2(Box<LzEncoder<Lzma2Encoder>>),
 }
 
 /// Streaming raw LZMA1/LZMA2 encoder (`lzma_raw_encoder()`). The output is
 /// byte-identical to liblzma 5.8.4's for the same options.
 #[derive(Debug)]
 pub struct RawEncoder {
-    inner: Box<EncoderKind>,
+    inner: EncoderKind,
     seq: crate::push::EncodeSeq,
 }
 
@@ -288,7 +288,7 @@ impl RawEncoder {
         validate_filters(&opts.filters)?;
         let inner = match opts.method {
             RawMethod::Lzma1 | RawMethod::Lzma1Ext { .. } => {
-                let mut lz = Lzma1Encoder::new_lz(&opts.lzma, &opts.filters)?;
+                let mut lz = Box::new(Lzma1Encoder::new_lz(&opts.lzma, &opts.filters)?);
                 if let RawMethod::Lzma1Ext {
                     end_marker: false, ..
                 } = opts.method
@@ -299,13 +299,13 @@ impl RawEncoder {
                 EncoderKind::Lzma1(lz)
             }
             RawMethod::Lzma2 => {
-                let mut lz = Lzma2Encoder::new_lz(&opts.lzma, &opts.filters)?;
+                let mut lz = Box::new(Lzma2Encoder::new_lz(&opts.lzma, &opts.filters)?);
                 lz.preset_dict(dict);
                 EncoderKind::Lzma2(lz)
             }
         };
         Ok(Self {
-            inner: Box::new(inner),
+            inner,
             seq: Default::default(),
         })
     }
@@ -328,14 +328,14 @@ impl RawEncoder {
         output: &mut [u8],
         action: Action,
     ) -> Result<(usize, usize, Status)> {
-        let mf_action = match (action, &*self.inner) {
+        let mf_action = match (action, &self.inner) {
             (Action::Run, _) => MfAction::Run,
             (Action::SyncFlush, EncoderKind::Lzma2(_)) => MfAction::SyncFlush,
             (Action::Finish, _) => MfAction::Finish,
             (Action::SyncFlush, _) => return Err(Error::InvalidOptions),
             _ => return Err(Error::Usage),
         };
-        let inner = &mut *self.inner;
+        let inner = &mut self.inner;
         self.seq.run(input, action, |input| {
             let mut ip = 0;
             let mut op = 0;
