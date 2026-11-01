@@ -769,6 +769,8 @@ fn sigusr1_prints_progress() {
     let out = child.wait_with_output().unwrap();
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("big (1/1)") && err.contains(" = "), "{err}");
+}
+
 #[test]
 fn info_memory_and_help() {
     for args in [
