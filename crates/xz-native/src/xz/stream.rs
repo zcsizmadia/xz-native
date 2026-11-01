@@ -51,6 +51,13 @@ pub struct DecoderOptions {
     /// [`crate::AutoDecoder`] and the readers report it; the one-shot
     /// functions and `XzSeekableReader` don't.
     pub tell_unsupported_check: bool,
+    /// With threads, report a decoding error as soon as it is found, even
+    /// if the output before it hasn't been returned yet, like liblzma's
+    /// `LZMA_FAIL_FAST` (default: false). Without it, the threaded decoder
+    /// first returns all output before the error, as without threads. Which
+    /// output comes before the error then depends on timing. Without
+    /// threads, it is ignored.
+    pub fail_fast: bool,
     /// Threads for decoding multi-Block .xz data with
     /// [`crate::decompress_with_options`], `XzReader` and [`XzDecoder`]
     /// (default: 1; 0 = one per CPU). Blocks are decoded in parallel;
@@ -85,6 +92,7 @@ impl DecoderOptions {
             ignore_check: false,
             fail_on_unsupported_check: false,
             tell_unsupported_check: false,
+            fail_fast: false,
             threads: 1,
             memlimit_threading: DEFAULT_MEMLIMIT_THREADING,
         }
@@ -103,6 +111,7 @@ crate::options::setters!(DecoderOptions {
     ignore_check: bool,
     fail_on_unsupported_check: bool,
     tell_unsupported_check: bool,
+    fail_fast: bool,
     threads: usize,
     memlimit_threading: u64,
 });
