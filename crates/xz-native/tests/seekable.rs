@@ -894,3 +894,85 @@ fn memlimit_counts_index_records_exactly() {
     assert_eq!(t3 % 3, 0, "{t3}");
     assert_eq!(t3 / 3, t7 / 7, "{t3} for 3 Blocks, {t7} for 7");
 }
+
+/// The memory limit counts the Index records of all Streams together: a
+/// limit just enough for one Stream's records is too small for two such
+/// Streams, and twice it is enough.
+#[test]
+fn memlimit_counts_records_of_every_stream() {
+    let opts = xz_native::EncoderOptions::preset(0)
+        .unwrap()
+        .block_size(1000);
+    let one = xz_native::compress_with_options(&text(5000, 22), &opts).unwrap();
+    let two = [one.clone(), one.clone()].concat();
+    let opens = |c: &[u8], m: u64| {
+        XzSeekableReader::with_options(Cursor::new(c), DecoderOptions::default().memlimit(m))
+            .map(drop)
+            .map_err(xz_error)
+    };
+    let (mut lo, mut hi) = (0u64, 1 << 20);
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        if opens(&one, mid).is_ok() {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    assert_eq!(opens(&two, hi), Err(Error::MemLimit));
+    assert_eq!(opens(&two, 2 * hi), Ok(()));
+}
+
+/// A file that gets shorter after it was opened: reading past its new end
+/// is `Error::Truncated`, not a bare end-of-file error.
+#[test]
+fn file_shrinking_after_open_is_truncated() {
+    struct Shrinking {
+        data: Cursor<Vec<u8>>,
+        len: std::rc::Rc<std::cell::Cell<u64>>,
+    }
+    impl Read for Shrinking {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let left = self.len.get().saturating_sub(self.data.position()) as usize;
+            let n = buf.len().min(left);
+            self.data.read(&mut buf[..n])
+        }
+    }
+    impl Seek for Shrinking {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.data.seek(pos)
+        }
+    }
+    let data = text(200_000, 23);
+    let c = xz_native::compress(&data, 6).unwrap();
+    let len = std::rc::Rc::new(std::cell::Cell::new(c.len() as u64));
+    let mut r = XzSeekableReader::new(Shrinking {
+        data: Cursor::new(c),
+        len: len.clone(),
+    })
+    .unwrap();
+    // Now only the first 100 bytes are left.
+    len.set(100);
+    let mut out = vec![0u8; data.len()];
+    let e = r.read_exact(&mut out).unwrap_err();
+    assert_eq!(xz_error(e), Error::Truncated);
+}
+
+/// One Block larger than the reader's input buffer (incompressible data):
+/// the input is refilled within the Block, and seeking forward within it
+/// after a read skips exactly the bytes in between.
+#[test]
+fn block_larger_than_the_buffer() {
+    let mut r = Rng(24);
+    let data: Vec<u8> = (0..300_000).map(|_| r.next() as u8).collect();
+    let c = xz_native::compress(&data, 0).unwrap();
+    let mut x = open(&c).unwrap();
+    assert!(read_all(&mut x).unwrap() == data);
+    let mut x = open(&c).unwrap();
+    assert_eq!(read_n(&mut x, 10), data[..10]);
+    for pos in [50u64, 70_000, 250_000] {
+        x.seek(SeekFrom::Start(pos)).unwrap();
+        let p = pos as usize;
+        assert_eq!(read_n(&mut x, 10), data[p..p + 10], "{pos}");
+    }
+}
