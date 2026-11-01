@@ -59,7 +59,7 @@ instructions at run time (CLMUL, VPCLMULQDQ, SHA). Built for the CPU on
 the EPYC (`RUSTFLAGS="-C target-cpu=native"` and liblzma with
 `-march=native`, both Zen 3), each gets +1-2% at decoding and +0.3-2% at
 encoding, so the comparison doesn't change (`profile_decode` and
-`profile_encode`, three interleaved runs, 2026-11-01, MiB/s):
+`profile_encode`, three interleaved runs at 5f9260d, before the huge pages of [#167], MiB/s):
 
 | | Generic: xz-native / liblzma | | Native: xz-native / liblzma | |
 |---|---:|---:|---:|---:|
@@ -94,16 +94,16 @@ The decode benchmarks decompress them after compressing with `xz -1` and
 "One-shot" is `decompress`, "XzReader" is the streaming `std::io::Read`
 adapter.
 
-**Linux (EPYC 7543)**: xz-native and the tuned liblzma at fbc016c, the
-`liblzma-sys` build at 223f72c (the C library is the same source in both)
+**Linux (EPYC 7543)**: xz-native, lzma-rust2 and the tuned liblzma at b0ca9cb,
+the `liblzma-sys` build at 223f72c (the C library is the same source in both)
 
 | Input | xz-native one-shot | xz-native XzReader | lzma-rust2 | C liblzma, tuned | C liblzma, `liblzma-sys` |
 |---|---|---|---|---|---|
-| text, xz -1 | 121.6 | 119.4 | 73.8 | **125.6** | 109.1 |
-| text, xz -6 | 131.3 | 128.7 | 80.0 | **135.8** | 117.9 |
-| binary, xz -1 | 97.6 | 96.0 | 63.2 | **98.2** | 91.3 |
-| binary, xz -6 | **179.4** | 175.8 | 105.6 | **179.4** | 158.7 |
-| random (GiB/s) | **15.5** | 6.5-8.2 | 0.42-0.43 | 6.5 | 1.07 |
+| text, xz -1 | 121.4 | 121.1 | 73.5 | **122.4** | 109.1 |
+| text, xz -6 | **133.2** | 132.1 | 79.9 | 132.1 | 117.9 |
+| binary, xz -1 | **98.1** | 97.0 | 62.9 | 96.7 | 91.3 |
+| binary, xz -6 | **181.1** | 177.5 | 105.0 | 175.4 | 158.7 |
+| random (GiB/s) | **15.4** | 6.9-8.4 | 0.42-0.43 | 5.1-6.7 | 1.07 |
 
 **Windows (i7-12800H)**, at da40bf3
 
@@ -116,16 +116,17 @@ adapter.
 | random (GiB/s) | **3.72-3.76** | 1.90-2.71 | 0.38-0.44 | 0.82-0.97 |
 
 Against the tuned liblzma (assembly decoder, CLMUL CRC64), xz-native is
-about even. This run has it at 0.97-1.00x one-shot and 0.95-0.98x through
+about even. This run has it at 0.99-1.03x one-shot and 0.99-1.01x through
 `XzReader` (the like-for-like comparison: the liblzma column is its
-streaming `Read` adapter); a run at 50313e9 had 1.01-1.03x and
-0.99-1.02x. Both libraries executed the same instructions in both runs
+streaming `Read` adapter); runs at fbc016c and 50313e9 had 0.97-1.00x and
+0.95-0.98x, and 1.01-1.03x and 0.99-1.02x. Both libraries executed the
+same instructions in those runs
 (`perf stat`, to 0.002%): the ratio moves by about 3% between builds and
 runs with code layout. In cycles of the decode loops alone, xz-native is
 0.5-1.5% behind on text and even on binary. It was 3-6% behind until [#87]
 ported the last range decoder assembly that mattered ([#81]). Against the
 `liblzma-sys` build, whose CRC64 costs it about 10%, xz-native is
-1.07-1.13x one-shot and 1.05-1.11x streaming. Against the MSVC build (at
+1.07-1.14x one-shot and 1.06-1.12x streaming. Against the MSVC build (at
 da40bf3) it is 1.3-1.4x faster. On
 every machine, xz-native is about 1.5x faster than lzma-rust2
 (1.42-1.73x).
