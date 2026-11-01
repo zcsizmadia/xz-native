@@ -64,7 +64,8 @@ fn mixed_stored_and_lzma_chunks() {
     }
     for preset in [0, 6] {
         let packed = xz_native::compress(&data, preset).unwrap();
-        let stream = xz_native::decompress_streaming(&packed, DecoderOptions::default()).unwrap();
+        let stream =
+            xz_native::__private::decompress_streaming(&packed, DecoderOptions::default()).unwrap();
         assert!(stream == data, "preset {preset}: streaming");
         assert!(decompress(&packed).unwrap() == data, "preset {preset}");
         let mut out = b"prefix".to_vec();

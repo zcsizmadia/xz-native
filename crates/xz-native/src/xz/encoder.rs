@@ -657,7 +657,9 @@ mod tests {
         let data = sample(30_000);
         let x86 = [Filter::bcj(crate::BcjKind::X86)];
         let fast = LzmaOptions::preset(1).unwrap();
-        for threads in [1, 2] {
+        // Threads need std.
+        let counts: &[usize] = if cfg!(feature = "std") { &[1, 2] } else { &[1] };
+        for &threads in counts {
             let opts = EncoderOptions {
                 threads,
                 ..EncoderOptions::preset(0).unwrap()

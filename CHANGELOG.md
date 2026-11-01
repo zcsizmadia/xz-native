@@ -9,7 +9,7 @@ minor version may change the API.
 ## [Unreleased]
 
 ### Changed
-- Breaking: the variants `Filter::Lzma2`, `Filter::Delta`, `Filter::Bcj`,
+- The variants `Filter::Lzma2`, `Filter::Delta`, `Filter::Bcj`,
   `RawMethod::Lzma1Ext` and `Check::Unsupported` are `#[non_exhaustive]`,
   so invalid values can't be built outside the crate and fields can be
   added later. Build them with `Filter::lzma2`, `Filter::delta` (distance
@@ -18,6 +18,12 @@ minor version may change the API.
   `RawMethod::lzma1_ext`; `Check::Unsupported` comes only from
   `Check::from_id`. Patterns need `..` (`Filter::Delta { distance, .. }`,
   `Check::Unsupported { id, .. }`) (#156).
+- Without the `std` feature, `EncoderOptions::threads` other than 1 or
+  `multithreaded` is `Error::InvalidOptions` instead of being ignored:
+  the single-threaded output would change once another crate in the
+  build turned `std` on (#156).
+- `decompress_streaming`, a test helper hidden from the docs, moved to
+  `xz_native::__private`, which isn't covered by SemVer (#156).
 - `DecoderOptions::unsupported_check` (`UnsupportedCheck::Ignore`,
   `Report` or `Fail`) replaces the two flags `fail_on_unsupported_check`
   and `tell_unsupported_check`, which allowed four combinations for three
