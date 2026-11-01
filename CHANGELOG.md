@@ -8,6 +8,15 @@ minor version may change the API.
 
 ## [Unreleased]
 
+## [0.4.0+xz.5.8.4]
+
+Still compatible with xz/liblzma 5.8.4. New APIs that close the remaining
+gaps with liblzma (filter strings, Filter Flags, changing filters
+mid-stream, MicroLZMA, one-shot BCJ, progress, `LZMA_TELL_UNSUPPORTED_CHECK`
+and `LZMA_FAIL_FAST`, the version constants) and the `xz-native` command
+line tool. Existing behavior is unchanged: the new decoder options are off
+by default.
+
 ### Added
 - `DecoderOptions::fail_fast`, like liblzma's `LZMA_FAIL_FAST`: with
   threads, an error is reported as soon as it is found, without first
@@ -315,7 +324,8 @@ First release. Compatible with xz/liblzma 5.8.4.
   the `portable` feature disables them.
 - `no_std` + `alloc` without the default `std` feature. MSRV 1.89.
 
-[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v0.4.0...HEAD
+[0.4.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.3.0...v0.4.0
 [0.3.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.2.0...v0.3.0
 [0.2.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.1.0...v0.2.0
 [0.1.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/releases/tag/v0.1.0

@@ -69,7 +69,7 @@ build scripts or the memory-safety risk. Sibling of the C# library
 
 ```toml
 [dependencies]
-xz-native = "0.3"
+xz-native = "0.4"
 ```
 
 The full API reference is on [docs.rs](https://docs.rs/xz-native); changes are in
@@ -255,11 +255,11 @@ The OpenSSF Scorecard and CodeQL watch the workflows themselves: actions are pin
 ## Versioning
 
 The crate follows SemVer for its own API, and the build metadata names the
-xz release whose behavior and encoder output it matches: `0.3.0+xz.5.8.4` is
-release 0.3.0, compatible with xz 5.8.4. Depend on it as
-`xz-native = "0.3"`; Cargo ignores the metadata. Until 1.0, a minor bump
+xz release whose behavior and encoder output it matches: `0.4.0+xz.5.8.4` is
+release 0.4.0, compatible with xz 5.8.4. Depend on it as
+`xz-native = "0.4"`; Cargo ignores the metadata. Until 1.0, a minor bump
 (0.4, 0.5, ...) may change the API or behavior, and a patch release
-(0.3.1) doesn't. Git tags are `vX.Y.Z`.
+(0.4.1) doesn't. Git tags are `vX.Y.Z`.
 
 Issues and pull requests in the upstream
 [xz repository](https://github.com/tukaani-project/xz) are tracked
