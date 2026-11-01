@@ -7,9 +7,9 @@ mod common;
 use common::{Rng, xz};
 use std::path::PathBuf;
 use xz_native::{
-    DecoderOptions, Error, LzipDecoder, LzmaDecoder, Result, Status, XzDecoder, decompress,
-    decompress_lzip, decompress_lzip_with_options, decompress_lzma, decompress_lzma_with_options,
-    decompress_streaming, decompress_with_options,
+    __private::decompress_streaming, DecoderOptions, Error, LzipDecoder, LzmaDecoder, Result,
+    Status, XzDecoder, decompress, decompress_lzip, decompress_lzip_with_options, decompress_lzma,
+    decompress_lzma_with_options, decompress_with_options,
 };
 
 /// Memory the LZMA1 decoders (.lzma, .lz) count for a dictionary, as

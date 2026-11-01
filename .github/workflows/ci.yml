@@ -94,6 +94,8 @@ jobs:
         run: cargo test --workspace --profile ci
       - name: Test (portable fallbacks)
         run: cargo test -p xz-native --profile ci --features portable
+      - name: Test (no_std unit tests)
+        run: cargo test -p xz-native --profile ci --no-default-features --lib
       - name: Test (async adapters)
         run: |
           cargo test -p xz-native --profile ci --features tokio,futures-io --test async_io

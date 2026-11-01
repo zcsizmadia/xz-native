@@ -90,7 +90,7 @@ fn assert_error(name: &str, input: &[u8], expected: Error) {
     let opts = DecoderOptions::default();
     let flat = xz_native::decompress_with_options(input, opts).map(|_| ());
     assert_eq!(flat, Err(expected), "{name}: one-shot");
-    let streaming = xz_native::decompress_streaming(input, opts).map(|_| ());
+    let streaming = xz_native::__private::decompress_streaming(input, opts).map(|_| ());
     assert_eq!(streaming, Err(expected), "{name}: streaming");
     assert_eq!(
         decode_tiny(input).map(|_| ()),
@@ -108,7 +108,7 @@ fn assert_decodes(name: &str, input: &[u8], data: &[u8]) {
         "{name}: one-shot"
     );
     assert!(
-        xz_native::decompress_streaming(input, opts).unwrap() == data,
+        xz_native::__private::decompress_streaming(input, opts).unwrap() == data,
         "{name}: streaming"
     );
     assert!(decode_tiny(input).unwrap() == data, "{name}: 1-byte");

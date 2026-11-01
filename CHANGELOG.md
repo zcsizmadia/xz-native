@@ -8,6 +8,14 @@ minor version may change the API.
 
 ## [Unreleased]
 
+### Changed
+- Without the `std` feature, `EncoderOptions::threads` other than 1 or
+  `multithreaded` is `Error::InvalidOptions` instead of being ignored:
+  the single-threaded output would change once another crate in the
+  build turned `std` on (#156).
+- `decompress_streaming`, a test helper hidden from the docs, moved to
+  `xz_native::__private`, which isn't covered by SemVer (#156).
+
 ## [0.4.0+xz.5.8.4]
 
 Still compatible with xz/liblzma 5.8.4. New APIs that close the remaining
