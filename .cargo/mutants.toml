@@ -42,8 +42,12 @@ exclude_re = [
     # bytes (`pos` is 0 where `filtered - pos` is taken); every choice gives
     # the same bytes, checked for every split of input and output by
     # `filter::tests::bcj_stage_any_split`.
-    'filter/mod\.rs:.*: replace (<|>|\|\|) with (<=|>=|==|&&) in BcjStage::decode$',
-    'filter/mod\.rs:.*: replace - with \+ in BcjStage::decode$',
+    # (Only the classes whose every instance there survives; `>` with `==`
+    # at the first branch and `-` with `+` where `pos` is 0 are equivalent
+    # too, but other instances of those classes are caught.)
+    'filter/mod\.rs:.*: replace < with <= in BcjStage::decode$',
+    'filter/mod\.rs:.*: replace > with >= in BcjStage::decode$',
+    'filter/mod\.rs:.*: replace \|\| with && in BcjStage::decode$',
     # One-shot Block decoding runs the in-place filters once, with `finish`,
     # which sets `done` to the end whatever the BCJ converter returned.
     'filter/mod\.rs:.*: replace \+= with \*= in InPlaceFilters::process$',
