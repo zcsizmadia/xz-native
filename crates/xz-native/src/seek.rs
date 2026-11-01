@@ -259,7 +259,7 @@ pub(crate) fn parse<R: Read + Seek>(
         if header_flags != flags {
             return Err(Error::Data.into());
         }
-        if opts.fail_on_unsupported_check && matches!(flags.check, Check::Unsupported(_)) {
+        if opts.fail_on_unsupported_check && matches!(flags.check, Check::Unsupported { .. }) {
             return Err(Error::Options.into());
         }
         streams.push(StreamInfo {

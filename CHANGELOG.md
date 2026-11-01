@@ -17,7 +17,7 @@ minor version may change the API.
   offset; both checked ones return `Error::InvalidOptions`) and
   `RawMethod::lzma1_ext`; `Check::Unsupported` comes only from
   `Check::from_id`. Patterns need `..` (`Filter::Delta { distance, .. }`,
-  `Check::Unsupported { .. }`) (#156).
+  `Check::Unsupported { id, .. }`) (#156).
 
 ## [0.4.0+xz.5.8.4]
 

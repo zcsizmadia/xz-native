@@ -615,14 +615,15 @@ impl MtDecoder {
                     r => r?,
                 };
                 if self.opts.fail_on_unsupported_check
-                    && matches!(flags.check, Check::Unsupported(_))
+                    && matches!(flags.check, Check::Unsupported { .. })
                 {
                     return Err(Error::Options.into());
                 }
                 self.flags = Some(flags);
                 self.records = RecordHash::default();
                 self.parse = Parse::BlockStart;
-                if self.opts.tell_unsupported_check && matches!(flags.check, Check::Unsupported(_))
+                if self.opts.tell_unsupported_check
+                    && matches!(flags.check, Check::Unsupported { .. })
                 {
                     self.queue.push_back(Item::UnsupportedCheck);
                 }

@@ -710,7 +710,7 @@ impl XzDecoder {
                         r => r?,
                     };
                     if self.opts.fail_on_unsupported_check
-                        && matches!(flags.check, Check::Unsupported(_))
+                        && matches!(flags.check, Check::Unsupported { .. })
                     {
                         return Err(Error::Options);
                     }
@@ -718,7 +718,7 @@ impl XzDecoder {
                     self.blocks = RecordHash::default();
                     self.expect(Seq::BlockHeaderFirst, 1);
                     if self.opts.tell_unsupported_check
-                        && matches!(flags.check, Check::Unsupported(_))
+                        && matches!(flags.check, Check::Unsupported { .. })
                     {
                         return Err(Error::UnsupportedCheck);
                     }

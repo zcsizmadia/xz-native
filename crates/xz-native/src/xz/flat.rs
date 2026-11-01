@@ -249,7 +249,7 @@ fn decompress_append(input: &[u8], opts: &DecoderOptions, out: &mut Vec<u8>) -> 
             r => r?,
         };
         let check = flags.check;
-        if opts.fail_on_unsupported_check && matches!(check, Check::Unsupported(_)) {
+        if opts.fail_on_unsupported_check && matches!(check, Check::Unsupported { .. }) {
             return Err(Error::Options);
         }
 
