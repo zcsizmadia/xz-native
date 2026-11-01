@@ -39,6 +39,9 @@ minor version may change the API.
   output as `xz` single-threaded and multithreaded (#123).
 - `xz-native -v`: xz's progress indicator, a line redrawn every second
   on a terminal and a summary per file otherwise, from `progress()` (#123).
+- `xz-native --format=raw`: raw LZMA1/LZMA2 streams with the command line
+  filter chain (or the preset, with xz's warning), as `xz -F raw` writes
+  and reads them (#123).
 
 ## [0.3.0+xz.5.8.4]
 
