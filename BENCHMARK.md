@@ -422,8 +422,12 @@ cargo bench -p xz-bench --bench decode  # one group
 XZ_BENCH_FILE=path/to/file cargo bench -p xz-bench --bench decode
 ```
 
-On Linux, pin to one core of an idle NUMA node for stable numbers, for
-example `taskset -c 32 cargo bench -p xz-bench`. Criterion writes reports
+On Linux, pin to one core of an idle NUMA node for stable numbers, and
+keep the memory on that node too, for example
+`numactl --physcpubind=32 --membind=1 cargo bench -p xz-bench`. Each
+decode and encode benchmark takes 10 samples; `XZ_BENCH_SAMPLES=30` (with
+`-- --measurement-time 20`) gives steadier numbers in about three times
+the time. Criterion writes reports
 to `target/criterion`, and
 
 ```sh

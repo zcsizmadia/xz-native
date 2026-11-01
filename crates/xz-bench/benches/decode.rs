@@ -20,7 +20,7 @@ fn decode(c: &mut Criterion) {
             assert_eq!(xz_native::decompress(&packed).unwrap(), data);
             let mut g = c.benchmark_group(format!("decode/{name}/xz-{preset}"));
             g.throughput(Throughput::Bytes(data.len() as u64));
-            g.sample_size(10);
+            g.sample_size(xz_bench::sample_size());
             g.bench_function(BenchmarkId::from_parameter("xz-native"), |b| {
                 b.iter(|| xz_native::decompress(black_box(&packed)).unwrap())
             });
