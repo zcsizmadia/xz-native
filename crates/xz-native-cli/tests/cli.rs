@@ -837,17 +837,22 @@ fn info_memory_and_help() {
 }
 
 /// The default thread budget stays 64 MiB below `ulimit -d`, as in xz.
+/// Skipped where the shell can't lower the limit (macOS).
 #[cfg(unix)]
 #[test]
 fn memory_budget_below_rlimit() {
     let out = Command::new("sh")
         .args([
             "-c",
-            "ulimit -S -d 1048576 && exec \"$0\" --robot --info-memory",
+            "ulimit -S -d 1048576 2>/dev/null || exit 77; exec \"$0\" --robot --info-memory",
         ])
         .arg(env!("CARGO_BIN_EXE_xz-native"))
         .output()
         .unwrap();
+    if status(&out) == 77 {
+        eprintln!("skipped: ulimit -d not supported");
+        return;
+    }
     assert_eq!(status(&out), 0, "{out:?}");
     let text = String::from_utf8(out.stdout).unwrap();
     let fields: Vec<u64> = text
