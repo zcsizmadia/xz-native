@@ -69,6 +69,8 @@ pub struct Opts {
     /// (0: never).
     pub flush_timeout: u64,
     pub single_stream: bool,
+    /// `--no-sparse`: don't make holes in decompressed files.
+    pub no_sparse: bool,
     pub ignore_check: bool,
     pub suffix: Option<String>,
     /// A custom filter chain; empty for the preset.
@@ -111,6 +113,7 @@ impl Default for Opts {
             auto_adjust: true,
             flush_timeout: 0,
             single_stream: false,
+            no_sparse: false,
             ignore_check: false,
             suffix: None,
             chain: Vec::new(),
@@ -490,7 +493,7 @@ fn apply(key: &str, value: Option<&str>, o: &mut Opts, action: &mut Action) -> R
         "info-memory" => *action = Action::InfoMemory,
         "V" => *action = Action::Version,
         "single-stream" => o.single_stream = true,
-        "no-sparse" => {}
+        "no-sparse" => o.no_sparse = true,
         "ignore-check" => o.ignore_check = true,
         "no-adjust" => o.auto_adjust = false,
         "flush-timeout" => o.flush_timeout = parse_u64("flush-timeout", v(), 0, u64::MAX)?,

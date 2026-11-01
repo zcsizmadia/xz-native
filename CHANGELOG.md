@@ -48,6 +48,9 @@ minor version may change the API.
   flush after MS milliseconds without input, so that the data so far can be
   decompressed (LZMA2 and Delta only, single-threaded, as in xz; also on
   Windows, where xz ignores it) (#123).
+- `xz-native -d` writes sparse files: blocks of zeros become holes, as in xz
+  (not on Windows, and not to standard output); `--no-sparse` turns it off
+  (#123).
 - `xz-native` signals like xz: Ctrl-C (SIGINT) or SIGTERM stops at the next
   chunk, removes the partial output and ends with the signal; SIGUSR1 (and
   SIGINFO on the BSDs and macOS) prints the progress. The CLI uses
