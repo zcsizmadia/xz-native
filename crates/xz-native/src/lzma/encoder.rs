@@ -242,6 +242,12 @@ pub(crate) struct LzmaEncoder {
     /// data (room for the LZMA2 chunk header).
     pub(crate) out_base: usize,
     uncomp_size: u64,
+    /// MicroLZMA's output size limit (`out_limit`; 0 = none): the last symbol
+    /// that would make the flushed output larger is dropped and encoding
+    /// ends.
+    pub(crate) out_limit: u64,
+    /// Bytes of `rc.out` already taken and cleared by the caller.
+    pub(crate) out_flushed: u64,
     state: u8,
     reps: [u32; REPS],
     matches: [Match; MATCH_LEN_MAX as usize + 1],
@@ -304,6 +310,8 @@ impl LzmaEncoder {
             rc: RangeEncoder::new(LZMA2_CHUNK_MAX as usize + 64),
             out_base: 0,
             uncomp_size: 0,
+            out_limit: 0,
+            out_flushed: 0,
             state: 0,
             reps: [0; REPS],
             matches: [Match::default(); MATCH_LEN_MAX as usize + 1],
@@ -527,6 +535,27 @@ impl LzmaEncoder {
         mf.read_ahead -= len;
     }
 
+    /// [`encode_symbol`](Self::encode_symbol) with [`out_limit`](Self::out_limit):
+    /// false, with the symbol undone in the range encoder, if the output
+    /// after flushing would be larger than the limit (`rc_encode_dummy()`
+    /// and `rc_forget()`).
+    #[cold]
+    #[inline(never)]
+    fn encode_symbol_limited(&mut self, mf: &mut Mf, back: u32, len: u32, position: u32) -> bool {
+        let saved = self.rc.save();
+        self.encode_symbol(mf, back, len, position);
+        if self.out_flushed + self.rc.flushed_len() > self.out_limit {
+            self.rc.restore(saved);
+            return false;
+        }
+        true
+    }
+
+    /// Input bytes encoded so far.
+    pub(crate) fn uncomp_size(&self) -> u64 {
+        self.uncomp_size
+    }
+
     /// `encode_init()`: the first byte is always a literal.
     fn encode_init(&mut self, mf: &mut Mf) -> bool {
         debug_assert_eq!(self.uncomp_size, 0);
@@ -589,7 +618,11 @@ impl LzmaEncoder {
             } else {
                 self.optimum_normal(mf, position)
             };
-            self.encode_symbol(mf, back, len, position);
+            if self.out_limit == 0 {
+                self.encode_symbol(mf, back, len, position);
+            } else if !self.encode_symbol_limited(mf, back, len, position) {
+                break;
+            }
             self.uncomp_size += len as u64;
         }
         if self.use_eopm {

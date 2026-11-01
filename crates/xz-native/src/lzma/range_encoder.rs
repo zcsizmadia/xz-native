@@ -116,6 +116,16 @@ pub(crate) fn dist_slot(dist: u32) -> u32 {
     }
 }
 
+/// A saved [`RangeEncoder`] state.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RcState {
+    low: u64,
+    cache_size: u64,
+    range: u32,
+    cache: u8,
+    out_len: usize,
+}
+
 /// Range encoder writing into a byte buffer.
 #[derive(Debug, Clone)]
 pub(crate) struct RangeEncoder {
@@ -235,6 +245,49 @@ impl RangeEncoder {
             self.range >>= 1;
             self.low += (self.range & 0u32.wrapping_sub((value >> n) & 1)) as u64;
         }
+    }
+
+    /// The state, to [`restore`](Self::restore) it if the bits encoded
+    /// after it are dropped.
+    pub(crate) fn save(&self) -> RcState {
+        RcState {
+            low: self.low,
+            cache_size: self.cache_size,
+            range: self.range,
+            cache: self.cache,
+            out_len: self.out.len(),
+        }
+    }
+
+    /// Goes back to a [`save`](Self::save)d state (`rc_forget()`).
+    pub(crate) fn restore(&mut self, s: RcState) {
+        self.low = s.low;
+        self.cache_size = s.cache_size;
+        self.range = s.range;
+        self.cache = s.cache;
+        self.out.truncate(s.out_len);
+    }
+
+    /// The length of `out` after a [`flush`](Self::flush) now, without
+    /// flushing (`rc_encode_dummy()`).
+    pub(crate) fn flushed_len(&self) -> u64 {
+        let (mut low, mut cache_size) = (self.low, self.cache_size);
+        let mut len = self.out.len() as u64;
+        let mut shift_low = || {
+            if (low as u32) < 0xFF00_0000 || (low >> 32) != 0 {
+                len += cache_size;
+                cache_size = 0;
+            }
+            cache_size += 1;
+            low = (low & 0x00FF_FFFF) << SHIFT_BITS;
+        };
+        if self.range < TOP_VALUE {
+            shift_low();
+        }
+        for _ in 0..5 {
+            shift_low();
+        }
+        len
     }
 
     /// Writes the last bytes and resets the encoder (`rc_flush()` followed

@@ -9,6 +9,11 @@ minor version may change the API.
 ## [Unreleased]
 
 ### Added
+- MicroLZMA like liblzma's `lzma_microlzma_encoder()` and
+  `lzma_microlzma_decoder()` (as EROFS uses it): `microlzma_encode` packs
+  as much input as fits into a fixed-size output, and `microlzma_decode`
+  decodes with an exact or a smaller uncompressed size. Byte-identical
+  to liblzma (#103).
 - One-shot BCJ conversion like liblzma's `lzma_bcj_x86_encode()` (and the
   ARM64 and RISC-V ones): `BcjKind::encode` and `BcjKind::decode`, for
   every instruction set (#103).
