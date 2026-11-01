@@ -181,6 +181,11 @@ use xz_native::compat::write::XzEncoder;
 liblzma's low-level `stream::Stream` and `MtStreamBuilder` have no direct
 equivalent; use `DecoderOptions` and `EncoderOptions` instead.
 
+Two liblzma utilities aren't ported, since the library doesn't use them
+itself: for `lzma_cputhreads()` use `std::thread::available_parallelism`,
+and for `lzma_physmem()` a crate such as `sysinfo` (reading the total RAM
+takes OS calls, which this crate avoids).
+
 ### Command line tool
 
 `crates/xz-native-cli` builds `xz-native`, an `xz`-compatible command
