@@ -301,7 +301,9 @@ pub struct EncoderOptions {
     /// selects the multithreaded encoder, even if that ends up with one
     /// thread (like `xz -T0`), so the output doesn't depend on the machine;
     /// [`multithreaded`](Self::multithreaded) selects it for exactly one.
-    /// Ignored without the `std` feature.
+    /// Without the `std` feature, anything but 1 is [`Error::InvalidOptions`]
+    /// (rather than single-threaded output that would change once another
+    /// crate turns `std` on).
     ///
     /// Memory: up to `threads` LZMA2 encoders, `threads` Blocks of input and
     /// `2 * threads` Blocks of output, like liblzma.
@@ -309,7 +311,8 @@ pub struct EncoderOptions {
     /// Use the multithreaded encoder even with `threads == 1` (default
     /// false), like `xz -T+1` and liblzma's `lzma_stream_encoder_mt()` with
     /// one thread: the same output as with more threads, with the memory
-    /// of one. Ignored without the `std` feature.
+    /// of one. Without the `std` feature, `true` is
+    /// [`Error::InvalidOptions`].
     pub multithreaded: bool,
 }
 
@@ -390,6 +393,12 @@ impl EncoderOptions {
         ) {
             return Err(Error::InvalidOptions);
         }
+        // Without std there are no threads; encoding single-threaded instead
+        // would give different bytes once std is on.
+        #[cfg(not(feature = "std"))]
+        if self.threads != 1 || self.multithreaded {
+            return Err(Error::InvalidOptions);
+        }
         validate_filters(&self.filters)
     }
 }
@@ -435,6 +444,22 @@ pub(crate) fn validate_filters(filters: &[Filter]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Without std, threads are an error rather than a silent fallback.
+    #[test]
+    #[cfg(not(feature = "std"))]
+    fn threads_without_std() {
+        let opts = EncoderOptions::preset(1).unwrap();
+        assert!(opts.validate().is_ok());
+        assert_eq!(
+            opts.clone().threads(0).validate(),
+            Err(Error::InvalidOptions)
+        );
+        assert_eq!(
+            opts.multithreaded(true).validate(),
+            Err(Error::InvalidOptions)
+        );
+    }
 
     #[test]
     fn presets() {

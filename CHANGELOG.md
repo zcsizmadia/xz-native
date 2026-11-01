@@ -9,6 +9,12 @@ minor version may change the API.
 ## [Unreleased]
 
 ### Changed
+- Without the `std` feature, `EncoderOptions::threads` other than 1 or
+  `multithreaded` is `Error::InvalidOptions` instead of being ignored:
+  the single-threaded output would change once another crate in the
+  build turned `std` on (#156).
+- `decompress_streaming`, a test helper hidden from the docs, moved to
+  `xz_native::__private`, which isn't covered by SemVer (#156).
 - `DecoderOptions::unsupported_check` (`UnsupportedCheck::Ignore`,
   `Report` or `Fail`) replaces the two flags `fail_on_unsupported_check`
   and `tell_unsupported_check`, which allowed four combinations for three

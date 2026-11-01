@@ -135,9 +135,16 @@ pub use oneshot::{
     compress_to_slice, compress_with_options, compress_with_options_to_slice, decompress,
     decompress_auto, decompress_auto_with_options, decompress_into, decompress_lzip,
     decompress_lzip_with_options, decompress_lzma, decompress_lzma_with_options, decompress_raw,
-    decompress_streaming, decompress_to_slice, decompress_with_options,
-    decompress_with_options_into, decompress_with_options_to_slice,
+    decompress_to_slice, decompress_with_options, decompress_with_options_into,
+    decompress_with_options_to_slice,
 };
+
+/// Helpers for this workspace's tests and benchmarks. Not part of the API:
+/// not covered by SemVer, and may change or go away in any release.
+#[doc(hidden)]
+pub mod __private {
+    pub use crate::oneshot::decompress_streaming;
+}
 pub use options::{
     DICT_SIZE_MAX, DICT_SIZE_MIN, EncoderOptions, LzmaOptions, MatchFinder, Mode, PRESET_DEFAULT,
     PRESET_EXTREME,

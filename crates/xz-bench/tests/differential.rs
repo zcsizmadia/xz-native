@@ -58,7 +58,7 @@ fn ours(input: &[u8], format: Format) -> Option<Vec<u8>> {
         Format::Xz => {
             let opts = xz_native::DecoderOptions::default().memlimit(MEMLIMIT);
             let flat = xz_native::decompress_with_options(input, opts).ok();
-            let streaming = xz_native::decompress_streaming(input, opts).ok();
+            let streaming = xz_native::__private::decompress_streaming(input, opts).ok();
             assert!(
                 flat == streaming,
                 "one-shot and streaming decoders disagree"

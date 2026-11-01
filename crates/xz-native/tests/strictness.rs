@@ -198,7 +198,7 @@ fn periodic_and_rle_round_trip() {
             let what = format!("{name} {opts:?}");
             assert!(decompress(&packed).unwrap() == data, "{what}: one-shot");
             let d = DecoderOptions::default();
-            let streamed = xz_native::decompress_streaming(&packed, d).unwrap();
+            let streamed = xz_native::__private::decompress_streaming(&packed, d).unwrap();
             assert!(streamed == data, "{what}: streaming");
             let (tiny, used) = decode_tiny(&packed, d);
             assert!(tiny == data && used == packed.len(), "{what}: 1-byte");
@@ -242,7 +242,7 @@ fn match_beyond_declared_dictionary_is_data_error() {
     assert_eq!(decompress(&packed).err(), Some(xz_native::Error::Data));
     let opts = DecoderOptions::default();
     assert_eq!(
-        xz_native::decompress_streaming(&packed, opts).err(),
+        xz_native::__private::decompress_streaming(&packed, opts).err(),
         Some(xz_native::Error::Data)
     );
     let mut out = Vec::new();
@@ -268,7 +268,7 @@ fn all_paths(input: &[u8], opts: DecoderOptions) -> [Result<Vec<u8>, xz_native::
         });
     [
         xz_native::decompress_with_options(input, opts),
-        xz_native::decompress_streaming(input, opts),
+        xz_native::__private::decompress_streaming(input, opts),
         reader,
     ]
 }

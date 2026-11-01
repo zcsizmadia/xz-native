@@ -284,7 +284,7 @@ fn flush_with_threaded_encoder() {
     w.write_all(b"first ").unwrap();
     w.flush().unwrap();
     assert_eq!(
-        xz_native::decompress_streaming(
+        xz_native::__private::decompress_streaming(
             w.get_ref(),
             xz_native::DecoderOptions::new().concatenated(false)
         )
