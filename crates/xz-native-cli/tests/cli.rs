@@ -208,7 +208,6 @@ fn usage_errors() {
         &["--nope"][..],
         &["-T", "x"],
         &["--check=crc16"],
-        &["-F", "raw"],
         &["--list"],
         &["-Fxz", "-S", ""],
     ] {
@@ -590,4 +589,66 @@ fn verbose_matches_xz() {
         );
         assert_eq!(status(&o), status(&theirs), "{args:?}");
     }
+}
+
+#[test]
+fn raw_format_matches_xz() {
+    let data = sample(1 << 20, 11);
+    for args in [
+        &["-c", "-F", "raw"][..],
+        &["-c", "-F", "raw", "-3e"],
+        &["-c", "-F", "raw", "--lzma2=preset=1,dict=1MiB"],
+        &["-c", "-F", "raw", "--lzma1=preset=2"],
+        &[
+            "-c",
+            "-F",
+            "raw",
+            "--x86",
+            "--delta=dist=2",
+            "--lzma2=preset=0",
+        ],
+        &["-c", "-F", "raw", "--filters=arm64 lzma1:lc=0,lp=2"],
+        &["-c", "-F", "raw", "--lzma2", "--memlimit-compress=10MiB"],
+        &["-c", "-F", "raw", "--x86"],
+    ] {
+        same_as_xz(args, &data);
+        // The preset warning and the errors too.
+        let a = ours(args, &data);
+        let Some(b) = xz(args, &data) else { return };
+        assert_eq!(
+            stderr(&a).replace("xz-native:", "xz:"),
+            stderr(&b).replace('\r', ""),
+            "{args:?}"
+        );
+    }
+    // Round trips, also through xz, and trailing data is an error.
+    for chain in [
+        &["--lzma2=preset=1"][..],
+        &["--lzma1=preset=2"],
+        &["--delta=dist=4", "--lzma2=preset=0"],
+    ] {
+        let enc: Vec<&str> = ["-c", "-F", "raw"].iter().chain(chain).copied().collect();
+        let dec: Vec<&str> = ["-dc", "-F", "raw"].iter().chain(chain).copied().collect();
+        let raw = ours(&enc, &data).stdout;
+        assert!(ours(&dec, &raw).stdout == data, "{chain:?}");
+        if let Some(theirs) = xz(&dec, &raw) {
+            assert!(theirs.stdout == data, "{chain:?}");
+        }
+        let mut junk = raw.clone();
+        junk.extend_from_slice(b"junk");
+        let o = ours(&dec, &junk);
+        assert_eq!(status(&o), 1);
+        assert!(stderr(&o).contains("Compressed data is corrupt"));
+    }
+    // Files need --suffix; with it, names work as with other formats.
+    let dir = tmpdir("raw");
+    fs::write(dir.join("f"), &data).unwrap();
+    let o = file_cmd(&dir, &["-F", "raw", "f"]);
+    assert_eq!(status(&o), 1);
+    assert!(stderr(&o).contains("--suffix=.SUF is required"));
+    assert_eq!(status(&file_cmd(&dir, &["-F", "raw", "-S", ".r", "f"])), 0,);
+    assert!(dir.join("f.r").exists());
+    let o = file_cmd(&dir, &["-d", "-F", "raw", "-S", ".r", "f.r"]);
+    assert_eq!(status(&o), 0, "{}", stderr(&o));
+    assert!(fs::read(dir.join("f")).unwrap() == data);
 }

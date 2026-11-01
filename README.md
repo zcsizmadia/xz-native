@@ -195,13 +195,13 @@ xz-native -9e -T0 big.tar          # big.tar -> big.tar.xz
 xz-native -dc big.tar.xz | tar x
 ```
 
-It handles `-z`/`-d`/`-t`, presets and `-e`, `-T`, `-F auto|xz|lzma|lzip`,
+It handles `-z`/`-d`/`-t`, presets and `-e`, `-T`, `-F auto|xz|lzma|lzip|raw`,
 `-C`, `--block-size`, the `--memlimit` options, `-S`, `-k`, `-f`, `-c`,
 `--single-stream`, `--ignore-check`, `-q`, `-v` (xz's progress indicator), `-Q`,
 `--list` (with `-v`, `-vv` and `--robot`, the same output as `xz`), custom
 filter chains (`--lzma1`, `--lzma2`, `--x86` and the other BCJ filters,
 `--delta`, `--filters=`), `--block-list` with `--filters1..9`, and the `unxz`,
-`xzcat`, `lzma`, `unlzma` and `lzcat` names. Not yet: raw format, `--files`.
+`xzcat`, `lzma`, `unlzma` and `lzcat` names. Not yet: `--files`.
 
 ## Supported
 

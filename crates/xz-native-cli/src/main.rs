@@ -133,7 +133,7 @@ built on the pure Rust xz-native library).
   -T, --threads=NUM   use at most NUM threads; the default is 0 which uses
                       as many threads as there are processor cores
   -F, --format=FMT    file format to encode or decode; possible values are
-                      'auto' (default), 'xz', 'lzma', and 'lzip'
+                      'auto' (default), 'xz', 'lzma', 'lzip', and 'raw'
   -C, --check=CHECK   integrity check type: 'none', 'crc32', 'crc64' (default),
                       or 'sha256'
       --ignore-check  don't verify the integrity check when decompressing
@@ -174,7 +174,7 @@ With no FILE, or when FILE is -, read standard input.
                       filter chain number (0-9) followed by a ':' before the
                       uncompressed data size
 
-Not supported yet: --format=raw, --files.
+Not supported yet: --files.
 "
     )
 }

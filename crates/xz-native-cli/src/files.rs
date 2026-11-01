@@ -30,6 +30,15 @@ pub fn run(ctx: &mut Ctx) -> Result<(), String> {
     if o.mode == Mode::Compress && o.format == Format::Auto {
         o.format = Format::Xz;
     }
+    // Raw data has no suffix of its own (`args_parse()`).
+    if o.format == Format::Raw
+        && o.suffix.is_none()
+        && !o.stdout
+        && matches!(o.mode, Mode::Compress | Mode::Decompress)
+        && o.files.iter().any(|f| f != "-")
+    {
+        return Err("With --format=raw, --suffix=.SUF is required unless writing to stdout".into());
+    }
     if o.block_list.is_some() && !(o.mode == Mode::Compress && o.format == Format::Xz) {
         o.block_list = None;
         if o.verbosity >= crate::args::V_WARNING {
@@ -56,6 +65,12 @@ pub fn run(ctx: &mut Ctx) -> Result<(), String> {
             _ => None,
         },
         decoder: coder::decoder_options(ctx, &hw),
+        raw: match ctx.o.mode {
+            Mode::Decompress | Mode::Test if ctx.o.format == Format::Raw => {
+                Some(coder::raw_options(ctx, &hw)?)
+            }
+            _ => None,
+        },
         limit: coder::decoder_limit(ctx, &hw),
     };
     let files = ctx.o.files.clone();
@@ -74,6 +89,8 @@ pub fn run(ctx: &mut Ctx) -> Result<(), String> {
 struct Job {
     encoder: Option<Encoder>,
     decoder: DecoderOptions,
+    /// The chain for decoding `--format=raw`.
+    raw: Option<xz_native::RawOptions>,
     /// The decompression memory limit, for messages.
     limit: Option<u64>,
 }
@@ -136,6 +153,9 @@ fn code(
     match (&job.encoder, output) {
         (Some(enc), Some(out)) => coder::compress(enc, input, out, meter),
         (Some(_), None) => unreachable!("compressing to nowhere"),
+        (None, out) if job.raw.is_some() => {
+            coder::decompress_raw(job.raw.as_ref().unwrap(), input, out, meter)
+        }
         (None, out) => {
             // `xz -dcf` copies input in an unknown format as is.
             let passthrough = ctx.o.mode == Mode::Decompress && ctx.o.stdout && ctx.o.force;
@@ -322,6 +342,8 @@ fn dest_name(ctx: &mut Ctx, src: &OsStr) -> Option<OsString> {
     if ctx.o.mode == Mode::Compress {
         let known: &[&str] = match ctx.o.format {
             Format::Lzma => &[".lzma", ".tlz"],
+            // Raw files get only the --suffix that `run` requires.
+            Format::Raw => &[],
             _ => &[".xz", ".txz"],
         };
         for s in known.iter().copied().chain(custom.as_deref()) {
@@ -331,7 +353,8 @@ fn dest_name(ctx: &mut Ctx, src: &OsStr) -> Option<OsString> {
             }
         }
         let mut d = src.to_owned();
-        d.push(custom.as_deref().unwrap_or(known[0]));
+        // `run` makes sure raw data has a --suffix.
+        d.push(custom.as_deref().unwrap_or_else(|| known[0]));
         return Some(d);
     }
     // Decompressing: replace a known suffix (`uncompressed_name()`).
@@ -342,7 +365,12 @@ fn dest_name(ctx: &mut Ctx, src: &OsStr) -> Option<OsString> {
         (".tlz", ".tar"),
         (".lz", ""),
     ];
-    let replace = SUFFIXES
+    let builtin: &[(&str, &str)] = if ctx.o.format == Format::Raw {
+        &[]
+    } else {
+        &SUFFIXES
+    };
+    let replace = builtin
         .iter()
         .find(|(s, _)| has_suffix(src, s))
         .map(|&(s, r)| (s.len(), r))

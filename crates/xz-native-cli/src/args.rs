@@ -21,6 +21,7 @@ pub enum Format {
     Xz,
     Lzma,
     Lzip,
+    Raw,
 }
 
 /// `--threads` (`hardware_threads_set()`).
@@ -473,7 +474,7 @@ fn apply(key: &str, value: Option<&str>, o: &mut Opts, action: &mut Action) -> R
                 "xz" => Format::Xz,
                 "lzma" | "alone" => Format::Lzma,
                 "lzip" => Format::Lzip,
-                "raw" => return Err("--format=raw is not supported yet".into()),
+                "raw" => Format::Raw,
                 s => return Err(format!("{s}: Unknown file format type")),
             }
         }

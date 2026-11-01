@@ -11,8 +11,8 @@ use std::cell::{Cell, RefCell};
 use std::io::{self, BufReader, Read, Write};
 use xz_native::{
     Action, AutoReader, Check, DecoderOptions, EncoderOptions, Filter, LzipReader, LzmaOptions,
-    LzmaReader, LzmaWriter, PRESET_EXTREME, RawMethod, RawOptions, Status, XzEncoder, XzReader,
-    XzWriter,
+    LzmaReader, LzmaWriter, PRESET_EXTREME, RawDecoder, RawEncoder, RawMethod, RawOptions, Status,
+    XzEncoder, XzReader, XzWriter,
 };
 
 /// `ASSUME_RAM`: the RAM size xz assumes when it can't find it, in MiB.
@@ -73,6 +73,7 @@ fn mem_needed(usage: u64, limit: Option<u64>) -> String {
 pub enum Encoder {
     Xz(Box<XzPlan>),
     Lzma(LzmaOptions),
+    Raw(RawOptions),
 }
 
 /// A filter chain for .xz: the filters before LZMA2, and LZMA2.
@@ -87,6 +88,53 @@ pub struct XzPlan {
     /// Single-threaded `--block-size` with `--block-list`: Blocks longer
     /// than this are split (xz's `split_block()`).
     pub split: u64,
+}
+
+/// The chain for `--format=raw`, compressing or decompressing: the custom
+/// chain (LZMA1 or LZMA2 last), or the preset with xz's warning. Raw
+/// settings are never adjusted to the memory limit.
+pub fn raw_options(ctx: &Ctx, hw: &Hardware) -> Result<RawOptions, String> {
+    let o = &ctx.o;
+    let unsupported = || "Unsupported filter chain or filter options".to_owned();
+    let raw = match o.chain.split_last() {
+        None => {
+            ctx.note(V_WARNING, "Using a preset in raw mode is discouraged.");
+            ctx.note(
+                V_WARNING,
+                "The exact options of the presets may vary between software versions.",
+            );
+            let preset = o.preset | if o.extreme { PRESET_EXTREME } else { 0 };
+            RawOptions::preset(RawMethod::Lzma2, preset).map_err(|e| e.to_string())?
+        }
+        Some((last, first)) => {
+            let (method, lzma) = match last {
+                Item::Lzma1(l) => (RawMethod::Lzma1, l),
+                Item::Lzma2(l) => (RawMethod::Lzma2, l),
+                _ => return Err(unsupported()),
+            };
+            let mut r = RawOptions::preset(method, 6).map_err(|e| e.to_string())?;
+            r.lzma = *lzma;
+            r.filters = first
+                .iter()
+                .map(|i| match *i {
+                    Item::Bcj(kind, start_offset) => Ok(Filter::Bcj { kind, start_offset }),
+                    Item::Delta(distance) => Ok(Filter::Delta { distance }),
+                    _ => Err(unsupported()),
+                })
+                .collect::<Result<_, _>>()?;
+            r
+        }
+    };
+    let (usage, limit) = if o.mode == crate::args::Mode::Compress {
+        let u = raw.encoder_memusage().map_err(|_| unsupported())?;
+        (u, hw.bytes(o.memlimit_compress))
+    } else {
+        (raw.decoder_memusage(), hw.bytes(o.memlimit_decompress))
+    };
+    if limit.is_some_and(|l| usage > l) {
+        return Err(too_small(usage, limit));
+    }
+    Ok(raw)
 }
 
 /// A custom chain for .xz (`lzma_validate_chain()`: Delta and BCJ
@@ -125,6 +173,9 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
     let limit = hw.bytes(o.memlimit_compress);
     if o.format == Format::Lzip {
         return Err("Compression of lzip files (.lz) is not supported".into());
+    }
+    if o.format == Format::Raw {
+        return raw_options(ctx, hw).map(Encoder::Raw);
     }
     let unsupported = || "Unsupported filter chain or filter options".to_owned();
     if o.format == Format::Lzma {
@@ -444,11 +495,99 @@ pub fn compress(
                 XzWriter::try_finish,
             )
         }
+        Encoder::Raw(opts) => compress_raw(opts, input, output, meter),
         Encoder::Lzma(lzma) => {
             let mut w =
                 LzmaWriter::with_options(output, *lzma).map_err(|e| Failure::Coder(e, 0))?;
             let progress = |w: &LzmaWriter<_>| (w.total_in(), w.total_out());
             run(&mut w, input, meter, progress, LzmaWriter::try_finish)
+        }
+    }
+}
+
+/// Compresses to a raw stream with [`RawEncoder`].
+fn compress_raw(
+    opts: &RawOptions,
+    input: &mut dyn Read,
+    output: &mut dyn Write,
+    meter: &mut Meter,
+) -> Result<(), Failure> {
+    let coder = |e| Failure::Coder(e, 0);
+    let mut enc = RawEncoder::with_options(opts).map_err(coder)?;
+    let mut inbuf = vec![0u8; BUF_SIZE];
+    let mut outbuf = vec![0u8; BUF_SIZE];
+    let (mut total_in, mut total_out) = (0u64, 0u64);
+    loop {
+        let (n, eof) = read_full(input, &mut inbuf)?;
+        let action = if eof { Action::Finish } else { Action::Run };
+        let mut start = 0;
+        loop {
+            let (used, written, status) = enc
+                .encode(&inbuf[start..n], &mut outbuf, action)
+                .map_err(coder)?;
+            start += used;
+            total_in += used as u64;
+            total_out += written as u64;
+            output
+                .write_all(&outbuf[..written])
+                .map_err(Failure::Write)?;
+            meter.tick((total_in, total_out));
+            if status == Status::StreamEnd {
+                return Ok(());
+            }
+            if !eof && start == n && written < outbuf.len() {
+                break;
+            }
+        }
+    }
+}
+
+/// Decompresses a raw stream with [`RawDecoder`] (`lzma_raw_decoder()`);
+/// data after the end of the stream is an error, as in xz.
+pub fn decompress_raw(
+    opts: &RawOptions,
+    input: &mut dyn Read,
+    mut output: Option<&mut dyn Write>,
+    meter: &mut Meter,
+) -> Result<(), Failure> {
+    let coder = |e| Failure::Coder(e, 0);
+    let mut dec = RawDecoder::with_options(opts).map_err(coder)?;
+    let mut inbuf = vec![0u8; BUF_SIZE];
+    let mut outbuf = vec![0u8; BUF_SIZE];
+    let (mut total_in, mut total_out) = (0u64, 0u64);
+    loop {
+        let (n, eof) = read_full(input, &mut inbuf)?;
+        let mut start = 0;
+        loop {
+            let (used, written, status) = dec
+                .decode(&inbuf[start..n], &mut outbuf, eof)
+                .map_err(coder)?;
+            start += used;
+            total_in += used as u64;
+            total_out += written as u64;
+            if let Some(out) = output.as_deref_mut() {
+                out.write_all(&outbuf[..written]).map_err(Failure::Write)?;
+            }
+            meter.tick((total_in, total_out));
+            if status == Status::StreamEnd {
+                // Only the end of the input may follow.
+                let rest = if start < n {
+                    1
+                } else {
+                    read_full(input, &mut inbuf[..1])?.0
+                };
+                return if rest == 0 {
+                    Ok(())
+                } else {
+                    Err(coder(xz_native::Error::Data))
+                };
+            }
+            if start == n && written < outbuf.len() {
+                if eof {
+                    return Err(coder(xz_native::Error::Truncated));
+                }
+                break;
+            }
         }
     }
 }
@@ -624,6 +763,7 @@ pub fn decompress(
         Format::Xz => Box::new(XzReader::with_options(r, opts)),
         Format::Lzma => Box::new(LzmaReader::with_options(r, opts)),
         Format::Lzip => Box::new(LzipReader::with_options(r, opts)),
+        Format::Raw => unreachable!("raw data goes to decompress_raw"),
     };
     let mut buf = vec![0u8; BUF_SIZE];
     loop {
