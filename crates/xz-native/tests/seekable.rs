@@ -976,3 +976,43 @@ fn block_larger_than_the_buffer() {
         assert_eq!(read_n(&mut x, 10), data[p..p + 10], "{pos}");
     }
 }
+
+/// An Index that gives the first Block 4 bytes less than it has (and the
+/// second 4 more, so the layout still adds up): the reader stops at the
+/// Index's size with `Error::Data`, it doesn't read on into the rest.
+#[test]
+fn block_shorter_in_the_index_than_in_the_file() {
+    let data = text(200_000, 25);
+    let opts = xz_native::EncoderOptions::preset(1)
+        .unwrap()
+        .block_size(100_000);
+    let mut c = xz_native::compress_with_options(&data, &opts).unwrap();
+    let footer = c.len() - 12;
+    let backward = (u32::from_le_bytes(c[footer + 4..footer + 8].try_into().unwrap()) + 1) * 4;
+    let index = footer - backward as usize;
+    // Indicator, record count 2, then (Unpadded Size, Uncompressed Size)
+    // twice; the sizes here take 3 bytes each.
+    assert_eq!(&c[index..index + 2], &[0x00, 0x02]);
+    let vli = |b: &[u8]| -> u64 {
+        b.iter()
+            .enumerate()
+            .map(|(i, &x)| u64::from(x & 0x7F) << (7 * i))
+            .sum()
+    };
+    let put = |b: &mut [u8], mut v: u64| {
+        for (i, x) in b.iter_mut().enumerate() {
+            *x = (v & 0x7F) as u8 | if i + 1 < 3 { 0x80 } else { 0 };
+            v >>= 7;
+        }
+    };
+    let (u1, u2) = (index + 2, index + 8);
+    assert!(c[u1 + 2] & 0x80 == 0 && c[u2 + 2] & 0x80 == 0);
+    let (a, b) = (vli(&c[u1..u1 + 3]), vli(&c[u2..u2 + 3]));
+    put(&mut c[u1..u1 + 3], a - 4);
+    put(&mut c[u2..u2 + 3], b + 4);
+    let crc = xz_native::crc32(&c[index..footer - 4], 0);
+    c[footer - 4..footer].copy_from_slice(&crc.to_le_bytes());
+    let mut r = open(&c).unwrap();
+    let mut out = vec![0u8; 100_000];
+    assert_eq!(xz_error(r.read_exact(&mut out).unwrap_err()), Error::Data);
+}
