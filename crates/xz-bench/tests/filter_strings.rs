@@ -24,6 +24,12 @@ unsafe extern "C" {
         flags: u32,
         allocator: *const sys::lzma_allocator,
     ) -> *const c_char;
+    fn lzma_str_list_filters(
+        out: *mut *mut c_char,
+        filter_id: u64,
+        flags: u32,
+        allocator: *const sys::lzma_allocator,
+    ) -> sys::lzma_ret;
     fn lzma_str_from_filters(
         out: *mut *mut c_char,
         filters: *const sys::lzma_filter,
@@ -253,5 +259,46 @@ fn random_strings_match_liblzma() {
             s.push_str(PIECES[next(PIECES.len())]);
         }
         check(&s);
+    }
+}
+
+/// `lzma_str_list_filters()` for every filter, all filters and an unknown
+/// one, in every layout.
+#[test]
+fn filter_lists_match_liblzma() {
+    let mut ids: Vec<Option<u64>> = vec![None, Some(0x22), Some(0x4000_0000_0000_0001)];
+    ids.extend([0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x21].map(Some));
+    for id in ids {
+        for all in [false, true] {
+            for (o, f) in [
+                (0, FilterOptions::Names),
+                (LZMA_STR_ENCODER, FilterOptions::Encoder),
+                (LZMA_STR_DECODER, FilterOptions::Decoder),
+            ] {
+                for getopt in [false, true] {
+                    let flags = o
+                        | if getopt { LZMA_STR_GETOPT_LONG } else { 0 }
+                        | if all { LZMA_STR_ALL_FILTERS } else { 0 };
+                    let mut out: *mut c_char = std::ptr::null_mut();
+                    // SAFETY: liblzma writes a NUL-terminated string (leaked).
+                    let r = unsafe {
+                        lzma_str_list_filters(
+                            &mut out,
+                            id.unwrap_or(u64::MAX),
+                            flags,
+                            std::ptr::null(),
+                        )
+                    };
+                    let theirs = (r == sys::LZMA_OK).then(|| {
+                        // SAFETY: as above.
+                        unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_owned()
+                    });
+                    let ours = FilterStringFormat::new(f)
+                        .getopt_long(getopt)
+                        .list_filters(id, all);
+                    assert_eq!(ours, theirs, "{id:?} flags={flags:#x}");
+                }
+            }
+        }
     }
 }

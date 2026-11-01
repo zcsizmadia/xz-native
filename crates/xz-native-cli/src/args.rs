@@ -240,6 +240,7 @@ pub enum Action {
     LongHelp,
     Version,
     InfoMemory,
+    FiltersHelp,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -304,6 +305,7 @@ const LONG: &[(&str, HasArg, &str)] = &[
     ("files", HasArg::Optional, "files"),
     ("files0", HasArg::Optional, "files0"),
     ("info-memory", HasArg::No, "info-memory"),
+    ("filters-help", HasArg::No, "filters-help"),
     ("lzma1", HasArg::Optional, "lzma1"),
     ("lzma2", HasArg::Optional, "lzma2"),
     ("x86", HasArg::Optional, "x86"),
@@ -471,7 +473,7 @@ fn apply(key: &str, value: Option<&str>, o: &mut Opts, action: &mut Action) -> R
             o.preset = 6;
             o.extreme = false;
         }
-        k if k.starts_with("filters") => {
+        k if k.len() == 8 && k.starts_with("filters") => {
             let n = (k.as_bytes()[7] - b'0') as usize;
             o.block_chains[n] = Some(filters_str(v(), n)?);
         }
@@ -496,6 +498,7 @@ fn apply(key: &str, value: Option<&str>, o: &mut Opts, action: &mut Action) -> R
         "h" => *action = Action::Help,
         "H" => *action = Action::LongHelp,
         "info-memory" => *action = Action::InfoMemory,
+        "filters-help" => *action = Action::FiltersHelp,
         "V" => *action = Action::Version,
         "single-stream" => o.single_stream = true,
         "no-sparse" => o.no_sparse = true,

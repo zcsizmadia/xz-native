@@ -18,6 +18,7 @@ mod sparse;
 use args::{Action, Opts, V_ERROR, V_WARNING};
 use std::ffi::OsString;
 use std::process::ExitCode;
+use xz_native::{FilterOptions, FilterStringFormat};
 
 /// Like xz's `E_SUCCESS`, `E_ERROR` and `E_WARNING`.
 pub const E_ERROR: u8 = 1;
@@ -93,6 +94,23 @@ fn main() -> ExitCode {
         Ok(Action::Run) => {}
         Ok(action @ (Action::Help | Action::LongHelp)) => {
             print!("{}", help(action == Action::LongHelp));
+            return ExitCode::SUCCESS;
+        }
+        Ok(Action::FiltersHelp) => {
+            // `message_filters_help()`.
+            if !o.robot {
+                print!(
+                    "Filter chains are set using the --filters=FILTERS or --filters1=FILTERS ...
+--filters9=FILTERS options. Each filter in the chain can be separated by
+spaces or '--'. Alternatively a preset <0-9>[e] can be specified instead of
+a filter chain.
+
+The supported filters and their options are:
+"
+                );
+            }
+            let encoder = FilterStringFormat::new(FilterOptions::Encoder);
+            println!("{}", encoder.list_filters(None, false).unwrap_or_default());
             return ExitCode::SUCCESS;
         }
         Ok(Action::InfoMemory) => {
@@ -206,10 +224,14 @@ Basic file format and compression options:
                       would block, all pending data is flushed out
 
 Custom filter chain for compression (alternative to using presets):
-      --filters=FILTERS
-                      set the filter chain with a liblzma filter string
-      --filters1=FILTERS ... --filters9=FILTERS
-                      set additional filter chains for --block-list
+  --filters=FILTERS   set the filter chain using the liblzma filter string
+                      syntax; use --filters-help for more information
+  --filters1=FILTERS ... --filters9=FILTERS
+                      set additional filter chains using the liblzma filter
+                      string syntax to use with --block-list
+  --filters-help      display more information about the liblzma filter string
+                      syntax and exit
+
   --lzma1[=OPTS]      LZMA1 or LZMA2; OPTS is a comma-separated list of zero or
   --lzma2[=OPTS]      more of the following options (valid values; default):
                         preset=PRE reset options to a preset (0-9[e])

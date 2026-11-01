@@ -86,7 +86,90 @@ impl FilterStringFormat {
             ..Self::default()
         }
     }
+
+    /// The supported filters, like liblzma's `lzma_str_list_filters()`
+    /// (what `xz --filters-help` shows): with [`FilterOptions::Names`]
+    /// the names separated by spaces, otherwise a line per filter with
+    /// the options and their values, such as `delta:dist=<1-256>` (for
+    /// the decoder, the options it needs, after the LZMA preset).
+    /// `getopt_long` writes `--delta=dist=<1-256>`; `no_spaces` doesn't
+    /// apply.
+    ///
+    /// `id` limits the list to one filter, and is None for an unknown
+    /// filter; without `id`, `all_filters` adds LZMA1, which isn't an .xz
+    /// filter (`LZMA_STR_ALL_FILTERS`).
+    ///
+    /// ```
+    /// use xz_native::{FilterOptions, FilterStringFormat};
+    ///
+    /// let names = FilterStringFormat::new(FilterOptions::Names);
+    /// assert_eq!(
+    ///     names.list_filters(None, false).unwrap(),
+    ///     "lzma2 x86 arm armthumb arm64 riscv powerpc ia64 sparc delta"
+    /// );
+    /// let encoder = FilterStringFormat::new(FilterOptions::Encoder).getopt_long(true);
+    /// assert_eq!(
+    ///     encoder.list_filters(Some(0x03), false).unwrap(),
+    ///     "--delta=dist=<1-256>"
+    /// );
+    /// ```
+    pub fn list_filters(&self, id: Option<u64>, all_filters: bool) -> Option<String> {
+        const LZMA: [&str; 9] = [
+            "preset=<0-9[e]>",
+            "dict=<4KiB-1536MiB>",
+            "lc=<0-4>",
+            "lp=<0-4>",
+            "pb=<0-4>",
+            "mode=<fast|normal>",
+            "nice=<2-273>",
+            "mf=<hc3|hc4|bt2|bt3|bt4>",
+            "depth=<0-4294967295>",
+        ];
+        const START: [&str; 1] = ["start=<0-4294967295>"];
+        let mut table: Vec<(&str, u64, &[&str], usize)> = Vec::with_capacity(11);
+        table.push(("lzma1", FILTER_LZMA1, &LZMA, 5));
+        table.push(("lzma2", super::FILTER_LZMA2, &LZMA, 2));
+        for (name, kind) in NAMES_BCJ {
+            table.push((name, kind.filter_id(), &START, 1));
+        }
+        table.push(("delta", super::FILTER_DELTA, &["dist=<1-256>"], 1));
+
+        let (filter_delim, opt_delim) = match (self.options, self.getopt_long) {
+            (FilterOptions::Names, _) => (" ", ""),
+            (_, true) => ("\n", "="),
+            (_, false) => ("\n", ":"),
+        };
+        let mut out = String::new();
+        let mut any = false;
+        for (name, filter_id, opts, decoder_opts) in table {
+            if id.is_some_and(|i| i != filter_id)
+                || (id.is_none() && !all_filters && filter_id == FILTER_LZMA1)
+            {
+                continue;
+            }
+            if any {
+                out.push_str(filter_delim);
+            }
+            any = true;
+            if self.getopt_long {
+                out.push_str("--");
+            }
+            out.push_str(name);
+            let n = match self.options {
+                FilterOptions::Names => 0,
+                FilterOptions::Encoder => opts.len(),
+                FilterOptions::Decoder => decoder_opts,
+            };
+            // With no options, both are empty.
+            out.push_str(opt_delim);
+            out.push_str(&opts[..n].join(","));
+        }
+        any.then_some(out)
+    }
 }
+
+/// LZMA1's filter ID; IDs from 2^62 aren't .xz filters.
+const FILTER_LZMA1: u64 = 0x4000_0000_0000_0001;
 
 const NAMES_BCJ: [(&str, BcjKind); 8] = [
     ("x86", BcjKind::X86),
