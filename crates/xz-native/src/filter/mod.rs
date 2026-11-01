@@ -1,9 +1,11 @@
 //! Filters and filter chains.
 
 pub(crate) mod bcj;
+mod string;
 
 use bcj::Bcj;
 pub use bcj::BcjKind;
+pub use string::{FilterOptions, FilterStringError, FilterStringFormat};
 
 use crate::error::{Error, Result};
 use crate::lzma::lzma2::Lzma2Decoder;

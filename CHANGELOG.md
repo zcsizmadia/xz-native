@@ -9,6 +9,13 @@ minor version may change the API.
 ## [Unreleased]
 
 ### Added
+- Filter strings like liblzma's `lzma_str_to_filters()` and
+  `lzma_str_from_filters()`: `RawOptions::from_filter_str` (and
+  `from_xz_filter_str` without LZMA1) parse the `xz --filters=` syntax with
+  liblzma's error messages and positions (`FilterStringError`), and
+  `RawOptions::to_filter_string` writes a chain with the options for the
+  encoder, the decoder or none, in liblzma's layouts
+  (`FilterStringFormat`) (#101).
 - Changing filters mid-stream like liblzma's `lzma_filters_update()`:
   `XzEncoder::update_filters` sets the filter chain and LZMA2 options for
   the next Block (after a full flush or barrier, or before any input),

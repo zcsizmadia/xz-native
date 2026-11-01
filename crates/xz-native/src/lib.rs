@@ -124,7 +124,7 @@ pub use alone::{LzmaDecoder, LzmaEncoder};
 pub use auto::{AutoDecoder, Format};
 pub use check::{Check, Sha256, crc32, crc64};
 pub use error::{Error, Result};
-pub use filter::{BcjKind, Filter};
+pub use filter::{BcjKind, Filter, FilterOptions, FilterStringError, FilterStringFormat};
 #[cfg(feature = "std")]
 pub use io::{AutoReader, LzipReader, LzmaReader, LzmaWriter, XzReader, XzWriter};
 pub use lzip::LzipDecoder;
