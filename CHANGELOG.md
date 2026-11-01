@@ -44,6 +44,8 @@ minor version may change the API.
   and reads them (#123).
 - `xz-native --files`/`--files0`: file names from a file or standard input,
   newline or NUL separated, with xz's rules and errors (#123).
+- `xz-native --info-memory` (and with `--robot`), and `-h`/`-H` split into
+  the basic and the long help like xz's (#123).
 
 ## [0.3.0+xz.5.8.4]
 
