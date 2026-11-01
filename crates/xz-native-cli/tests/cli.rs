@@ -769,4 +769,34 @@ fn sigusr1_prints_progress() {
     let out = child.wait_with_output().unwrap();
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("big (1/1)") && err.contains(" = "), "{err}");
+#[test]
+fn info_memory_and_help() {
+    for args in [
+        &["--info-memory"][..],
+        &["-M", "50%", "--info-memory"],
+        &[
+            "--memlimit-decompress=1GiB",
+            "--memlimit-mt-decompress=2GiB",
+            "--info-memory",
+        ],
+        &["--robot", "--info-memory"],
+        // It acts at once, so later options don't matter.
+        &["--info-memory", "--bogus"],
+    ] {
+        let a = in_c_locale(bin(), Path::new("."), args);
+        assert_eq!(status(&a), 0, "{args:?}");
+        let Ok(_) = Command::new("xz").arg("--version").output() else {
+            continue;
+        };
+        let b = in_c_locale(Command::new("xz"), Path::new("."), args);
+        let text = |o: &Output| String::from_utf8_lossy(&o.stdout).replace('\r', "");
+        // The RAM and thread count are the machine's; the layout and the
+        // limits must agree.
+        assert_eq!(text(&a), text(&b), "{args:?}");
+    }
+    let short = ours(&["-h"], b"");
+    let long = ours(&["-H"], b"");
+    let text = |o: &Output| String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(!text(&short).contains("--lzma2") && text(&long).contains("--lzma2"));
+    assert!(text(&long).contains("--info-memory"));
 }

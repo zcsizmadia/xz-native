@@ -48,6 +48,8 @@ minor version may change the API.
   chunk, removes the partial output and ends with the signal; SIGUSR1 (and
   SIGINFO on the BSDs and macOS) prints the progress. The CLI uses
   `signal-hook` for this; the library still has no dependencies (#123).
+- `xz-native --info-memory` (and with `--robot`), and `-h`/`-H` split into
+  the basic and the long help like xz's (#123).
 
 ## [0.3.0+xz.5.8.4]
 

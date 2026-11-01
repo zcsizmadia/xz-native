@@ -29,6 +29,57 @@ pub struct Hardware {
 }
 
 impl Hardware {
+    /// `--info-memory` (`hardware_memlimit_show()`): the RAM, the CPU threads
+    /// and the memory limits, or with `--robot` the same as numbers.
+    pub fn info_memory(&self, o: &crate::args::Opts) -> String {
+        let compress = self.bytes(o.memlimit_compress).unwrap_or(0);
+        let decompress = self.bytes(o.memlimit_decompress).unwrap_or(0);
+        // `hardware_memlimit_mtdec_get()`.
+        let mut mtdec = self
+            .bytes(o.memlimit_mt_decompress)
+            .unwrap_or(self.memlimit_mt_default);
+        if decompress != 0 {
+            mtdec = mtdec.min(decompress);
+        }
+        if o.robot {
+            return format!(
+                "{}	{compress}	{decompress}	{mtdec}	{}	{}
+",
+                self.total_ram, self.memlimit_mt_default, self.cpus
+            );
+        }
+        // `memlimit_show()`.
+        let show = |label: &str, v: u64| {
+            let v = if v == 0 || v == u64::MAX {
+                "Disabled".to_owned()
+            } else {
+                format!("{} MiB ({} B)", mib(v), group(v))
+            };
+            format!(
+                "  {label:<32}  {v}
+"
+            )
+        };
+        let mut s = String::from(
+            "Hardware information:
+",
+        );
+        s += &show("Amount of physical memory (RAM):", self.total_ram);
+        s += &format!(
+            "  {:<32}  {}
+
+",
+            "Number of processor threads:", self.cpus
+        );
+        s += "Memory usage limits:
+";
+        s += &show("Compression:", compress);
+        s += &show("Decompression:", decompress);
+        s += &show("Multi-threaded decompression:", mtdec);
+        s += &show("Default for -T0:", self.memlimit_mt_default);
+        s
+    }
+
     pub fn detect() -> Self {
         let total_ram = crate::ram::total().unwrap_or(ASSUME_RAM * MIB);
         let mut memlimit_mt_default = total_ram / 4;
