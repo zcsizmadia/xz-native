@@ -160,10 +160,9 @@ impl FilterStringFormat {
                 FilterOptions::Encoder => opts.len(),
                 FilterOptions::Decoder => decoder_opts,
             };
-            if n > 0 {
-                out.push_str(opt_delim);
-                out.push_str(&opts[..n].join(","));
-            }
+            // With no options, both are empty.
+            out.push_str(opt_delim);
+            out.push_str(&opts[..n].join(","));
         }
         any.then_some(out)
     }
