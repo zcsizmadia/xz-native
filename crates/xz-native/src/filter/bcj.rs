@@ -40,6 +40,33 @@ impl BcjKind {
         }
     }
 
+    /// Converts `buf` in place for compression, like liblzma's one-shot
+    /// `lzma_bcj_x86_encode()`, `lzma_bcj_arm64_encode()` and
+    /// `lzma_bcj_riscv_encode()` (here for every instruction set).
+    /// `start_offset` is the position of `buf[0]` in the executable.
+    /// Returns the bytes converted: the last few may be left as they are,
+    /// because an instruction there could continue past the end.
+    ///
+    /// ```
+    /// use xz_native::BcjKind;
+    ///
+    /// // An x86 relative call to offset 0x1000, at offset 0x100.
+    /// let mut code = [0xE8, 0xFB, 0x0E, 0x00, 0x00, 0x90, 0x90, 0x90, 0x90, 0x90];
+    /// let n = BcjKind::X86.encode(0x100, &mut code);
+    /// assert_eq!(code[..5], [0xE8, 0x00, 0x10, 0x00, 0x00]); // absolute
+    /// assert_eq!(BcjKind::X86.decode(0x100, &mut code), n);
+    /// assert_eq!(code[..5], [0xE8, 0xFB, 0x0E, 0x00, 0x00]);
+    /// ```
+    pub fn encode(self, start_offset: u32, buf: &mut [u8]) -> usize {
+        Bcj::new(self, true).code(start_offset, buf)
+    }
+
+    /// Undoes [`encode`](Self::encode), like liblzma's
+    /// `lzma_bcj_x86_decode()` and the others.
+    pub fn decode(self, start_offset: u32, buf: &mut [u8]) -> usize {
+        Bcj::new(self, false).code(start_offset, buf)
+    }
+
     pub(crate) fn from_filter_id(id: u64) -> Option<Self> {
         Some(match id {
             0x04 => BcjKind::X86,

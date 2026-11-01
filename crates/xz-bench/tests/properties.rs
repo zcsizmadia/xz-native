@@ -299,3 +299,73 @@ fn filter_flags() {
         }
     }
 }
+
+/// The one-shot BCJ converters against liblzma's (x86, ARM64 and RISC-V
+/// have them), on code-like data at several offsets, and the version.
+#[test]
+fn one_shot_bcj_and_version() {
+    assert_eq!(xz_native::XZ_VERSION_NUMBER, unsafe {
+        sys::lzma_version_number()
+    });
+    assert_eq!(
+        format!(
+            "{}.{}.{}",
+            sys::LZMA_VERSION_MAJOR,
+            sys::LZMA_VERSION_MINOR,
+            sys::LZMA_VERSION_PATCH
+        ),
+        xz_native::XZ_VERSION
+    );
+    let mut r = 0x1234_5678_9abc_def1u64;
+    let data: Vec<u8> = (0..20_000)
+        .map(|i| {
+            r ^= r << 13;
+            r ^= r >> 7;
+            r ^= r << 17;
+            // Plenty of x86 call/jump opcodes and ARM64/RISC-V patterns.
+            match i % 7 {
+                0 => 0xE8,
+                3 => 0x94,
+                5 => 0x17,
+                _ => r as u8,
+            }
+        })
+        .collect();
+    type CFn = unsafe extern "C" fn(u32, *mut u8, usize) -> usize;
+    let cases: [(BcjKind, CFn, CFn); 3] = [
+        (
+            BcjKind::X86,
+            sys::lzma_bcj_x86_encode,
+            sys::lzma_bcj_x86_decode,
+        ),
+        (
+            BcjKind::Arm64,
+            sys::lzma_bcj_arm64_encode,
+            sys::lzma_bcj_arm64_decode,
+        ),
+        (
+            BcjKind::RiscV,
+            sys::lzma_bcj_riscv_encode,
+            sys::lzma_bcj_riscv_decode,
+        ),
+    ];
+    for (kind, c_enc, c_dec) in cases {
+        for start in [0u32, 2, 4096, 0xFFFF_FFF0] {
+            for len in [0, 1, 7, 100, data.len()] {
+                let mut ours = data[..len].to_vec();
+                let mut theirs = ours.clone();
+                let n = kind.encode(start, &mut ours);
+                // SAFETY: `theirs` is valid for `len` bytes.
+                let m = unsafe { c_enc(start, theirs.as_mut_ptr(), len) };
+                assert_eq!((n, &ours), (m, &theirs), "{kind:?} enc {start} {len}");
+                if len == data.len() {
+                    assert!(ours != data, "{kind:?}: nothing converted");
+                }
+                let n = kind.decode(start, &mut ours);
+                // SAFETY: as above.
+                let m = unsafe { c_dec(start, theirs.as_mut_ptr(), len) };
+                assert_eq!((n, &ours), (m, &theirs), "{kind:?} dec {start} {len}");
+            }
+        }
+    }
+}

@@ -146,3 +146,13 @@ pub use raw::{RawDecoder, RawEncoder, RawMethod, RawOptions};
 pub use seek::{BlockDetails, BlockInfo, StreamInfo, XzSeekableReader};
 pub use xz::encoder::{Action, XzEncoder};
 pub use xz::stream::{DecoderOptions, Status, XzDecoder};
+
+/// The xz/liblzma release this crate matches, as liblzma's
+/// `LZMA_VERSION_STRING` (the crate version carries it as build metadata,
+/// `+xz.5.8.4`).
+pub const XZ_VERSION: &str = "5.8.4";
+
+/// [`XZ_VERSION`] as liblzma's `LZMA_VERSION` number
+/// (`major * 10000000 + minor * 10000 + patch * 10 + stability`, 2 for
+/// stable), as `xz --robot --version` and `.xz` tools print it.
+pub const XZ_VERSION_NUMBER: u32 = 50_080_042;
