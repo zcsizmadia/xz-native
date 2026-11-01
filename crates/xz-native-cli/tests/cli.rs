@@ -492,3 +492,71 @@ fn filter_chains_match_xz() {
         );
     }
 }
+
+#[test]
+fn block_lists_match_xz() {
+    let data = sample(2 << 20, 9);
+    for args in [
+        &["-c", "-T1", "--block-list=100000,200000,300000"][..],
+        &["-c", "-T1", "--block-list=100000,200000,0"],
+        &["-c", "-T1", "--block-list=100000,,"],
+        &[
+            "-c",
+            "-T1",
+            "--block-list=150000,700000",
+            "--block-size=300000",
+        ],
+        &["-c", "--block-list=100000,200000,300000"],
+        &["-c", "-T3", "--block-list=1MiB,500KiB"],
+        &["-c", "-T3", "--block-list=100000", "--block-size=50000"],
+        // Filter chains per Block, with update_filters between them.
+        &[
+            "-c",
+            "-T1",
+            "--filters1=x86 lzma2:preset=1",
+            "--block-list=1:100000,200000,1:50000,0",
+        ],
+        &[
+            "-c",
+            "-T1",
+            "--filters1=delta:dist=4 lzma2:dict=1MiB,lc=0",
+            "--filters2=arm64 lzma2:preset=0",
+            "--block-list=2:70000,1:90000,100000",
+        ],
+        &[
+            "-c",
+            "--filters1=lzma2:preset=1",
+            "--filters2=x86 lzma2:dict=2MiB",
+            "--block-list=1:500000,2:300000,1:1MiB,0",
+        ],
+        &["-c", "-T2", "--filters3=6e", "--block-list=3:400000,800000"],
+        // Every chain over the memory limit gets a smaller dictionary.
+        &[
+            "-c",
+            "-T1",
+            "-9",
+            "--memlimit-compress=150MiB",
+            "--filters1=lzma2:preset=8",
+            "--block-list=1:500000,0",
+        ],
+    ] {
+        same_as_xz(args, &data);
+    }
+    for args in [
+        &["-c", "-T1", "--block-list=1:100000"][..],
+        &["-c", "-T1", "--block-list=1:"],
+        &["-c", "-T1", "--block-list=,100"],
+        &["-c", "-T1", "--block-list=0,100"],
+        &["-c", "-T1", "--filters1=lzma1", "--block-list=1:100"],
+        &["-c", "--format=lzma", "--block-list=100"],
+    ] {
+        let a = ours(args, b"data");
+        let Some(b) = xz(args, b"data") else { return };
+        assert_eq!(status(&a), status(&b), "{args:?}");
+        assert_eq!(
+            stderr(&a).replace("xz-native:", "xz:"),
+            stderr(&b).replace('\r', ""),
+            "{args:?}"
+        );
+    }
+}

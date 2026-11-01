@@ -165,8 +165,15 @@ With no FILE, or when FILE is -, read standard input.
       --filters=FILTERS
                       set the filter chain with a liblzma filter string
 
-Not supported yet: --format=raw, --filters1..9,
---block-list, --files.
+      --filters1=FILTERS ... --filters9=FILTERS
+                      filter chains for --block-list
+      --block-list=BLOCKS
+                      start a new .xz block after the given comma-separated
+                      intervals of uncompressed data; optionally, specify a
+                      filter chain number (0-9) followed by a ':' before the
+                      uncompressed data size
+
+Not supported yet: --format=raw, --files.
 "
     )
 }
