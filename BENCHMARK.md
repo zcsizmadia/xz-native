@@ -51,6 +51,32 @@ multithreaded tables were measured against the `liblzma-sys` build only.
 
 [#86]: https://github.com/zcsizmadia/xz-native/pull/86
 
+### Generic x86-64 code
+
+Both libraries are compiled for generic x86-64 (no `-C target-cpu`, no
+`-march`), as users get them by default; only the checksums pick CPU
+instructions at run time (CLMUL, VPCLMULQDQ, SHA). Built for the CPU on
+the EPYC (`RUSTFLAGS="-C target-cpu=native"` and liblzma with
+`-march=native`, both Zen 3), each gets +1-2% at decoding and +0.3-2% at
+encoding, so the comparison doesn't change (`profile_decode` and
+`profile_encode`, three interleaved runs, 2026-11-01, MiB/s):
+
+| | Generic: xz-native / liblzma | | Native: xz-native / liblzma | |
+|---|---:|---:|---:|---:|
+| decode text -1 | 121.1 / 122.2 | 0.99x | 123.5 / 124.2 | 0.99x |
+| decode text -6 | 131.1 / 131.5 | 1.00x | 133.8 / 134.3 | 1.00x |
+| decode binary -1 | 97.5 / 96.4 | 1.01x | 98.7 / 97.7 | 1.01x |
+| decode binary -6 | 178.8 / 174.6 | 1.02x | 180.6 / 176.9 | 1.02x |
+| encode text -1 | 21.4 / 15.4 | 1.39x | 21.8 / 15.6 | 1.40x |
+| encode text -6 | 3.06 / 2.91 | 1.05x | 3.09 / 2.95 | 1.05x |
+| encode binary -1 | 18.8 / 13.9 | 1.35x | 19.1 / 14.0 | 1.37x |
+| encode binary -6 | 3.46 / 3.35 | 1.03x | 3.47 / 3.36 | 1.03x |
+
+The gain comes from LLVM's and GCC's Zen 3 tuning, not from newer
+instructions: xz-native built with `+bmi1,+bmi2,+lzcnt,+popcnt` (and with
+`+avx2,+fma,+movbe` on top) decodes within 0.2% of the generic build, so a
+run-time CPU check can't give it to a library.
+
 ## Data
 
 `xz_bench::datasets()` produces three synthetic inputs:
