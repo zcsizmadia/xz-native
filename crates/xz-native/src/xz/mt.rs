@@ -579,8 +579,11 @@ impl MtDecoder {
 
     /// Room in the budget for unused buffers.
     fn room(&self) -> u64 {
-        self.budget
-            .saturating_sub(self.in_flight_bytes + self.inputs.bytes + self.outputs.bytes)
+        let held = self
+            .in_flight_bytes
+            .saturating_add(self.inputs.bytes)
+            .saturating_add(self.outputs.bytes);
+        self.budget.saturating_sub(held)
     }
 
     /// Parses ahead and hands out Blocks while there is room.
@@ -670,7 +673,22 @@ impl MtDecoder {
                 }
             }
             Parse::Held(_, cost) => {
-                if self.in_flight >= self.max_blocks || self.in_flight_bytes + *cost > self.budget {
+                let fits = self
+                    .in_flight_bytes
+                    .checked_add(*cost)
+                    .is_some_and(|n| n <= self.budget);
+                if self.in_flight == 0 && !fits {
+                    // `set_memlimit` lowered the budget below the Block: with
+                    // nothing in flight it would never fit, so decode it here.
+                    let Parse::Held(hdr, _) = core::mem::replace(&mut self.parse, Parse::Blocked)
+                    else {
+                        unreachable!()
+                    };
+                    let dec = BlockDecoder::new(&hdr, check, &self.opts)?;
+                    self.queue.push_back(Item::Direct(Box::new(dec)));
+                    return Ok(true);
+                }
+                if self.in_flight >= self.max_blocks || !fits {
                     return Ok(false);
                 }
                 let Parse::Held(hdr, cost) = core::mem::replace(&mut self.parse, Parse::Done)
@@ -826,9 +844,7 @@ impl MtDecoder {
             self.pending -= 1;
             self.with_workers -= d.input.len() as u64;
             self.decoded += d.out.len() as u64;
-            let room = self
-                .budget
-                .saturating_sub(self.in_flight_bytes + self.inputs.bytes + self.outputs.bytes);
+            let room = self.room();
             self.inputs.give(d.input, room);
             let item = self
                 .queue

@@ -14,6 +14,13 @@ minor version may change the API.
   and `tell_unsupported_check`, which allowed four combinations for three
   behaviors. `Ignore` is the default, as before (#156).
 
+### Fixed
+- Threaded decoding: `set_memlimit` below the cost of a Block already
+  parsed ahead panicked (`assertion failed: paused`) once the Blocks in
+  flight were out; that Block is now decoded on the calling thread. Block
+  Headers whose sizes add up past `u64::MAX` (with an unlimited
+  `memlimit_threading`) overflowed the in-flight accounting (#156).
+
 ## [0.4.0+xz.5.8.4]
 
 Still compatible with xz/liblzma 5.8.4. New APIs that close the remaining
