@@ -156,6 +156,31 @@ fn meter(ctx: &Ctx, name: &str, (pos, files): (usize, usize)) -> Meter {
 
 /// Codes `input` to standard output (or nowhere when testing).
 fn code_to_stdout(ctx: &mut Ctx, job: &Job, name: &str, input: &mut dyn Read, meter: &mut Meter) {
+    // Holes in standard output too when it is a file, as in xz.
+    #[cfg(unix)]
+    if ctx.o.mode == Mode::Decompress
+        && !ctx.o.no_sparse
+        && let Some((file, flags)) = crate::sparse::stdout()
+    {
+        let mut w = BufWriter::with_capacity(1 << 16, Sparse::new(file));
+        let r = code(ctx, job, name, input, Some(&mut w), meter)
+            .and_then(|()| w.into_inner().map_err(|e| Failure::Write(e.into_error())))
+            .and_then(|s| s.finish().map_err(Failure::Write));
+        let ok = r.is_ok();
+        if let Err(f) = r {
+            report(ctx, job, name, f);
+        }
+        meter.finish(ok);
+        if let Some(flags) = flags
+            && let Err(e) = crate::sparse::restore_stdout(flags)
+        {
+            ctx.error(format!(
+                "Error restoring the O_APPEND flag to standard output: {}",
+                os_error(&e)
+            ));
+        }
+        return;
+    }
     let mut out = BufWriter::with_capacity(1 << 16, io::stdout().lock());
     let r = if ctx.o.mode == Mode::Test {
         code(ctx, job, name, input, None, meter)
