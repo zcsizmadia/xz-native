@@ -327,6 +327,9 @@ enum Item {
     /// A Block Header, of this size, over the memory limit: the error, and
     /// once the limit is raised, decoding goes on from that header.
     MemLimit(usize),
+    /// A Stream Header with a check type that can't be verified, with
+    /// [`DecoderOptions::tell_unsupported_check`](crate::DecoderOptions::tell_unsupported_check).
+    UnsupportedCheck,
     End,
 }
 
@@ -619,6 +622,10 @@ impl MtDecoder {
                 self.flags = Some(flags);
                 self.records = RecordHash::default();
                 self.parse = Parse::BlockStart;
+                if self.opts.tell_unsupported_check && matches!(flags.check, Check::Unsupported(_))
+                {
+                    self.queue.push_back(Item::UnsupportedCheck);
+                }
             }
             Parse::BlockStart => {
                 let b = *inner.fill_buf()?.first().ok_or(Error::Truncated)?;
@@ -965,6 +972,13 @@ impl MtDecoder {
                     self.parse = Parse::BlockHeader(*size);
                     self.queue.pop_front();
                     return Err(Error::MemLimit.into());
+                }
+                Item::UnsupportedCheck => {
+                    if written > 0 {
+                        break;
+                    }
+                    self.queue.pop_front();
+                    return Err(Error::UnsupportedCheck.into());
                 }
                 Item::End => break,
             }
