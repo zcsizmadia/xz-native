@@ -9,6 +9,7 @@ mod coder;
 mod files;
 mod list;
 mod num;
+mod progress;
 mod ram;
 
 use args::{Action, Opts, V_ERROR, V_WARNING};

@@ -560,3 +560,34 @@ fn block_lists_match_xz() {
         );
     }
 }
+
+/// `-v` with standard error not a terminal: a line per file at the end,
+/// as in xz (no speed and time for runs this short).
+#[test]
+fn verbose_matches_xz() {
+    let dir = tmpdir("verbose");
+    let data = sample(300_000, 10);
+    fs::write(dir.join("a"), &data).unwrap();
+    fs::write(dir.join("b"), b"x").unwrap();
+    fs::write(dir.join("e"), b"").unwrap();
+    fs::write(dir.join("a.xz"), ours(&["-c", "-T1"], &data).stdout).unwrap();
+    for args in [
+        &["-v", "-c", "-T1", "a", "b", "e"][..],
+        &["-dv", "-c", "a.xz"],
+        &["-tv", "a.xz", "missing"],
+        &["-v", "-c", "--format=lzma", "a"],
+    ] {
+        let o = in_c_locale(bin(), &dir, args);
+        assert!(stderr(&o).contains("a"), "{args:?}: {}", stderr(&o));
+        let theirs = match Command::new("xz").arg("--version").output() {
+            Ok(_) => in_c_locale(Command::new("xz"), &dir, args),
+            Err(_) => continue,
+        };
+        assert_eq!(
+            stderr(&o).replace("xz-native:", "xz:"),
+            stderr(&theirs).replace('\r', ""),
+            "{args:?}"
+        );
+        assert_eq!(status(&o), status(&theirs), "{args:?}");
+    }
+}

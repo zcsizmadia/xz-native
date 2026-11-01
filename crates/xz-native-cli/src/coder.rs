@@ -6,7 +6,8 @@ use crate::Ctx;
 use crate::args::{Format, Limit, Threads, V_DEBUG, V_WARNING};
 use crate::chain::Item;
 use crate::num::{int as group, mib};
-use std::cell::RefCell;
+use crate::progress::Meter;
+use std::cell::{Cell, RefCell};
 use std::io::{self, BufReader, Read, Write};
 use xz_native::{
     Action, AutoReader, Check, DecoderOptions, EncoderOptions, Filter, LzipReader, LzmaOptions,
@@ -405,11 +406,15 @@ pub fn compress(
     enc: &Encoder,
     input: &mut dyn Read,
     output: &mut dyn Write,
+    meter: &mut Meter,
 ) -> Result<(), Failure> {
+    /// Writes `input` to `w` and finishes it, reporting `progress(w)`.
     fn run<W: Write>(
-        mut w: W,
+        w: &mut W,
         input: &mut dyn Read,
-        finish: impl FnOnce(W) -> io::Result<()>,
+        meter: &mut Meter,
+        progress: impl Fn(&W) -> (u64, u64),
+        finish: impl FnOnce(&mut W) -> io::Result<()>,
     ) -> Result<(), Failure> {
         let mut buf = vec![0u8; BUF_SIZE];
         loop {
@@ -420,19 +425,30 @@ pub fn compress(
                 Err(e) => return Err(Failure::Read(e)),
             };
             w.write_all(&buf[..n]).map_err(write_failure)?;
+            meter.tick(progress(w));
         }
-        finish(w).map_err(write_failure)
+        finish(w).map_err(write_failure)?;
+        meter.tick(progress(w));
+        Ok(())
     }
     match enc {
-        Encoder::Xz(plan) if plan.list.is_some() => compress_blocks(plan, input, output),
+        Encoder::Xz(plan) if plan.list.is_some() => compress_blocks(plan, input, output, meter),
         Encoder::Xz(plan) => {
-            let w = XzWriter::with_options(output, plan.opts.clone())
+            let mut w = XzWriter::with_options(output, plan.opts.clone())
                 .map_err(|e| Failure::Coder(e, 0))?;
-            run(w, input, |w| w.finish().map(drop))
+            run(
+                &mut w,
+                input,
+                meter,
+                XzWriter::progress,
+                XzWriter::try_finish,
+            )
         }
         Encoder::Lzma(lzma) => {
-            let w = LzmaWriter::with_options(output, *lzma).map_err(|e| Failure::Coder(e, 0))?;
-            run(w, input, |w| w.finish().map(drop))
+            let mut w =
+                LzmaWriter::with_options(output, *lzma).map_err(|e| Failure::Coder(e, 0))?;
+            let progress = |w: &LzmaWriter<_>| (w.total_in(), w.total_out());
+            run(&mut w, input, meter, progress, LzmaWriter::try_finish)
         }
     }
 }
@@ -459,6 +475,7 @@ fn compress_blocks(
     plan: &XzPlan,
     input: &mut dyn Read,
     output: &mut dyn Write,
+    meter: &mut Meter,
 ) -> Result<(), Failure> {
     let list = plan.list.as_deref().expect("a Block list");
     let coder = |e| Failure::Coder(e, 0);
@@ -498,6 +515,7 @@ fn compress_blocks(
         output
             .write_all(&outbuf[..written])
             .map_err(Failure::Write)?;
+        meter.tick(enc.progress());
         if status != Status::StreamEnd {
             continue;
         }
@@ -537,29 +555,43 @@ fn write_failure(e: io::Error) -> Failure {
 /// A decoder of one of the formats, with its memory usage.
 trait Decoder: Read {
     fn memusage(&self) -> u64;
+    /// `(in, out)` like `lzma_get_progress()`, where the reader has it.
+    fn progress(&self) -> Option<(u64, u64)>;
 }
 
 macro_rules! decoder {
-    ($($t:ident),*) => {$(
+    ($($t:ident: $progress:expr),*) => {$(
         impl<R: io::BufRead> Decoder for $t<R> {
             fn memusage(&self) -> u64 {
                 $t::memusage(self)
             }
+
+            fn progress(&self) -> Option<(u64, u64)> {
+                $progress(self)
+            }
         }
     )*};
 }
-decoder!(AutoReader, XzReader, LzmaReader, LzipReader);
+decoder!(
+    AutoReader: |r: &AutoReader<R>| Some(r.progress()),
+    XzReader: |r: &XzReader<R>| Some(r.progress()),
+    LzmaReader: |_| None,
+    LzipReader: |_| None
+);
 
 /// Reads from `inner`, keeping a copy of the bytes while `recorded` holds
 /// a buffer, so that unrecognized input can be passed through.
 struct Recording<'a, R: ?Sized> {
     inner: &'a mut R,
     recorded: &'a RefCell<Option<Vec<u8>>>,
+    /// Bytes read so far.
+    count: &'a Cell<u64>,
 }
 
 impl<R: Read + ?Sized> Read for Recording<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let n = self.inner.read(buf)?;
+        self.count.set(self.count.get() + n as u64);
         if let Some(r) = self.recorded.borrow_mut().as_mut() {
             r.extend_from_slice(&buf[..n]);
         }
@@ -576,12 +608,16 @@ pub fn decompress(
     input: &mut dyn Read,
     mut output: Option<&mut dyn Write>,
     passthrough: bool,
+    meter: &mut Meter,
 ) -> Result<(), Failure> {
     let recorded = RefCell::new(passthrough.then(Vec::new));
+    let count = Cell::new(0);
     let src = Recording {
         inner: &mut *input,
         recorded: &recorded,
+        count: &count,
     };
+    let mut written = 0u64;
     let r = BufReader::with_capacity(BUF_SIZE, src);
     let mut d: Box<dyn Decoder + '_> = match format {
         Format::Auto => Box::new(AutoReader::with_options(r, opts)),
@@ -592,7 +628,10 @@ pub fn decompress(
     let mut buf = vec![0u8; BUF_SIZE];
     loop {
         let n = match d.read(&mut buf) {
-            Ok(0) => return Ok(()),
+            Ok(0) => {
+                meter.tick(d.progress().unwrap_or((count.get(), written)));
+                return Ok(());
+            }
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(e) => {
@@ -602,7 +641,9 @@ pub fn decompress(
                 let head = recorded.borrow_mut().take();
                 if let (xz_native::Error::Format, Some(head), Some(out)) = (c, head, output) {
                     drop(d);
-                    return copy_through(&head, input, out);
+                    let r = copy_through(&head, input, out);
+                    meter.tick(r.as_ref().map_or((0, 0), |&n| (n, n)));
+                    return r.map(drop);
                 }
                 return Err(Failure::Coder(c, d.memusage()));
             }
@@ -612,17 +653,24 @@ pub fn decompress(
         if let Some(out) = output.as_deref_mut() {
             out.write_all(&buf[..n]).map_err(Failure::Write)?;
         }
+        written += n as u64;
+        meter.tick(d.progress().unwrap_or((count.get(), written)));
     }
 }
 
-/// Writes `head`, the input read so far, then copies the rest.
-fn copy_through(head: &[u8], input: &mut dyn Read, output: &mut dyn Write) -> Result<(), Failure> {
+/// Writes `head`, the input read so far, then copies the rest. Returns the
+/// bytes copied.
+fn copy_through(head: &[u8], input: &mut dyn Read, output: &mut dyn Write) -> Result<u64, Failure> {
     output.write_all(head).map_err(Failure::Write)?;
+    let mut total = head.len() as u64;
     let mut buf = vec![0u8; BUF_SIZE];
     loop {
         match input.read(&mut buf) {
-            Ok(0) => return Ok(()),
-            Ok(n) => output.write_all(&buf[..n]).map_err(Failure::Write)?,
+            Ok(0) => return Ok(total),
+            Ok(n) => {
+                output.write_all(&buf[..n]).map_err(Failure::Write)?;
+                total += n as u64;
+            }
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(e) => return Err(Failure::Read(e)),
         }

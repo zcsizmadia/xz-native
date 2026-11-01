@@ -5,6 +5,7 @@
 use crate::Ctx;
 use crate::args::{Format, Mode};
 use crate::coder::{self, Encoder, Failure, Hardware};
+use crate::progress::Meter;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, FileTimes, OpenOptions};
 use std::io::{self, BufWriter, IsTerminal, Read, Write};
@@ -57,11 +58,13 @@ pub fn run(ctx: &mut Ctx) -> Result<(), String> {
         decoder: coder::decoder_options(ctx, &hw),
         limit: coder::decoder_limit(ctx, &hw),
     };
-    for name in ctx.o.files.clone() {
+    let files = ctx.o.files.clone();
+    for (i, name) in files.iter().enumerate() {
+        let pos = (i + 1, files.len());
         if name == "-" {
-            stdin(ctx, &job);
+            stdin(ctx, &job, pos);
         } else {
-            file(ctx, &job, &name);
+            file(ctx, &job, name, pos);
         }
     }
     Ok(())
@@ -79,7 +82,7 @@ fn display(name: &OsStr) -> String {
     name.to_string_lossy().into_owned()
 }
 
-fn stdin(ctx: &mut Ctx, job: &Job) {
+fn stdin(ctx: &mut Ctx, job: &Job, pos: (usize, usize)) {
     if ctx.o.mode == Mode::Compress {
         if io::stdout().is_terminal() {
             ctx.error("Compressed data cannot be written to a terminal");
@@ -89,21 +92,38 @@ fn stdin(ctx: &mut Ctx, job: &Job) {
         ctx.error("Compressed data cannot be read from a terminal");
         return;
     }
+    let mut meter = meter(ctx, STDIN_NAME, pos);
     let mut input = io::stdin().lock();
-    code_to_stdout(ctx, job, STDIN_NAME, &mut input);
+    code_to_stdout(ctx, job, STDIN_NAME, &mut input, &mut meter);
 }
 
 /// Codes `input` to standard output (or nowhere when testing).
-fn code_to_stdout(ctx: &mut Ctx, job: &Job, name: &str, input: &mut dyn Read) {
+/// The `-v` progress of a file (`message_filename()` and
+/// `message_progress_start()`).
+fn meter(ctx: &Ctx, name: &str, (pos, files): (usize, usize)) -> Meter {
+    Meter::start(
+        ctx.o.verbosity >= crate::args::V_VERBOSE,
+        name,
+        pos,
+        files,
+        ctx.o.mode == Mode::Compress,
+    )
+}
+
+/// Codes `input` to standard output (or nowhere when testing).
+fn code_to_stdout(ctx: &mut Ctx, job: &Job, name: &str, input: &mut dyn Read, meter: &mut Meter) {
     let mut out = BufWriter::with_capacity(1 << 16, io::stdout().lock());
     let r = if ctx.o.mode == Mode::Test {
-        code(ctx, job, input, None)
+        code(ctx, job, input, None, meter)
     } else {
-        code(ctx, job, input, Some(&mut out)).and_then(|()| out.flush().map_err(Failure::Write))
+        code(ctx, job, input, Some(&mut out), meter)
+            .and_then(|()| out.flush().map_err(Failure::Write))
     };
+    let ok = r.is_ok();
     if let Err(f) = r {
         report(ctx, job, name, f);
     }
+    meter.finish(ok);
 }
 
 fn code(
@@ -111,14 +131,15 @@ fn code(
     job: &Job,
     input: &mut dyn Read,
     output: Option<&mut dyn Write>,
+    meter: &mut Meter,
 ) -> Result<(), Failure> {
     match (&job.encoder, output) {
-        (Some(enc), Some(out)) => coder::compress(enc, input, out),
+        (Some(enc), Some(out)) => coder::compress(enc, input, out, meter),
         (Some(_), None) => unreachable!("compressing to nowhere"),
         (None, out) => {
             // `xz -dcf` copies input in an unknown format as is.
             let passthrough = ctx.o.mode == Mode::Decompress && ctx.o.stdout && ctx.o.force;
-            coder::decompress(ctx.o.format, job.decoder, input, out, passthrough)
+            coder::decompress(ctx.o.format, job.decoder, input, out, passthrough, meter)
         }
     }
 }
@@ -164,8 +185,9 @@ pub fn os_error(e: &io::Error) -> String {
     }
 }
 
-fn file(ctx: &mut Ctx, job: &Job, src: &OsStr) {
+fn file(ctx: &mut Ctx, job: &Job, src: &OsStr, pos: (usize, usize)) {
     let name = display(src);
+    let mut meter = meter(ctx, &name, pos);
     if src.is_empty() {
         ctx.warning("Empty filename, skipping");
         return;
@@ -208,8 +230,9 @@ fn file(ctx: &mut Ctx, job: &Job, src: &OsStr) {
         ctx.warning(format!("{name}: Not a regular file, skipping"));
         return;
     }
+    meter.set_expected(meta.len());
     let Some(dest) = dest else {
-        code_to_stdout(ctx, job, &name, &mut input);
+        code_to_stdout(ctx, job, &name, &mut input, &mut meter);
         return;
     };
     let dest_display = display(&dest);
@@ -242,16 +265,18 @@ fn file(ctx: &mut Ctx, job: &Job, src: &OsStr) {
         }
     };
     let mut w = BufWriter::with_capacity(1 << 16, out);
-    let r = code(ctx, job, &mut input, Some(&mut w))
+    let r = code(ctx, job, &mut input, Some(&mut w), &mut meter)
         .and_then(|()| w.into_inner().map_err(|e| Failure::Write(e.into_error())));
     let out = match r {
         Ok(f) => f,
         Err(f) => {
             let _ = fs::remove_file(dest_path);
             report(ctx, job, &name, f);
+            meter.finish(false);
             return;
         }
     };
+    meter.finish(true);
     copy_metadata(ctx, &meta, &out, &dest_display);
     if let Err(e) = out.sync_all().and(Ok(())) {
         let _ = fs::remove_file(dest_path);
