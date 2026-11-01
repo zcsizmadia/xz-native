@@ -228,8 +228,9 @@ impl XzEncoder {
     ///
     /// As in liblzma, once a flush or [`Action::Finish`] has started, every
     /// call must pass the same action and the input that is left until
-    /// [`Status::StreamEnd`]; anything else is [`Error::Usage`]. An error
-    /// is final: later calls return it again.
+    /// [`Status::StreamEnd`]; anything else is [`Error::Usage`]. `Usage` and
+    /// [`Error::MemLimit`] leave the encoder as it was, to call again; other
+    /// errors are final: later calls return them again.
     pub fn encode(
         &mut self,
         input: &[u8],

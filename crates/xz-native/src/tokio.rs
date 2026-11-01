@@ -1,6 +1,12 @@
 //! Async adapters for [tokio](https://docs.rs/tokio) (feature `tokio`):
-//! [`XzReader`], [`LzmaReader`] and [`LzipReader`] over [`AsyncBufRead`],
-//! [`XzWriter`] and [`LzmaWriter`] over [`AsyncWrite`].
+//! [`XzReader`], [`LzmaReader`], [`LzipReader`] and [`AutoReader`] over
+//! [`AsyncBufRead`], [`XzWriter`] and [`LzmaWriter`] over [`AsyncWrite`].
+//!
+//! The coding runs inside `poll_read`/`poll_write`, on the executor thread.
+//! With threads (`DecoderOptions::threads` or `EncoderOptions::threads`
+//! other than 1), a poll can also wait for a worker to finish a Block; for
+//! large inputs on a shared executor, consider `spawn_blocking` with the
+//! `std` readers and writers.
 //!
 //! ```
 //! # #[tokio::main(flavor = "current_thread")]

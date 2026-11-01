@@ -8,7 +8,7 @@
 //!
 //! | Layer | Decode | Encode | For |
 //! |---|---|---|---|
-//! | One-shot | [`decompress`], [`decompress_into`] | [`compress`] | data in memory |
+//! | One-shot | [`decompress`], [`decompress_into`], [`decompress_to_slice`] | [`compress`], [`compress_to_slice`] with [`compress_bound`] | data in memory |
 //! | `std::io` | [`XzReader`], [`XzSeekableReader`] | [`XzWriter`] | files and streams |
 //! | Push | [`XzDecoder`] | [`XzEncoder`] | `no_std`, custom I/O, event loops |
 //! | Async | `tokio::XzReader`, `futures::XzReader` | `tokio::XzWriter`, `futures::XzWriter` | tokio, async-std, smol (features) |
@@ -16,9 +16,24 @@
 //!
 //! `.lzma` uses [`decompress_lzma`], [`LzmaReader`], [`LzmaDecoder`],
 //! [`compress_lzma`], [`LzmaWriter`] and [`LzmaEncoder`]; `.lz` uses
-//! [`decompress_lzip`], [`LzipReader`] and [`LzipDecoder`]. The [`compat`]
-//! module mirrors the `xz2` and `liblzma` crates' read/bufread/write APIs for
-//! migrating code.
+//! [`decompress_lzip`], [`LzipReader`] and [`LzipDecoder`]. When the format
+//! isn't known, [`decompress_auto`], [`AutoReader`] and [`AutoDecoder`]
+//! detect it (like `xz -d`). The [`compat`] module mirrors the `xz2` and
+//! `liblzma` crates' read/bufread/write APIs for migrating code.
+//!
+//! Also: [`XzSeekableReader`] reads the Index (`xz --list`: Streams,
+//! Blocks, sizes, checks) and seeks; [`microlzma_encode`] and
+//! [`microlzma_decode`] for MicroLZMA (EROFS); filter strings like
+//! `xz --filters=` ([`RawOptions::from_filter_str`]); and the checksums
+//! [`crc32`], [`crc64`] and [`Sha256`].
+//!
+//! Data after the end of the compressed data: in .xz it must be Stream
+//! Padding or another Stream, otherwise it is an error as in liblzma
+//! ([`Error::Data`], or [`Error::Truncated`] when it is shorter than a
+//! Stream Header). [`decompress_lzma`] rejects it ([`Error::Data`]), while
+//! [`LzmaReader`] stops at the end of the .lzma data. The .lz decoders
+//! ignore it, as lzip does, except [`AutoDecoder`], which rejects it as xz
+//! does.
 //!
 //! Options are [`DecoderOptions`] and [`EncoderOptions`] (with
 //! [`LzmaOptions`] inside), built with chainable setters. Multi-Block files
@@ -78,7 +93,8 @@
 //! - `portable`: disables all SIMD and assembly paths (CLMUL and ARMv8 CRC,
 //!   SHA extensions, the x86-64 range decoder) and checks the indexes of
 //!   the decoder's hot-path reads, so no `unsafe` code runs; for testing
-//!   the fallbacks.
+//!   the fallbacks (it changes speed, never results, and isn't covered
+//!   by SemVer).
 //! - `tokio`: async readers and writers for tokio in the `tokio` module.
 //! - `futures-io`: async readers and writers for the futures-io traits
 //!   (async-std, smol, `futures`) in the `futures` module.

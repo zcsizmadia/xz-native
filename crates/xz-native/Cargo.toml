@@ -20,9 +20,12 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["std"]
-## std::io adapters and runtime CPU feature detection.
+## The std::io types, threads and run-time CPU feature detection; without
+## it the crate is no_std + alloc.
 std = []
-## Disable all SIMD/CPU-specific code paths (for testing the portable fallbacks).
+## Disables the SIMD and assembly paths and bounds-checks the decoder's
+## hot-path reads, so no unsafe code runs. For testing the fallbacks: it
+## changes speed, never results, and isn't covered by SemVer.
 portable = []
 ## Async readers and writers for tokio (`xz_native::tokio`).
 tokio = ["std", "dep:tokio"]
