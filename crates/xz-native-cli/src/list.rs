@@ -9,7 +9,10 @@ use crate::num::{int, mib, nice, ratio};
 use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{self, BufReader, IsTerminal};
-use xz_native::{Check, DecoderOptions, Filter, XzSeekableReader};
+use xz_native::{
+    Check, DecoderOptions, Filter, FilterOptions, FilterStringFormat, RawMethod, RawOptions,
+    XzSeekableReader,
+};
 
 /// Labels of the `-v` output, padded to the longest.
 const COLON_WIDTH: usize = 18; // "Uncompressed size:"
@@ -93,46 +96,14 @@ fn version(v: u32) -> String {
 /// The filter chain as `lzma_str_from_filters(LZMA_STR_DECODER |
 /// LZMA_STR_GETOPT_LONG)` writes it.
 fn filter_chain(filters: &[Filter]) -> String {
-    fn size(mut v: u32) -> String {
-        if v == 0 {
-            return "0".into();
+    let mut raw = RawOptions::default().method(RawMethod::Lzma2);
+    for f in filters {
+        match *f {
+            Filter::Lzma2 { dict_size } => raw.lzma.dict_size = dict_size,
+            f => raw.filters.push(f),
         }
-        let mut suffix = "";
-        for s in ["KiB", "MiB", "GiB"] {
-            if v & 1023 != 0 {
-                break;
-            }
-            v >>= 10;
-            suffix = s;
-        }
-        format!("{v}{suffix}")
     }
-    let parts: Vec<String> = filters
-        .iter()
-        .map(|f| match *f {
-            Filter::Lzma2 { dict_size } => format!("--lzma2=dict={}", size(dict_size)),
-            Filter::Delta { distance } => format!("--delta=dist={distance}"),
-            Filter::Bcj { kind, start_offset } => {
-                let name = match kind.filter_id() {
-                    0x04 => "x86",
-                    0x05 => "powerpc",
-                    0x06 => "ia64",
-                    0x07 => "arm",
-                    0x08 => "armthumb",
-                    0x09 => "sparc",
-                    0x0A => "arm64",
-                    _ => "riscv",
-                };
-                if start_offset == 0 {
-                    format!("--{name}")
-                } else {
-                    format!("--{name}=start={}", size(start_offset))
-                }
-            }
-            _ => "--unknown".into(),
-        })
-        .collect();
-    parts.join(" ")
+    raw.to_filter_string(FilterStringFormat::new(FilterOptions::Decoder).getopt_long(true))
 }
 
 /// A Block's details for `-vv` (`block_header_info`).

@@ -5,7 +5,7 @@
 
 use crate::chain::{self, Item};
 use std::ffi::OsString;
-use xz_native::Check;
+use xz_native::{Check, RawOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -155,7 +155,12 @@ fn getopt(msg: String) -> ArgError {
 
 /// A `--filters=` or `--filtersN=` string, with xz's error message.
 fn filters_str(s: &str, n: usize) -> Result<Vec<Item>, String> {
-    chain::from_str(s, n != 0).map_err(|e| {
+    let raw = if n == 0 {
+        RawOptions::from_filter_str(s)
+    } else {
+        RawOptions::from_xz_filter_str(s)
+    };
+    raw.map(chain::from_raw).map_err(|e| {
         let p = crate::PROGRAM;
         let num = if n == 0 { String::new() } else { n.to_string() };
         // `str_to_filters()` in xz's coder.c: the string, a caret under
@@ -166,8 +171,8 @@ fn filters_str(s: &str, n: usize) -> Result<Vec<Item>, String> {
 {p}: {:pos$}^
 {p}: {}",
             "",
-            e.msg,
-            pos = e.pos
+            e.message(),
+            pos = e.position()
         )
     })
 }
