@@ -70,11 +70,14 @@ pub struct DecoderOptions {
     /// output comes before the error then depends on timing. Without
     /// threads, it is ignored.
     pub fail_fast: bool,
-    /// Threads for decoding multi-Block .xz data with
-    /// [`crate::decompress_with_options`], `XzReader` and [`XzDecoder`]
-    /// (default: 1; 0 = one per CPU). Blocks are decoded in parallel;
-    /// results and errors are identical to single-threaded decoding. More
-    /// than 16384 (`LZMA_THREADS_MAX`) is [`Error::Options`]. Without the
+    /// Threads for decoding multi-Block .xz data (the one-shot functions,
+    /// [`XzDecoder`], [`crate::AutoDecoder`] and the .xz and auto readers;
+    /// not `XzSeekableReader`), default 1; 0 = one per CPU. Blocks are
+    /// decoded in parallel; the
+    /// output and the error are those of single-threaded decoding, except
+    /// with [`fail_fast`](Self::fail_fast) (less output before the error)
+    /// and that a [`Error::Truncated`] from [`XzDecoder::decode`] is final.
+    /// More than 16384 (`LZMA_THREADS_MAX`) is [`Error::Options`]. Without the
     /// `std` feature, it is ignored.
     pub threads: usize,
     /// Memory that decoding with threads may use for Blocks in flight

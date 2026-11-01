@@ -1,7 +1,13 @@
 //! Async adapters for the [futures-io](https://docs.rs/futures-io) traits
 //! (feature `futures-io`), as used by async-std, smol and the `futures`
-//! crate: [`XzReader`], [`LzmaReader`] and [`LzipReader`] over
+//! crate: [`XzReader`], [`LzmaReader`], [`LzipReader`] and [`AutoReader`] over
 //! [`AsyncBufRead`], [`XzWriter`] and [`LzmaWriter`] over [`AsyncWrite`].
+//!
+//! The coding runs inside `poll_read`/`poll_write`, on the executor thread.
+//! With threads (`DecoderOptions::threads` or `EncoderOptions::threads`
+//! other than 1), a poll can also wait for a worker to finish a Block; for
+//! large inputs on a shared executor, consider `spawn_blocking` with the
+//! `std` readers and writers.
 //!
 //! ```
 //! # futures::executor::block_on(async {

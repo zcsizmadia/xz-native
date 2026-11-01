@@ -295,7 +295,8 @@ pub struct EncoderOptions {
     /// that doesn't fit in its output bound is stored uncompressed. The
     /// output is byte-identical to liblzma's multithreaded encoder for any
     /// thread count, and differs from single-threaded output even for one
-    /// Block.
+    /// Block. With threads, above `u64::MAX / 16384` (liblzma's
+    /// `BLOCK_SIZE_MAX`) is [`Error::InvalidOptions`].
     pub block_size: u64,
     /// Worker threads (default 1; 0 = one per CPU). Anything other than 1
     /// selects the multithreaded encoder, even if that ends up with one
@@ -304,7 +305,8 @@ pub struct EncoderOptions {
     /// Ignored without the `std` feature.
     ///
     /// Memory: up to `threads` LZMA2 encoders, `threads` Blocks of input and
-    /// `2 * threads` Blocks of output, like liblzma.
+    /// `2 * threads` Blocks of output, like liblzma. More than 16384
+    /// (`LZMA_THREADS_MAX`) is [`Error::InvalidOptions`].
     pub threads: usize,
     /// Use the multithreaded encoder even with `threads == 1` (default
     /// false), like `xz -T+1` and liblzma's `lzma_stream_encoder_mt()` with
