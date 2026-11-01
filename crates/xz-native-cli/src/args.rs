@@ -228,7 +228,9 @@ fn add_filter(o: &mut Opts, item: Item) -> Result<(), String> {
 pub enum Action {
     Run,
     Help,
+    LongHelp,
     Version,
+    InfoMemory,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -291,6 +293,7 @@ const LONG: &[(&str, HasArg, &str)] = &[
     ("block-list", HasArg::Yes, "block-list"),
     ("files", HasArg::Optional, "files"),
     ("files0", HasArg::Optional, "files0"),
+    ("info-memory", HasArg::No, "info-memory"),
     ("lzma1", HasArg::Optional, "lzma1"),
     ("lzma2", HasArg::Optional, "lzma2"),
     ("x86", HasArg::Optional, "x86"),
@@ -381,6 +384,10 @@ pub fn parse(args: &[OsString], o: &mut Opts, env_name: Option<&str>) -> Result<
                 }
             };
             apply(key, value.as_deref(), o, &mut action)?;
+            // --help, --version and --info-memory act at once, as in xz.
+            if action != Action::Run {
+                return Ok(action);
+            }
             continue;
         }
         // Short options, possibly combined.
@@ -395,9 +402,15 @@ pub fn parse(args: &[OsString], o: &mut Opts, env_name: Option<&str>) -> Result<
                     rest.to_owned()
                 };
                 apply(&c.to_string(), Some(&value), o, &mut action)?;
+                if action != Action::Run {
+                    return Ok(action);
+                }
                 break;
             }
             apply(&c.to_string(), None, o, &mut action)?;
+            if action != Action::Run {
+                return Ok(action);
+            }
         }
     }
     Ok(action)
@@ -470,7 +483,9 @@ fn apply(key: &str, value: Option<&str>, o: &mut Opts, action: &mut Action) -> R
         "q" => o.verbosity = (o.verbosity - 1).max(V_SILENT),
         "v" => o.verbosity = (o.verbosity + 1).min(V_DEBUG),
         "Q" => o.no_warn = true,
-        "h" | "H" => *action = Action::Help,
+        "h" => *action = Action::Help,
+        "H" => *action = Action::LongHelp,
+        "info-memory" => *action = Action::InfoMemory,
         "V" => *action = Action::Version,
         "single-stream" => o.single_stream = true,
         "no-sparse" => o.no_sparse = true,

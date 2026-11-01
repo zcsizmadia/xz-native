@@ -17,6 +17,8 @@ path = "src/main.rs"
 
 [dependencies]
 xz-native = { path = "../xz-native" }
+# Ctrl-C cleanup and SIGUSR1 progress, as xz does them.
+signal-hook = "0.4"
 
 [lints]
 workspace = true

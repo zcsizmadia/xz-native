@@ -47,6 +47,12 @@ minor version may change the API.
 - `xz-native -d` writes sparse files: blocks of zeros become holes, as in xz
   (not on Windows, and not to standard output); `--no-sparse` turns it off
   (#123).
+- `xz-native` signals like xz: Ctrl-C (SIGINT) or SIGTERM stops at the next
+  chunk, removes the partial output and ends with the signal; SIGUSR1 (and
+  SIGINFO on the BSDs and macOS) prints the progress. The CLI uses
+  `signal-hook` for this; the library still has no dependencies (#123).
+- `xz-native --info-memory` (and with `--robot`), and `-h`/`-H` split into
+  the basic and the long help like xz's (#123).
 
 ## [0.3.0+xz.5.8.4]
 
