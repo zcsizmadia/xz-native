@@ -257,11 +257,6 @@ impl LzmaOptions {
     pub(crate) fn props_byte(&self) -> u8 {
         ((self.pb * 5 + self.lp) * 9 + self.lc) as u8
     }
-
-    /// The LZMA2 dictionary size byte (`lzma_lzma2_props_encode()`).
-    pub(crate) fn lzma2_dict_byte(&self) -> u8 {
-        lzma2_dict_byte(self.dict_size)
-    }
 }
 
 /// Options for the .xz encoder.
@@ -463,7 +458,6 @@ mod tests {
 
     #[test]
     fn lzma2_dict_byte() {
-        let mut o = LzmaOptions::preset(6).unwrap();
         for (size, byte) in [
             (4096, 0),
             (4097, 1),
@@ -474,8 +468,7 @@ mod tests {
             (DICT_SIZE_MAX, 37),
             (u32::MAX, 40),
         ] {
-            o.dict_size = size;
-            assert_eq!(o.lzma2_dict_byte(), byte, "{size}");
+            assert_eq!(super::lzma2_dict_byte(size), byte, "{size}");
             if byte < 40 {
                 assert!(crate::lzma::lzma2_dict_size(byte).unwrap() >= size);
             }

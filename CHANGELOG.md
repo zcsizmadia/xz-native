@@ -16,6 +16,9 @@ minor version may change the API.
   `RawOptions::to_filter_string` writes a chain with the options for the
   encoder, the decoder or none, in liblzma's layouts
   (`FilterStringFormat`) (#101).
+- Filter Flags like liblzma's `lzma_filter_flags_encode()` and
+  `lzma_filter_flags_decode()`: `Filter::flags` and `Filter::from_flags`,
+  with liblzma's bytes and errors (#101).
 - Changing filters mid-stream like liblzma's `lzma_filters_update()`:
   `XzEncoder::update_filters` sets the filter chain and LZMA2 options for
   the next Block (after a full flush or barrier, or before any input),
