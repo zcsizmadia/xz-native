@@ -12,6 +12,7 @@ mod names;
 mod num;
 mod progress;
 mod ram;
+mod signals;
 
 use args::{Action, Opts, V_ERROR, V_WARNING};
 use std::ffi::OsString;
@@ -109,8 +110,12 @@ fn main() -> ExitCode {
         }
         Err(e) => return fatal(&e.msg, e.try_help),
     }
+    signals::init();
     let mut ctx = Ctx { o, status: 0 };
-    match files::run(&mut ctx) {
+    let r = files::run(&mut ctx);
+    // After a signal, end with it once the output is cleaned up.
+    signals::exit_if_aborted();
+    match r {
         Ok(()) => ExitCode::from(ctx.status),
         Err(e) => {
             ctx.error(e);
