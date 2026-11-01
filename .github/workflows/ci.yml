@@ -96,7 +96,7 @@ jobs:
         run: cargo test -p xz-native --profile ci --features portable
       - name: Test (async adapters)
         run: |
-          cargo test -p xz-native --profile ci --features tokio,futures-io --test async_io
+          cargo test -p xz-native --profile ci --features tokio,futures-io --test async_io --test auto_traits
           cargo test -p xz-native --profile ci --features tokio,futures-io --doc
       - name: Test (32-bit)
         # Dictionary and buffer sizes from untrusted headers hit the 32-bit
