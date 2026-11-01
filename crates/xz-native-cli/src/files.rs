@@ -163,7 +163,7 @@ fn code_to_stdout(ctx: &mut Ctx, job: &Job, name: &str, input: &mut dyn Read, me
         && let Some((file, flags)) = crate::sparse::stdout()
     {
         let mut w = BufWriter::with_capacity(1 << 16, Sparse::new(file));
-        let r = code(ctx, job, input, Some(&mut w), meter)
+        let r = code(ctx, job, name, input, Some(&mut w), meter)
             .and_then(|()| w.into_inner().map_err(|e| Failure::Write(e.into_error())))
             .and_then(|s| s.finish().map_err(Failure::Write));
         let ok = r.is_ok();
