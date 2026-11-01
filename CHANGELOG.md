@@ -48,6 +48,9 @@ minor version may change the API.
   flush after MS milliseconds without input, so that the data so far can be
   decompressed (LZMA2 and Delta only, single-threaded, as in xz; also on
   Windows, where xz ignores it) (#123).
+- `xz-native -vv`: xz's debug lines, the filter chain with all its options,
+  the thread count and the memory needed for compressing and decompressing
+  (#123).
 - `xz-native -d` writes sparse files: blocks of zeros become holes, as in xz
   (not on Windows, and not to standard output); `--no-sparse` turns it off
   (#123).

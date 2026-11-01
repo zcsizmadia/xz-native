@@ -184,10 +184,85 @@ pub fn raw_options(ctx: &Ctx, hw: &Hardware) -> Result<RawOptions, String> {
     } else {
         (raw.decoder_memusage(), hw.bytes(o.memlimit_decompress))
     };
+    let lzma1 = raw.method == RawMethod::Lzma1;
+    ctx.note(
+        V_DEBUG,
+        format!(
+            "Filter chain: {}",
+            chain_string(&raw.filters, &raw.lzma, lzma1)
+        ),
+    );
+    let compress = o.mode == crate::args::Mode::Compress;
+    debug_memory(ctx, usage, limit, compress.then(|| raw.decoder_memusage()));
     if limit.is_some_and(|l| usage > l) {
         return Err(too_small(usage, limit));
     }
     Ok(raw)
+}
+
+/// A filter chain as xz's `-vv` shows it (`lzma_str_from_filters()` with
+/// `LZMA_STR_ENCODER | LZMA_STR_GETOPT_LONG`).
+fn chain_string(filters: &[Filter], lzma: &LzmaOptions, lzma1: bool) -> String {
+    fn size(mut v: u32) -> String {
+        let mut suffix = "";
+        for s in ["KiB", "MiB", "GiB"] {
+            if v == 0 || v & 1023 != 0 {
+                break;
+            }
+            v >>= 10;
+            suffix = s;
+        }
+        format!("{v}{suffix}")
+    }
+    let mut parts: Vec<String> = filters
+        .iter()
+        .map(|f| match *f {
+            Filter::Delta { distance } => format!("--delta=dist={distance}"),
+            Filter::Bcj { kind, start_offset } => {
+                let name = crate::chain::bcj_name(kind);
+                if start_offset == 0 {
+                    format!("--{name}")
+                } else {
+                    format!("--{name}=start={}", size(start_offset))
+                }
+            }
+            _ => "--unknown".into(),
+        })
+        .collect();
+    let mode = match lzma.mode {
+        xz_native::Mode::Fast => "fast",
+        _ => "normal",
+    };
+    let mf = match lzma.mf {
+        xz_native::MatchFinder::Hc3 => "hc3",
+        xz_native::MatchFinder::Hc4 => "hc4",
+        xz_native::MatchFinder::Bt2 => "bt2",
+        xz_native::MatchFinder::Bt3 => "bt3",
+        _ => "bt4",
+    };
+    parts.push(format!(
+        "--lzma{}=dict={},lc={},lp={},pb={},mode={mode},nice={},mf={mf},depth={}",
+        if lzma1 { 1 } else { 2 },
+        size(lzma.dict_size),
+        lzma.lc,
+        lzma.lp,
+        lzma.pb,
+        lzma.nice_len,
+        lzma.depth
+    ));
+    parts.join(" ")
+}
+
+/// The `-vv` lines about the settings: the filter chain, then the memory
+/// needed (`message_filters_show()`, `message_mem_needed()`).
+fn debug_memory(ctx: &Ctx, usage: u64, limit: Option<u64>, decoder: Option<u64>) {
+    ctx.note(V_DEBUG, mem_needed(usage, limit));
+    if let Some(d) = decoder {
+        ctx.note(
+            V_DEBUG,
+            format!("Decompression will need {} MiB of memory.", mib(d)),
+        );
+    }
 }
 
 /// A custom chain for .xz (`lzma_validate_chain()`: Delta and BCJ
@@ -288,7 +363,12 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
             [Item::Lzma1(l)] => raw.lzma = *l,
             _ => return Err("The .lzma format supports only the LZMA1 filter".into()),
         }
-        raw.encoder_memusage().map_err(|_| unsupported())?;
+        let usage = raw.encoder_memusage().map_err(|_| unsupported())?;
+        ctx.note(
+            V_DEBUG,
+            format!("Filter chain: {}", chain_string(&[], &raw.lzma, true)),
+        );
+        debug_memory(ctx, usage, limit, Some(raw.decoder_memusage()));
         let lzma = fit_dict(ctx, raw.lzma, limit, "LZMA1 dictionary size", |lzma| {
             let mut r = raw.clone();
             r.lzma = lzma;
@@ -337,6 +417,24 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
             .encoder_memusage()
             .map_err(|_| unsupported())?;
     }
+    if let Some(c) = &chains[0] {
+        ctx.note(
+            V_DEBUG,
+            format!("Filter chain: {}", chain_string(&c.0, &c.1, false)),
+        );
+    }
+    // What decoding needs: the largest chain.
+    let decoder = chains
+        .iter()
+        .flatten()
+        .map(|c| {
+            let mut r = RawOptions::preset(RawMethod::Lzma2, 6).expect("preset 6");
+            r.lzma = c.1;
+            r.filters = c.0.clone();
+            r.decoder_memusage()
+        })
+        .max()
+        .unwrap_or(0);
     let first = o.block_list.as_ref().map_or(0, |l| l[0].0);
     let list = o.block_list.clone();
     let (mut threads, mut mt) = match o.threads {
@@ -379,11 +477,12 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
             limit
         };
         let mut usage = usage_of(&mt_options(&opts, threads))?;
+        ctx.note(V_DEBUG, format!("Using up to {threads} threads."));
+        debug_memory(ctx, usage, limit, Some(decoder));
         while mt_limit.is_some_and(|l| usage > l) && threads > 1 {
             threads -= 1;
             usage = usage_of(&mt_options(&opts, threads))?;
         }
-        ctx.note(V_DEBUG, format!("Using up to {threads} threads."));
         if mt_limit.is_some_and(|l| usage > l) && !soft {
             if !ctx.o.auto_adjust {
                 return Err(too_small(usage, limit));
@@ -406,6 +505,10 @@ pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
         opts = mt_options(&opts, threads);
     } else {
         opts.threads = 1;
+        if o.threads == Threads::Single {
+            // Shown once: after a switch from MT, xz doesn't repeat it.
+            debug_memory(ctx, usage_of(&opts)?, limit, Some(decoder));
+        }
         if list.is_some() {
             // With a Block list, the Blocks are cut here, as xz does.
             split = opts.block_size;

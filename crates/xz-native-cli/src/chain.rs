@@ -29,6 +29,20 @@ pub fn bcj_kind(name: &str) -> Option<BcjKind> {
     })
 }
 
+/// The option and filter name of a BCJ filter.
+pub fn bcj_name(kind: BcjKind) -> &'static str {
+    match kind {
+        BcjKind::X86 => "x86",
+        BcjKind::PowerPc => "powerpc",
+        BcjKind::Ia64 => "ia64",
+        BcjKind::Arm => "arm",
+        BcjKind::ArmThumb => "armthumb",
+        BcjKind::Arm64 => "arm64",
+        BcjKind::Sparc => "sparc",
+        _ => "riscv",
+    }
+}
+
 /// `name=value` pairs separated with commas (`parse_options()` of
 /// `options.c`); empty pairs are skipped.
 fn pairs(s: &str) -> Result<Vec<(&str, &str)>, String> {
