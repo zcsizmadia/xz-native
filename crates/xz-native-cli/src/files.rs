@@ -5,6 +5,7 @@
 use crate::Ctx;
 use crate::args::{Format, Mode};
 use crate::coder::{self, Encoder, Failure, Hardware};
+use crate::names::Names;
 use crate::progress::Meter;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, FileTimes, OpenOptions};
@@ -19,9 +20,8 @@ pub fn run(ctx: &mut Ctx) -> Result<(), String> {
         return crate::list::run(ctx);
     }
     let o = &mut ctx.o;
-    if o.files.is_empty() {
-        o.files.push("-".into());
-    }
+    // Only standard input: no names, or just "-".
+    let only_stdin = o.files_from.is_none() && o.files.iter().all(|f| f == "-");
     // The input isn't removed when the output isn't a file.
     if o.stdout || o.mode == Mode::Test {
         o.keep = true;
@@ -35,7 +35,7 @@ pub fn run(ctx: &mut Ctx) -> Result<(), String> {
         && o.suffix.is_none()
         && !o.stdout
         && matches!(o.mode, Mode::Compress | Mode::Decompress)
-        && o.files.iter().any(|f| f != "-")
+        && !only_stdin
     {
         return Err("With --format=raw, --suffix=.SUF is required unless writing to stdout".into());
     }
@@ -49,7 +49,7 @@ pub fn run(ctx: &mut Ctx) -> Result<(), String> {
         }
     }
     if o.mode == Mode::Compress
-        && (o.stdout || (o.files.len() == 1 && o.files[0] == "-"))
+        && (o.stdout || (only_stdin && o.files.len() <= 1))
         && io::stdout().is_terminal()
     {
         return Err(format!(
@@ -73,13 +73,16 @@ pub fn run(ctx: &mut Ctx) -> Result<(), String> {
         },
         limit: coder::decoder_limit(ctx, &hw),
     };
-    let files = ctx.o.files.clone();
-    for (i, name) in files.iter().enumerate() {
-        let pos = (i + 1, files.len());
-        if name == "-" {
-            stdin(ctx, &job, pos);
+    let mut names = Names::new(ctx.o.files.clone(), ctx.o.files_from.as_ref())?;
+    let mut i = 0;
+    while let Some((name, is_stdin)) = names.next(ctx) {
+        i += 1;
+        // 0: the number of files isn't known.
+        let pos = (i, names.total.unwrap_or(0));
+        if is_stdin {
+            stdin(ctx, &job, pos, names.stdin_names);
         } else {
-            file(ctx, &job, name, pos);
+            file(ctx, &job, &name, pos);
         }
     }
     Ok(())
@@ -99,7 +102,7 @@ fn display(name: &OsStr) -> String {
     name.to_string_lossy().into_owned()
 }
 
-fn stdin(ctx: &mut Ctx, job: &Job, pos: (usize, usize)) {
+fn stdin(ctx: &mut Ctx, job: &Job, pos: (usize, usize), stdin_names: bool) {
     if ctx.o.mode == Mode::Compress {
         if io::stdout().is_terminal() {
             ctx.error("Compressed data cannot be written to a terminal");
@@ -107,6 +110,12 @@ fn stdin(ctx: &mut Ctx, job: &Job, pos: (usize, usize)) {
         }
     } else if io::stdin().is_terminal() {
         ctx.error("Compressed data cannot be read from a terminal");
+        return;
+    }
+    if stdin_names {
+        ctx.error(
+            "Cannot read data from standard input when reading filenames from standard input",
+        );
         return;
     }
     let mut meter = meter(ctx, STDIN_NAME, pos);

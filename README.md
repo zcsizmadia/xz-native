@@ -201,7 +201,7 @@ It handles `-z`/`-d`/`-t`, presets and `-e`, `-T`, `-F auto|xz|lzma|lzip|raw`,
 `--list` (with `-v`, `-vv` and `--robot`, the same output as `xz`), custom
 filter chains (`--lzma1`, `--lzma2`, `--x86` and the other BCJ filters,
 `--delta`, `--filters=`), `--block-list` with `--filters1..9`, and the `unxz`,
-`xzcat`, `lzma`, `unlzma` and `lzcat` names. Not yet: `--files`.
+`xzcat`, `lzma`, `unlzma` and `lzcat` names, and `--files`/`--files0`.
 
 ## Supported
 

@@ -79,6 +79,8 @@ pub struct Opts {
     /// `--block-list`: `(chain, size)` entries, a size of `u64::MAX` for
     /// the rest of the input.
     pub block_list: Option<Vec<(usize, u64)>>,
+    /// `--files` or `--files0`: more names from a file or standard input.
+    pub files_from: Option<crate::names::FilesFrom>,
     pub verbosity: i32,
     /// `--no-warn`: warnings don't change the exit status.
     pub no_warn: bool,
@@ -111,6 +113,7 @@ impl Default for Opts {
             chain_from_str: false,
             block_chains: Default::default(),
             block_list: None,
+            files_from: None,
             verbosity: V_WARNING,
             no_warn: false,
             robot: false,
@@ -283,6 +286,8 @@ const LONG: &[(&str, HasArg, &str)] = &[
     ("filters8", HasArg::Yes, "filters8"),
     ("filters9", HasArg::Yes, "filters9"),
     ("block-list", HasArg::Yes, "block-list"),
+    ("files", HasArg::Optional, "files"),
+    ("files0", HasArg::Optional, "files0"),
     ("lzma1", HasArg::Optional, "lzma1"),
     ("lzma2", HasArg::Optional, "lzma2"),
     ("x86", HasArg::Optional, "x86"),
@@ -445,6 +450,13 @@ fn apply(key: &str, value: Option<&str>, o: &mut Opts, action: &mut Action) -> R
             o.block_chains[n] = Some(filters_str(v(), n)?);
         }
         "block-list" => o.block_list = Some(block_list(v())?),
+        "files" | "files0" => {
+            if o.files_from.is_some() {
+                return Err("Only one file can be specified with '--files' or '--files0'.".into());
+            }
+            let delim = if key == "files" { b'\n' } else { 0 };
+            o.files_from = Some((value.map(str::to_owned), delim));
+        }
         "lzma1" => add_filter(o, Item::Lzma1(chain::lzma(value)?))?,
         "lzma2" => add_filter(o, Item::Lzma2(chain::lzma(value)?))?,
         "delta" => add_filter(o, Item::Delta(chain::delta(value)?))?,

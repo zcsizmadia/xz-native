@@ -42,6 +42,8 @@ minor version may change the API.
 - `xz-native --format=raw`: raw LZMA1/LZMA2 streams with the command line
   filter chain (or the preset, with xz's warning), as `xz -F raw` writes
   and reads them (#123).
+- `xz-native --files`/`--files0`: file names from a file or standard input,
+  newline or NUL separated, with xz's rules and errors (#123).
 
 ## [0.3.0+xz.5.8.4]
 
