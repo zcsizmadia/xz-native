@@ -204,35 +204,41 @@ single-threaded decoding.
 xz-native and C liblzma produce identical output. lzma-rust2 has no extreme
 mode, so its -9e column is its plain -9.
 
-**Linux (EPYC 7543)**, at fbc016c (the `liblzma-sys` column at 223f72c;
-the encoder is the same in both). Ratios are xz-native over the tuned
+**Linux (EPYC 7543)**, at b0ca9cb (the `liblzma-sys` column at 223f72c;
+that C build hasn't changed since). Ratios are xz-native over the tuned
 build, then over the `liblzma-sys` build.
 
 | Data, preset | xz-native | lzma-rust2 | C liblzma, tuned | C liblzma, `liblzma-sys` | xz-native / tuned | xz-native / `liblzma-sys` |
 |---|---|---|---|---|---|---|
-| text -0 | **31.0** | 22.3 | 19.7 | 19.0 | 1.57x | 1.63x |
-| text -1 | **21.2** | 17.3 | 15.4 | 14.7 | 1.38x | 1.44x |
-| text -6 | **3.88** | 3.35 | 3.62 | 3.47 | 1.07x | 1.12x |
-| text -9 | **3.78** | 3.22 | 3.50 | 3.38 | 1.08x | 1.12x |
-| text -9e | **3.79** | 3.22 | 3.52 | 3.41 | 1.08x | 1.11x |
-| binary -0 | **25.6** | 19.0 | 17.5 | 16.7 | 1.46x | 1.53x |
-| binary -1 | **20.7** | 16.3 | 15.4 | 14.8 | 1.34x | 1.40x |
-| binary -6 | **4.27** | 3.42 | 4.15 | 3.70 | 1.03x | 1.15x |
-| binary -9 | **4.05** | 3.26 | 3.87 | 3.51 | 1.05x | 1.15x |
-| binary -9e | 2.99 | **3.25** | 2.86 | 2.65 | 1.05x | 1.13x |
-| random -0 | **13.5** | 8.24 | 7.93 | 7.65 | 1.70x | 1.76x |
-| random -1 | **12.2** | 8.02 | 7.48 | 7.26 | 1.63x | 1.68x |
-| random -6 | **9.07** | 6.32 | 6.03 | 6.04 | 1.50x | 1.50x |
-| random -9 | **8.14** | 4.84 | 4.71 | 4.67 | 1.73x | 1.74x |
-| random -9e | **8.18** | 4.85 | 4.58 | 4.67 | 1.79x | 1.75x |
+| text -0 | **30.7** | 22.1 | 19.7 | 19.0 | 1.56x | 1.62x |
+| text -1 | **22.0** | 17.5 | 15.4 | 14.7 | 1.43x | 1.50x |
+| text -6 | **4.23** | 3.49 | 3.86 | 3.47 | 1.10x | 1.22x |
+| text -9 | **4.15** | 3.25 | 3.53 | 3.38 | 1.18x | 1.23x |
+| text -9e | **4.17** | 3.23 | 3.53 | 3.41 | 1.18x | 1.22x |
+| binary -0 | **25.3** | 18.8 | 17.8 | 16.7 | 1.42x | 1.51x |
+| binary -1 | **21.1** | 17.0 | 15.5 | 14.8 | 1.36x | 1.43x |
+| binary -6 | **4.79** | 3.43 | 4.24 | 3.70 | 1.13x | 1.29x |
+| binary -9 | **4.51** | 3.21 | 3.87 | 3.51 | 1.17x | 1.28x |
+| binary -9e | **3.26** | 3.19 | 2.85 | 2.65 | 1.14x | 1.23x |
+| random -0 | **13.4** | 8.31 | 7.85 | 7.65 | 1.71x | 1.75x |
+| random -1 | **12.5** | 8.36 | 7.67 | 7.26 | 1.63x | 1.72x |
+| random -6 | **10.3** | 6.73 | 6.19 | 6.04 | 1.66x | 1.71x |
+| random -9 | **8.92** | 4.87 | 4.67 | 4.67 | 1.91x | 1.91x |
+| random -9e | **8.93** | 4.84 | 4.68 | 4.67 | 1.91x | 1.91x |
 
-At presets 6 and up, the binary tree match finder dominates; with fast
-unaligned access liblzma's is quick too, so the lead there is smaller:
-1.03-1.08x on text and binary. It was 0.96-1.01x until the match finders
-prefetched the next position's hash bucket ([#113], [#94]), and binary
--9e was 0.93x until [#89] priced long matches once per distance ([#88]).
-The fast presets keep their lead, which comes from the range encoder (see
-below).
+At presets 6 and up, the binary tree match finder dominates. Its tree walk
+waits on memory, and with 4 KiB pages most steps also miss the TLB; since
+[#167] the match finder asks Linux for transparent huge pages for its
+tables, which cuts those misses by about 90% and makes presets 6-9e
+10-13% faster where the kernel's THP mode is `madvise` (Ubuntu's default,
+and this machine's; liblzma doesn't ask, so it runs on 4 KiB pages). The
+lead on text and binary went from 1.03-1.08x to 1.10-1.18x. Before that,
+it was 0.96-1.01x until the match finders prefetched the next position's
+hash bucket ([#113], [#94]), and binary -9e was 0.93x until [#89] priced
+long matches once per distance ([#88]). The fast presets keep their lead,
+which comes from the range encoder (see below).
+
+[#167]: https://github.com/zcsizmadia/xz-native/pull/167
 
 [#89]: https://github.com/zcsizmadia/xz-native/pull/89
 
