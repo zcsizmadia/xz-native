@@ -25,6 +25,12 @@ minor version may change the API.
   encoder). `xz-native` uses it instead of running two threads (#123).
 - `xz-native --list` (`-l`, `-v`, `-vv`, `--robot`): the same output as
   `xz --list`, from `XzSeekableReader`'s Stream and Block tables (#123).
+- Progress like liblzma's `lzma_get_progress()`: `progress()` on
+  `XzEncoder`, `XzDecoder`, `AutoDecoder`, `XzWriter`, `XzReader` and
+  `AutoReader`, with `total_in`/`total_out` on the push coders. With
+  threads it counts what the workers have actually encoded or decoded
+  (decoding by whole Blocks), for progress bars and throughput metrics
+  (#126).
 - `xz-native` custom filter chains: `--lzma1=`, `--lzma2=`, `--x86` and the
   other BCJ filters, `--delta` and `--filters=` strings, with xz's rules
   for presets and chains and its error messages (#123).

@@ -504,6 +504,9 @@ pub struct XzDecoder {
     index: Option<IndexDecoder>,
     padding: u64,
     memusage: u64,
+    /// Bytes consumed from the input and written to the output so far.
+    total_in: u64,
+    total_out: u64,
     /// The error that ended decoding; later calls return it.
     error: Option<Error>,
     /// The multithreaded engine, with [`DecoderOptions::threads`]; it does
@@ -539,6 +542,8 @@ impl XzDecoder {
             index: None,
             padding: 0,
             memusage: 0,
+            total_in: 0,
+            total_out: 0,
             error: None,
             #[cfg(feature = "std")]
             mt: match super::mt::thread_count(opts.threads) {
@@ -635,7 +640,36 @@ impl XzDecoder {
         };
         #[cfg(not(feature = "std"))]
         let r = self.run(input, output, finish, &mut ip, &mut op);
-        crate::push::settle(&mut self.error, ip, op, r)
+        let r = crate::push::settle(&mut self.error, ip, op, r);
+        if let Ok((used, written, _)) = r {
+            self.total_in += used as u64;
+            self.total_out += written as u64;
+        }
+        r
+    }
+
+    /// Compressed bytes consumed from the input so far.
+    pub fn total_in(&self) -> u64 {
+        self.total_in
+    }
+
+    /// Uncompressed bytes written to the output so far.
+    pub fn total_out(&self) -> u64 {
+        self.total_out
+    }
+
+    /// Progress like liblzma's `lzma_get_progress()`: `(compressed bytes
+    /// decoded, uncompressed bytes produced)`. Without threads, they are
+    /// [`total_in`](Self::total_in) and [`total_out`](Self::total_out).
+    /// With threads, they count what has actually been decoded, by whole
+    /// Blocks (a worker decodes a Block in one go), including data read
+    /// ahead and not yet returned; they never go down.
+    pub fn progress(&self) -> (u64, u64) {
+        #[cfg(feature = "std")]
+        if let Some(mt) = &self.mt {
+            return mt.progress();
+        }
+        (self.total_in, self.total_out)
     }
 
     fn run(

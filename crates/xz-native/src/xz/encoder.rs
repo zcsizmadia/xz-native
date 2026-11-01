@@ -209,6 +209,9 @@ enum Seq {
 pub struct XzEncoder {
     inner: Inner,
     seq: crate::push::EncodeSeq,
+    /// Bytes taken from the input and written to the output so far.
+    total_in: u64,
+    total_out: u64,
 }
 
 #[derive(Debug)]
@@ -233,11 +236,15 @@ impl XzEncoder {
             return Ok(Self {
                 inner: Inner::Multi(Box::new(mt)),
                 seq: Default::default(),
+                total_in: 0,
+                total_out: 0,
             });
         }
         Ok(Self {
             inner: Inner::Single(Box::new(SingleEncoder::new(opts)?)),
             seq: Default::default(),
+            total_in: 0,
+            total_out: 0,
         })
     }
 
@@ -256,11 +263,41 @@ impl XzEncoder {
         action: Action,
     ) -> Result<(usize, usize, Status)> {
         let inner = &mut self.inner;
-        self.seq.run(input, action, |input| match inner {
+        let r = self.seq.run(input, action, |input| match inner {
             Inner::Single(e) => e.encode(input, output, action),
             #[cfg(feature = "std")]
             Inner::Multi(e) => e.encode(input, output, action),
-        })
+        });
+        if let Ok((used, written, _)) = r {
+            self.total_in += used as u64;
+            self.total_out += written as u64;
+        }
+        r
+    }
+
+    /// Uncompressed bytes taken from the input so far.
+    pub fn total_in(&self) -> u64 {
+        self.total_in
+    }
+
+    /// Compressed bytes written to the output so far.
+    pub fn total_out(&self) -> u64 {
+        self.total_out
+    }
+
+    /// Progress like liblzma's `lzma_get_progress()`: `(uncompressed bytes
+    /// encoded, compressed bytes produced)`. Single-threaded, they are
+    /// [`total_in`](Self::total_in) and [`total_out`](Self::total_out).
+    /// With threads, they count what the workers have actually encoded,
+    /// including Blocks still being encoded and output not yet returned,
+    /// rather than what has passed through the buffers; they never go
+    /// down and end at the totals.
+    pub fn progress(&self) -> (u64, u64) {
+        match &self.inner {
+            Inner::Single(_) => (self.total_in, self.total_out),
+            #[cfg(feature = "std")]
+            Inner::Multi(e) => e.progress(),
+        }
     }
 
     /// Changes the filters and LZMA2 options mid-stream, like liblzma's
