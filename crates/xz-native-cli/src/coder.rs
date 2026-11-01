@@ -85,6 +85,11 @@ impl Hardware {
     pub fn detect() -> Self {
         let total_ram = crate::ram::total().unwrap_or(ASSUME_RAM * MIB);
         let mut memlimit_mt_default = total_ram / 4;
+        // Below the resource limits, with a margin for xz itself; at least
+        // 1, as 0 means no limit.
+        if let Some(limit) = crate::ram::rlimit() {
+            memlimit_mt_default = memlimit_mt_default.min(limit.saturating_sub(64 * MIB).max(1));
+        }
         if cfg!(target_pointer_width = "32") {
             memlimit_mt_default = memlimit_mt_default.min(1400 * MIB);
         }

@@ -67,6 +67,8 @@ minor version may change the API.
   `signal-hook` for this; the library still has no dependencies (#123).
 - `xz-native --info-memory` (and with `--robot`), and `-h`/`-H` split into
   the basic and the long help like xz's (#123).
+- `xz-native` keeps its default thread memory budget 64 MiB below the
+  data and address space limits (`ulimit -d`/`-v`), as xz does (#123).
 
 ## [0.3.0+xz.5.8.4]
 
