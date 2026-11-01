@@ -337,3 +337,67 @@ fn xz_decoder_no_space_and_unsupported_check() {
     assert_eq!(dec.decode(&file, &mut out, true), Ok((12, 0, Status::Ok)));
     assert_eq!(dec.decode(&file[12..], &mut out, true), Err(Error::Options));
 }
+
+/// `tell_unsupported_check`: an `Error::UnsupportedCheck` event per
+/// Stream, after which decoding goes on, in the push decoder and the
+/// readers, with and without threads.
+#[test]
+fn tell_unsupported_check() {
+    use xz_native::{AutoReader, DecoderOptions};
+    let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../third_party/xz/tests/files/unsupported-check.xz");
+    let file = std::fs::read(p).unwrap();
+    let plain = xz_native::decompress(&file).unwrap();
+    let two = [file.clone(), file].concat();
+    let want = [plain.clone(), plain].concat();
+    for threads in [1, 2] {
+        let opts = DecoderOptions::new()
+            .tell_unsupported_check(true)
+            .threads(threads);
+        for step in [1, two.len()] {
+            let mut dec = XzDecoder::with_options(opts);
+            let (mut ip, mut out, mut events) = (0, Vec::new(), 0);
+            let mut buf = [0u8; 4096];
+            loop {
+                let end = (ip + step).min(two.len());
+                match dec.decode(&two[ip..end], &mut buf, end == two.len()) {
+                    Ok((u, w, s)) => {
+                        ip += u;
+                        out.extend_from_slice(&buf[..w]);
+                        if s == Status::StreamEnd {
+                            break;
+                        }
+                    }
+                    Err(Error::UnsupportedCheck) => events += 1,
+                    Err(e) => panic!("threads {threads} step {step}: {e:?}"),
+                }
+            }
+            assert_eq!(events, 2, "threads {threads} step {step}");
+            assert!(out == want, "threads {threads} step {step}");
+        }
+        for auto in [false, true] {
+            let mut r: Box<dyn Read> = if auto {
+                Box::new(AutoReader::with_options(&two[..], opts))
+            } else {
+                Box::new(XzReader::with_options(&two[..], opts))
+            };
+            let (mut out, mut events) = (Vec::new(), 0);
+            let mut buf = [0u8; 4096];
+            loop {
+                match r.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => out.extend_from_slice(&buf[..n]),
+                    Err(e)
+                        if e.get_ref().and_then(|e| e.downcast_ref::<Error>())
+                            == Some(&Error::UnsupportedCheck) =>
+                    {
+                        events += 1
+                    }
+                    Err(e) => panic!("threads {threads} auto {auto}: {e}"),
+                }
+            }
+            assert_eq!(events, 2, "threads {threads} auto {auto}");
+            assert!(out == want, "threads {threads} auto {auto}");
+        }
+    }
+}

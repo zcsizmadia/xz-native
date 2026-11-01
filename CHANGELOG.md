@@ -16,6 +16,11 @@ minor version may change the API.
   `RawOptions::to_filter_string` writes a chain with the options for the
   encoder, the decoder or none, in liblzma's layouts
   (`FilterStringFormat`) (#101).
+- `DecoderOptions::tell_unsupported_check`, like liblzma's
+  `LZMA_TELL_UNSUPPORTED_CHECK`: a Stream with a check type that can't be
+  verified gives `Error::UnsupportedCheck` once, and decoding goes on with
+  the next call or read (`XzDecoder`, `AutoDecoder` and the readers, with
+  and without threads) (#105).
 - Changing filters mid-stream like liblzma's `lzma_filters_update()`:
   `XzEncoder::update_filters` sets the filter chain and LZMA2 options for
   the next Block (after a full flush or barrier, or before any input),
@@ -67,6 +72,8 @@ minor version may change the API.
   `signal-hook` for this; the library still has no dependencies (#123).
 - `xz-native --info-memory` (and with `--robot`), and `-h`/`-H` split into
   the basic and the long help like xz's (#123).
+- `xz-native -d`/`-t` warns about an unsupported check type once per
+  Stream and goes on, as xz does (not with `--ignore-check`) (#105).
 
 ## [0.3.0+xz.5.8.4]
 

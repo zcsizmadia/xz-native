@@ -35,6 +35,11 @@ pub enum Error {
     /// The output buffer is too small for the result (`LZMA_BUF_ERROR` from
     /// liblzma's buffer functions); see [`crate::compress_bound`].
     BufferTooSmall,
+    /// With [`DecoderOptions::tell_unsupported_check`](crate::DecoderOptions::tell_unsupported_check),
+    /// a Stream uses a check type this implementation can't verify
+    /// (`LZMA_UNSUPPORTED_CHECK`). It is an event, not a failure: the
+    /// next call goes on decoding, without verifying that Stream.
+    UnsupportedCheck,
 }
 
 impl fmt::Display for Error {
@@ -49,6 +54,7 @@ impl fmt::Display for Error {
             Error::InvalidOptions => "invalid encoder options",
             Error::Usage => "unsupported use of the API",
             Error::BufferTooSmall => "output buffer too small",
+            Error::UnsupportedCheck => "unsupported integrity check type; not verified",
         })
     }
 }
@@ -61,7 +67,9 @@ impl From<Error> for std::io::Error {
         let kind = match e {
             Error::Truncated => std::io::ErrorKind::UnexpectedEof,
             Error::MemLimit => std::io::ErrorKind::OutOfMemory,
-            Error::Options | Error::InvalidOptions => std::io::ErrorKind::Unsupported,
+            Error::Options | Error::InvalidOptions | Error::UnsupportedCheck => {
+                std::io::ErrorKind::Unsupported
+            }
             Error::Usage => std::io::ErrorKind::InvalidInput,
             Error::BufferTooSmall => std::io::ErrorKind::WriteZero,
             _ => std::io::ErrorKind::InvalidData,
