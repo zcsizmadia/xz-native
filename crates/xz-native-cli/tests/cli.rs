@@ -815,6 +815,8 @@ fn info_memory_and_help() {
             "--info-memory",
         ],
         &["--robot", "--info-memory"],
+        &["--filters-help"],
+        &["--robot", "--filters-help", "--bogus"],
         // It acts at once, so later options don't matter.
         &["--info-memory", "--bogus"],
     ] {

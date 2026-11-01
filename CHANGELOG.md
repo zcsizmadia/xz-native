@@ -16,6 +16,8 @@ minor version may change the API.
   `RawOptions::to_filter_string` writes a chain with the options for the
   encoder, the decoder or none, in liblzma's layouts
   (`FilterStringFormat`) (#101).
+- `FilterStringFormat::list_filters` lists the filters and their options
+  like liblzma's `lzma_str_list_filters()` (#101).
 - Changing filters mid-stream like liblzma's `lzma_filters_update()`:
   `XzEncoder::update_filters` sets the filter chain and LZMA2 options for
   the next Block (after a full flush or barrier, or before any input),
@@ -67,6 +69,8 @@ minor version may change the API.
   `signal-hook` for this; the library still has no dependencies (#123).
 - `xz-native --info-memory` (and with `--robot`), and `-h`/`-H` split into
   the basic and the long help like xz's (#123).
+- `xz-native --filters-help`: the filter string syntax and the filters
+  with their options, as xz shows them (#123).
 
 ## [0.3.0+xz.5.8.4]
 
