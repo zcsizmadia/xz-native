@@ -111,8 +111,9 @@ push_encoders!(XzEncoder, LzmaEncoder, RawEncoder);
 /// Ends a push decoder call the way liblzma's `lzma_code` does: the progress
 /// made before an error is returned first, as `Ok`, and the error comes
 /// from the next call. Errors are final: later calls return them again.
-/// The exceptions are [`Error::MemLimit`] (raise the limit and call again)
-/// and [`Error::Truncated`] (the caller may have more input after all).
+/// The exceptions are [`Error::MemLimit`] (raise the limit and call again),
+/// [`Error::Truncated`] (the caller may have more input after all) and
+/// [`Error::UnsupportedCheck`], which is returned once (see [`pending`]).
 pub(crate) fn settle(
     error: &mut Option<Error>,
     ip: usize,
@@ -122,16 +123,29 @@ pub(crate) fn settle(
     match r {
         Ok(status) => Ok((ip, op, status)),
         Err(e) => {
-            if !matches!(e, Error::MemLimit | Error::Truncated) {
+            let progress = ip > 0 || op > 0;
+            if !matches!(e, Error::MemLimit | Error::Truncated)
+                && (progress || e != Error::UnsupportedCheck)
+            {
                 *error = Some(e);
             }
-            if ip > 0 || op > 0 {
+            if progress {
                 Ok((ip, op, Status::Ok))
             } else {
                 Err(e)
             }
         }
     }
+}
+
+/// The error a decoder call returns before doing anything: the stored one,
+/// which stays, except [`Error::UnsupportedCheck`], an event returned once.
+pub(crate) fn pending(error: &mut Option<Error>) -> Option<Error> {
+    let e = (*error)?;
+    if e == Error::UnsupportedCheck {
+        *error = None;
+    }
+    Some(e)
 }
 
 /// liblzma's checks on an encoder's sequence of calls (`lzma_code`). Once a

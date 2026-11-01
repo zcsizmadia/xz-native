@@ -44,6 +44,13 @@ pub struct DecoderOptions {
     /// Fail with [`Error::Options`] on a check type this implementation can't
     /// verify (default: false; the check is skipped, as liblzma does).
     pub fail_on_unsupported_check: bool,
+    /// Report a check type this implementation can't verify with
+    /// [`Error::UnsupportedCheck`], once per Stream, and go on decoding on
+    /// the next call, like liblzma's `LZMA_TELL_UNSUPPORTED_CHECK` (as
+    /// `xz -d` uses it to warn; default: false). [`XzDecoder`],
+    /// [`crate::AutoDecoder`] and the readers report it; the one-shot
+    /// functions and `XzSeekableReader` don't.
+    pub tell_unsupported_check: bool,
     /// Threads for decoding multi-Block .xz data with
     /// [`crate::decompress_with_options`], `XzReader` and [`XzDecoder`]
     /// (default: 1; 0 = one per CPU). Blocks are decoded in parallel;
@@ -77,6 +84,7 @@ impl DecoderOptions {
             concatenated: true,
             ignore_check: false,
             fail_on_unsupported_check: false,
+            tell_unsupported_check: false,
             threads: 1,
             memlimit_threading: DEFAULT_MEMLIMIT_THREADING,
         }
@@ -94,6 +102,7 @@ crate::options::setters!(DecoderOptions {
     concatenated: bool,
     ignore_check: bool,
     fail_on_unsupported_check: bool,
+    tell_unsupported_check: bool,
     threads: usize,
     memlimit_threading: u64,
 });
@@ -629,7 +638,7 @@ impl XzDecoder {
         output: &mut [u8],
         finish: bool,
     ) -> Result<(usize, usize, Status)> {
-        if let Some(e) = self.error {
+        if let Some(e) = crate::push::pending(&mut self.error) {
             return Err(e);
         }
         let (mut ip, mut op) = (0, 0);
@@ -699,6 +708,11 @@ impl XzDecoder {
                     self.flags = Some(flags);
                     self.blocks = RecordHash::default();
                     self.expect(Seq::BlockHeaderFirst, 1);
+                    if self.opts.tell_unsupported_check
+                        && matches!(flags.check, Check::Unsupported(_))
+                    {
+                        return Err(Error::UnsupportedCheck);
+                    }
                 }
                 Seq::BlockHeaderFirst => {
                     let Some(&b) = input.get(*ip) else { break };

@@ -18,6 +18,11 @@ minor version may change the API.
   (`FilterStringFormat`) (#101).
 - `FilterStringFormat::list_filters` lists the filters and their options
   like liblzma's `lzma_str_list_filters()` (#101).
+- `DecoderOptions::tell_unsupported_check`, like liblzma's
+  `LZMA_TELL_UNSUPPORTED_CHECK`: a Stream with a check type that can't be
+  verified gives `Error::UnsupportedCheck` once, and decoding goes on with
+  the next call or read (`XzDecoder`, `AutoDecoder` and the readers, with
+  and without threads) (#105).
 - Filter Flags like liblzma's `lzma_filter_flags_encode()` and
   `lzma_filter_flags_decode()`: `Filter::flags` and `Filter::from_flags`,
   with liblzma's bytes and errors (#101).
@@ -74,6 +79,8 @@ minor version may change the API.
   the basic and the long help like xz's (#123).
 - `xz-native --filters-help`: the filter string syntax and the filters
   with their options, as xz shows them (#123).
+- `xz-native -d`/`-t` warns about an unsupported check type once per
+  Stream and goes on, as xz does (not with `--ignore-check`) (#105).
 - `xz-native` keeps its default thread memory budget 64 MiB below the
   data and address space limits (`ulimit -d`/`-v`), as xz does (#123).
 

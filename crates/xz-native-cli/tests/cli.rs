@@ -349,6 +349,50 @@ fn symlinks_and_permissions() {
 
 /// Runs `cmd` in `dir` with the C locale (no thousands separators, except
 /// in xz's Windows builds, which always group, as xz-native does there).
+/// A check type xz can't verify: a warning per Stream and decoding goes
+/// on, as in xz; none with `--ignore-check`; `-Q` keeps the status 0.
+#[test]
+fn unsupported_check_warns_like_xz() {
+    let dir = tmpdir("unsupported-check");
+    let file = fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../third_party/xz/tests/files/unsupported-check.xz"),
+    )
+    .unwrap();
+    fs::write(dir.join("u.xz"), &file).unwrap();
+    fs::write(dir.join("u2.xz"), [file.clone(), file].concat()).unwrap();
+    for args in [
+        &["-dc", "u2.xz"][..],
+        &["-dc", "-T1", "u2.xz"],
+        &["-tv", "u.xz"],
+        &["-dcQ", "u.xz"],
+        &["-dcq", "u.xz"],
+        &["-dc", "--ignore-check", "u.xz"],
+    ] {
+        let o = in_c_locale(bin(), &dir, args);
+        let warnings = stderr(&o)
+            .matches("Unsupported type of integrity check")
+            .count();
+        let want = match args {
+            [_, "u2.xz"] | [_, _, "u2.xz"] => 2,
+            [_, "--ignore-check", _] | ["-dcq", _] => 0,
+            _ => 1,
+        };
+        assert_eq!(warnings, want, "{args:?}: {}", stderr(&o));
+        let theirs = match Command::new("xz").arg("--version").output() {
+            Ok(_) => in_c_locale(Command::new("xz"), &dir, args),
+            Err(_) => continue,
+        };
+        assert_eq!(
+            stderr(&o).replace("xz-native:", "xz:"),
+            stderr(&theirs).replace('\r', ""),
+            "{args:?}"
+        );
+        assert_eq!(status(&o), status(&theirs), "{args:?}");
+        assert!(o.stdout == theirs.stdout, "{args:?}");
+    }
+}
+
 fn in_c_locale(mut cmd: Command, dir: &Path, args: &[&str]) -> Output {
     cmd.current_dir(dir).args(args).env("LC_ALL", "C");
     run(cmd, b"")
