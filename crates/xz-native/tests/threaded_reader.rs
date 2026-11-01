@@ -668,12 +668,21 @@ fn fail_fast_reports_errors_early() {
         .unwrap()
         .threads(4)
         .block_size(100_000);
-    let mut c = xz_native::compress_with_options(&data, &opts).unwrap();
-    let bl = blocks(&c, 0);
+    let good = xz_native::compress_with_options(&data, &opts).unwrap();
+    let bl = blocks(&good, 0);
     assert_eq!(bl.len(), 4);
     let (off, size, total) = bl[3];
-    c[off + size + (total - size) / 2] ^= 0x55;
-    for fail_fast in [false, true] {
+    // Broken data (a worker finds it) or a broken header (the parser).
+    let mut bad_data = good.clone();
+    bad_data[off + size + (total - size) / 2] ^= 0x55;
+    let mut bad_header = good;
+    bad_header[off + 2] ^= 0x55;
+    for (c, fail_fast) in [
+        (&bad_data, false),
+        (&bad_data, true),
+        (&bad_header, false),
+        (&bad_header, true),
+    ] {
         let opts = DecoderOptions::new().threads(4).fail_fast(fail_fast);
         let mut r = XzReader::with_options(&c[..], opts);
         let mut got = 0;
