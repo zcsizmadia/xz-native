@@ -30,7 +30,16 @@ pub enum Check {
     Sha256,
     /// A check ID reserved by the .xz format that this implementation can't
     /// verify (2, 3, 5-9, 11-15). Like liblzma, the decoder skips it.
-    Unsupported(u8),
+    ///
+    /// The variant is `#[non_exhaustive]`: only [`Check::from_id`] creates
+    /// it, so it never holds the ID of a supported check (there is no
+    /// `Unsupported { id: 4 }` that would differ from [`Check::Crc64`]).
+    /// Outside this crate, match it with `..`: `Check::Unsupported { id, .. }`.
+    #[non_exhaustive]
+    Unsupported {
+        /// The 4-bit check ID.
+        id: u8,
+    },
 }
 
 impl Check {
@@ -41,7 +50,7 @@ impl Check {
             0x01 => Check::Crc32,
             0x04 => Check::Crc64,
             0x0A => Check::Sha256,
-            0x02..=0x0F => Check::Unsupported(id),
+            0x02..=0x0F => Check::Unsupported { id },
             _ => return None,
         })
     }
@@ -53,7 +62,7 @@ impl Check {
             Check::Crc32 => 0x01,
             Check::Crc64 => 0x04,
             Check::Sha256 => 0x0A,
-            Check::Unsupported(id) => id,
+            Check::Unsupported { id } => id,
         }
     }
 
@@ -79,7 +88,7 @@ impl CheckState {
             Check::Crc32 => CheckState::Crc32(Crc32::default()),
             Check::Crc64 => CheckState::Crc64(Crc64::default()),
             Check::Sha256 => CheckState::Sha256(Sha256::new()),
-            Check::None | Check::Unsupported(_) => CheckState::None,
+            Check::None | Check::Unsupported { .. } => CheckState::None,
         }
     }
 

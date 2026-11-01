@@ -9,8 +9,8 @@ mod common;
 use common::{Rng, corpus, xz};
 use std::io::Write;
 use xz_native::{
-    Action, BcjKind, Check, EncoderOptions, Filter, LzmaOptions, LzmaWriter, MatchFinder, Mode,
-    Status, XzEncoder, XzWriter, compress, compress_lzma, compress_with_options, decompress,
+    Action, BcjKind, Check, EncoderOptions, Error, Filter, LzmaOptions, LzmaWriter, MatchFinder,
+    Mode, Status, XzEncoder, XzWriter, compress, compress_lzma, compress_with_options, decompress,
     decompress_lzma,
 };
 
@@ -74,7 +74,7 @@ fn sync_and_full_flush() {
     let data: Vec<u8> = (0..200_000u64).map(|i| (i * i % 251) as u8).collect();
     for full in [false, true] {
         let mut opts = EncoderOptions::preset(1).unwrap();
-        opts.filters = vec![Filter::Delta { distance: 2 }];
+        opts.filters = vec![Filter::delta(2).unwrap()];
         let mut enc = XzEncoder::with_options(opts).unwrap();
         let mut out = Vec::new();
         let mut buf = vec![0u8; 1000];
@@ -116,10 +116,7 @@ fn sync_and_full_flush() {
 fn sync_flush_with_bcj_is_rejected() {
     let opts = EncoderOptions::preset(0)
         .unwrap()
-        .filters(vec![Filter::Bcj {
-            kind: BcjKind::X86,
-            start_offset: 0,
-        }]);
+        .filters(vec![Filter::bcj(BcjKind::X86)]);
     let mut enc = XzEncoder::with_options(opts).unwrap();
     let mut buf = vec![0u8; 4096];
     let r = (0..10).try_for_each(|_| {
@@ -184,18 +181,16 @@ fn invalid_options() {
     assert!(bad(&|o| o.lzma.nice_len = 274));
     assert!(bad(&|o| o.lzma.dict_size = 4095));
     assert!(bad(&|o| o.lzma.dict_size = (3 << 29) + 1));
-    assert!(bad(&|o| o.check = Check::Unsupported(2)));
-    assert!(bad(
-        &|o| o.filters = vec![Filter::Lzma2 { dict_size: 1 << 20 }]
-    ));
-    assert!(bad(&|o| o.filters = vec![Filter::Delta { distance: 0 }]));
-    assert!(bad(&|o| o.filters = vec![Filter::Delta { distance: 1 }; 4]));
-    assert!(bad(&|o| {
-        o.filters = vec![Filter::Bcj {
-            kind: BcjKind::Arm,
-            start_offset: 2,
-        }]
-    }));
+    assert!(bad(&|o| o.check = Check::from_id(2).unwrap()));
+    assert!(bad(&|o| o.filters = vec![Filter::lzma2(1 << 20)]));
+    assert!(bad(&|o| o.filters = vec![Filter::delta(1).unwrap(); 4]));
+    // A Delta distance of 0 or a misaligned BCJ start offset can't be built.
+    assert_eq!(Filter::delta(0), Err(Error::InvalidOptions));
+    assert_eq!(Filter::delta(257), Err(Error::InvalidOptions));
+    assert_eq!(
+        Filter::bcj_with_start_offset(BcjKind::Arm, 2),
+        Err(Error::InvalidOptions)
+    );
     // nice_len below the hash size is raised, like liblzma.
     let mut o = EncoderOptions::preset(6).unwrap();
     o.lzma.nice_len = 2;
@@ -223,13 +218,7 @@ fn xz_cli_decodes_our_output() {
         v.push(
             EncoderOptions::preset(2)
                 .unwrap()
-                .filters(vec![
-                    Filter::Delta { distance: 4 },
-                    Filter::Bcj {
-                        kind: BcjKind::X86,
-                        start_offset: 0,
-                    },
-                ])
+                .filters(vec![Filter::delta(4).unwrap(), Filter::bcj(BcjKind::X86)])
                 .block_size(100_000),
         );
         v
@@ -463,12 +452,7 @@ fn dropping_threaded_encoder_is_prompt() {
 #[test]
 fn matches_xz_cli_multithreaded() {
     let corpus = corpus();
-    let x86 = || {
-        vec![Filter::Bcj {
-            kind: BcjKind::X86,
-            start_offset: 0,
-        }]
-    };
+    let x86 = || vec![Filter::bcj(BcjKind::X86)];
     let mut p9e = EncoderOptions::preset(9 | xz_native::PRESET_EXTREME).unwrap();
     p9e.lzma.dict_size = 1 << 20;
     let cases: Vec<(&[&str], EncoderOptions)> = vec![
@@ -528,7 +512,7 @@ fn matches_xz_cli_multithreaded() {
 /// figures grow with the dictionary, the threads and the filters.
 #[test]
 fn encoder_memusage() {
-    use xz_native::{BcjKind, EncoderOptions, Error, Filter, RawMethod, RawOptions};
+    use xz_native::{BcjKind, EncoderOptions, Filter, RawMethod, RawOptions};
     let m = |p: u32| {
         EncoderOptions::preset(p)
             .unwrap()
@@ -542,10 +526,7 @@ fn encoder_memusage() {
     assert!(six.clone().threads(0).encoder_memusage().unwrap() >= m(6));
     let bcj = six
         .clone()
-        .filters(vec![Filter::Bcj {
-            kind: BcjKind::X86,
-            start_offset: 0,
-        }])
+        .filters(vec![Filter::bcj(BcjKind::X86)])
         .encoder_memusage()
         .unwrap();
     assert_eq!(bcj, m(6) + 1024);
@@ -562,7 +543,7 @@ fn encoder_memusage() {
     let mut bad = lzma2.clone();
     bad.lzma.dict_size = 100;
     assert_eq!(bad.encoder_memusage(), Err(Error::InvalidOptions));
-    let bad = six.clone().filters(vec![Filter::Delta { distance: 0 }]);
+    let bad = six.clone().filters(vec![Filter::delta(1).unwrap(); 4]);
     assert_eq!(bad.encoder_memusage(), Err(Error::InvalidOptions));
     assert_eq!(
         six.clone().threads(16_385).encoder_memusage(),

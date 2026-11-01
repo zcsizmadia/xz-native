@@ -81,16 +81,13 @@ fn lzma2_properties() {
             sys::LZMA_FILTER_LZMA2,
             (&mut o as *mut sys::lzma_options_lzma).cast(),
         );
-        let ours = Filter::Lzma2 { dict_size: d }.properties();
+        let ours = Filter::lzma2(d).properties();
         assert_eq!(Some(ours), theirs, "dict {d}");
     }
     for b in 0..=255u8 {
         let ours = Filter::from_properties(sys::LZMA_FILTER_LZMA2, &[b]).ok();
-        let theirs = c_decode_as::<sys::lzma_options_lzma>(sys::LZMA_FILTER_LZMA2, &[b]).map(|o| {
-            Filter::Lzma2 {
-                dict_size: o.dict_size,
-            }
-        });
+        let theirs = c_decode_as::<sys::lzma_options_lzma>(sys::LZMA_FILTER_LZMA2, &[b])
+            .map(|o| Filter::lzma2(o.dict_size));
         assert_eq!(ours, theirs, "byte {b}");
     }
     // Not exactly one byte.
@@ -110,14 +107,12 @@ fn delta_and_bcj_properties() {
             reserved_ptr: [std::ptr::null_mut(); 2],
         };
         let theirs = c_encode(sys::LZMA_FILTER_DELTA, (&mut o as *mut DeltaOptions).cast());
-        assert_eq!(Some(Filter::Delta { distance: dist }.properties()), theirs);
+        assert_eq!(Some(Filter::delta(dist).unwrap().properties()), theirs);
     }
     for b in 0..=255u8 {
         let ours = Filter::from_properties(sys::LZMA_FILTER_DELTA, &[b]).ok();
-        let theirs =
-            c_decode_as::<DeltaOptions>(sys::LZMA_FILTER_DELTA, &[b]).map(|o| Filter::Delta {
-                distance: o.dist as u16,
-            });
+        let theirs = c_decode_as::<DeltaOptions>(sys::LZMA_FILTER_DELTA, &[b])
+            .map(|o| Filter::delta(o.dist as u16).unwrap());
         assert_eq!(ours, theirs, "byte {b}");
     }
     for kind in [BcjKind::X86, BcjKind::Arm64, BcjKind::RiscV, BcjKind::Ia64] {
@@ -127,7 +122,7 @@ fn delta_and_bcj_properties() {
                 kind.filter_id(),
                 (&mut o as *mut sys::lzma_options_bcj).cast(),
             );
-            let f = Filter::Bcj { kind, start_offset };
+            let f = Filter::bcj_with_start_offset(kind, start_offset).unwrap();
             assert_eq!(Some(f.properties()), theirs, "{kind:?} {start_offset}");
             let back = Filter::from_properties(kind.filter_id(), &f.properties()).unwrap();
             assert_eq!(back, f);
@@ -199,17 +194,15 @@ fn c_flags_decode(buf: &[u8]) -> (sys::lzma_ret, usize) {
 fn filter_flags() {
     // Encoding: the same bytes as liblzma.
     let mut filters = vec![
-        Filter::Lzma2 { dict_size: 4096 },
-        Filter::Lzma2 { dict_size: 8 << 20 },
-        Filter::Lzma2 {
-            dict_size: u32::MAX,
-        },
-        Filter::Delta { distance: 1 },
-        Filter::Delta { distance: 256 },
+        Filter::lzma2(4096),
+        Filter::lzma2(8 << 20),
+        Filter::lzma2(u32::MAX),
+        Filter::delta(1).unwrap(),
+        Filter::delta(256).unwrap(),
     ];
     for kind in [BcjKind::X86, BcjKind::Arm64, BcjKind::RiscV] {
         for start_offset in [0, 4096] {
-            filters.push(Filter::Bcj { kind, start_offset });
+            filters.push(Filter::bcj_with_start_offset(kind, start_offset).unwrap());
         }
     }
     for f in &filters {
@@ -222,11 +215,11 @@ fn filter_flags() {
         };
         let mut bcj = sys::lzma_options_bcj { start_offset: 0 };
         let options: *mut c_void = match *f {
-            Filter::Lzma2 { dict_size } => {
+            Filter::Lzma2 { dict_size, .. } => {
                 lzma.dict_size = dict_size;
                 (&mut lzma as *mut sys::lzma_options_lzma).cast()
             }
-            Filter::Delta { distance } => {
+            Filter::Delta { distance, .. } => {
                 delta.dist = distance.into();
                 (&mut delta as *mut DeltaOptions).cast()
             }

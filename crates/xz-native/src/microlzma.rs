@@ -79,10 +79,7 @@ pub fn microlzma_decode(
     props[1..].copy_from_slice(&dict_size.to_le_bytes());
     let lzma = LzmaOptions::from_lzma1_properties(&props)?;
     let opts = RawOptions {
-        method: RawMethod::Lzma1Ext {
-            uncompressed_size: exact.then_some(output.len() as u64),
-            end_marker: false,
-        },
+        method: RawMethod::lzma1_ext(exact.then_some(output.len() as u64), false),
         lzma,
         filters: alloc::vec::Vec::new(),
     };

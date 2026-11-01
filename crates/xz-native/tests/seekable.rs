@@ -513,11 +513,12 @@ fn filter_chain(filters: &[Filter]) -> String {
     let names: Vec<String> = filters
         .iter()
         .map(|f| match *f {
-            Filter::Lzma2 { dict_size } => format!("--lzma2=dict={}", size(dict_size)),
-            Filter::Delta { distance } => format!("--delta=dist={distance}"),
+            Filter::Lzma2 { dict_size, .. } => format!("--lzma2=dict={}", size(dict_size)),
+            Filter::Delta { distance, .. } => format!("--delta=dist={distance}"),
             Filter::Bcj {
                 kind: BcjKind::X86,
                 start_offset: 0,
+                ..
             } => "--x86".into(),
             other => format!("{other:?}"),
         })
@@ -626,7 +627,7 @@ fn metadata_matches_xz_list() {
                 assert_eq!(f[12], flags, "{line}");
                 assert_eq!(f[13], data_size.to_string(), "{line}");
                 assert_eq!(f[15], filter_chain(&d.filters), "{line}");
-                let Some(&Filter::Lzma2 { dict_size }) = d.filters.last() else {
+                let Some(&Filter::Lzma2 { dict_size, .. }) = d.filters.last() else {
                     panic!("{line}")
                 };
                 assert!(d.memusage > u64::from(dict_size), "{line}");

@@ -40,17 +40,18 @@ pub enum RawMethod {
     /// use xz_native::{Action, RawDecoder, RawEncoder, RawMethod, RawOptions};
     ///
     /// let data = b"stored size, no end marker".repeat(20);
-    /// let method = RawMethod::Lzma1Ext { uncompressed_size: None, end_marker: false };
+    /// let method = RawMethod::lzma1_ext(None, false);
     /// let packed = xz_native::compress_raw(&data, &RawOptions::preset(method, 6)?)?;
     ///
-    /// let method = RawMethod::Lzma1Ext {
-    ///     uncompressed_size: Some(data.len() as u64),
-    ///     end_marker: false,
-    /// };
+    /// let method = RawMethod::lzma1_ext(Some(data.len() as u64), false);
     /// let plain = xz_native::decompress_raw(&packed, &RawOptions::preset(method, 6)?)?;
     /// assert_eq!(plain, data);
     /// # Ok::<(), xz_native::Error>(())
     /// ```
+    ///
+    /// The variant is `#[non_exhaustive]`: build it with
+    /// [`RawMethod::lzma1_ext`] and match it with `..`.
+    #[non_exhaustive]
     Lzma1Ext {
         /// The size of the decoded data, or `None` if unknown (then the end
         /// marker is required). Only the decoder uses it.
@@ -59,6 +60,19 @@ pub enum RawMethod {
         /// `uncompressed_size` bytes.
         end_marker: bool,
     },
+}
+
+impl RawMethod {
+    /// [`RawMethod::Lzma1Ext`] (`LZMA_FILTER_LZMA1EXT`) with the size of the
+    /// decoded data (`None` if unknown; liblzma `lzma_options_lzma.ext_size_low`
+    /// and `ext_size_high`) and whether the end marker is written or allowed
+    /// (`LZMA_LZMA1EXT_ALLOW_EOPM` in `lzma_options_lzma.ext_flags`).
+    pub const fn lzma1_ext(uncompressed_size: Option<u64>, end_marker: bool) -> Self {
+        RawMethod::Lzma1Ext {
+            uncompressed_size,
+            end_marker,
+        }
+    }
 }
 
 /// Options for raw streams: what `xz --format=raw` takes on its command

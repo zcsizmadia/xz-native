@@ -65,7 +65,7 @@ fn chain(o: &LzmaOptions, filters: &[Filter], lzma_id: u64) -> Chain {
     };
     for f in filters {
         match *f {
-            Filter::Delta { distance } => {
+            Filter::Delta { distance, .. } => {
                 c.deltas.push(Box::new(DeltaOptions {
                     kind: 0,
                     dist: distance.into(),
@@ -151,14 +151,8 @@ fn option_sets() -> Vec<LzmaOptions> {
 fn raw_encoder_memusage_matches_liblzma() {
     let chains = [
         vec![],
-        vec![Filter::Delta { distance: 4 }],
-        vec![
-            Filter::Bcj {
-                kind: BcjKind::X86,
-                start_offset: 0,
-            },
-            Filter::Delta { distance: 1 },
-        ],
+        vec![Filter::delta(4).unwrap()],
+        vec![Filter::bcj(BcjKind::X86), Filter::delta(1).unwrap()],
     ];
     for o in option_sets() {
         for filters in &chains {
@@ -237,13 +231,7 @@ fn easy_and_mt_encoder_memusage_match_liblzma() {
     // Filters before LZMA2, with threads.
     let e = EncoderOptions::preset(3)
         .unwrap()
-        .filters(vec![
-            Filter::Bcj {
-                kind: BcjKind::Arm64,
-                start_offset: 0,
-            },
-            Filter::Delta { distance: 2 },
-        ])
+        .filters(vec![Filter::bcj(BcjKind::Arm64), Filter::delta(2).unwrap()])
         .threads(4);
     assert_eq!(e.encoder_memusage().unwrap(), c_mt(&e, 4));
 }

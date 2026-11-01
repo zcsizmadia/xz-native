@@ -9,6 +9,15 @@ minor version may change the API.
 ## [Unreleased]
 
 ### Changed
+- The variants `Filter::Lzma2`, `Filter::Delta`, `Filter::Bcj`,
+  `RawMethod::Lzma1Ext` and `Check::Unsupported` are `#[non_exhaustive]`,
+  so invalid values can't be built outside the crate and fields can be
+  added later. Build them with `Filter::lzma2`, `Filter::delta` (distance
+  1-256), `Filter::bcj`, `Filter::bcj_with_start_offset` (aligned start
+  offset; both checked ones return `Error::InvalidOptions`) and
+  `RawMethod::lzma1_ext`; `Check::Unsupported` comes only from
+  `Check::from_id`. Patterns need `..` (`Filter::Delta { distance, .. }`,
+  `Check::Unsupported { id, .. }`) (#156).
 - Without the `std` feature, `EncoderOptions::threads` other than 1 or
   `multithreaded` is `Error::InvalidOptions` instead of being ignored:
   the single-threaded output would change once another crate in the

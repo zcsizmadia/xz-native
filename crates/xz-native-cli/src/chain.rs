@@ -141,8 +141,10 @@ pub fn from_raw(raw: RawOptions) -> Vec<Item> {
         .filters
         .iter()
         .map(|f| match *f {
-            Filter::Delta { distance } => Item::Delta(distance),
-            Filter::Bcj { kind, start_offset } => Item::Bcj(kind, start_offset),
+            Filter::Delta { distance, .. } => Item::Delta(distance),
+            Filter::Bcj {
+                kind, start_offset, ..
+            } => Item::Bcj(kind, start_offset),
             _ => unreachable!("only Delta and BCJ filters come before LZMA"),
         })
         .collect();

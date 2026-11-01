@@ -130,10 +130,12 @@ fn prefilters_c(filters: &[Filter]) -> Filters {
     let mut f = Filters::new();
     for filter in filters {
         match *filter {
-            Filter::Delta { distance } => {
+            Filter::Delta { distance, .. } => {
                 f.delta_properties(&[(distance - 1) as u8]).unwrap();
             }
-            Filter::Bcj { kind, start_offset } => {
+            Filter::Bcj {
+                kind, start_offset, ..
+            } => {
                 let p = start_offset.to_le_bytes();
                 let props: &[u8] = if start_offset == 0 { &[] } else { &p };
                 match kind {
@@ -415,35 +417,26 @@ fn filters_match_liblzma() {
     for kind in kinds {
         for start_offset in [0, 16 * 1024] {
             let mut o = preset_opts(6, 1 << 20);
-            o.filters = vec![Filter::Bcj { kind, start_offset }];
+            o.filters = vec![Filter::bcj_with_start_offset(kind, start_offset).unwrap()];
             check_xz(&format!("{kind:?} offset {start_offset}"), &data, &o);
         }
     }
     for distance in [1, 2, 4, 7, 256] {
         let mut o = preset_opts(1, 1 << 20);
-        o.filters = vec![Filter::Delta { distance }];
+        o.filters = vec![Filter::delta(distance).unwrap()];
         check_xz(&format!("delta {distance}"), &data, &o);
     }
     let mut o = preset_opts(6, 1 << 20);
     o.filters = vec![
-        Filter::Delta { distance: 4 },
-        Filter::Bcj {
-            kind: BcjKind::X86,
-            start_offset: 0,
-        },
-        Filter::Bcj {
-            kind: BcjKind::Arm64,
-            start_offset: 0,
-        },
+        Filter::delta(4).unwrap(),
+        Filter::bcj(BcjKind::X86),
+        Filter::bcj(BcjKind::Arm64),
     ];
     check_xz("delta+x86+arm64", &data, &o);
     // Short inputs keep bytes unfiltered at the end.
     for n in [0, 1, 4, 5, 15, 17] {
         let mut o = preset_opts(0, 1 << 20);
-        o.filters = vec![Filter::Bcj {
-            kind: BcjKind::Ia64,
-            start_offset: 0,
-        }];
+        o.filters = vec![Filter::bcj(BcjKind::Ia64)];
         check_xz(&format!("ia64 n={n}"), &data[..n], &o);
     }
 }
@@ -510,13 +503,10 @@ fn raw_matches_liblzma() {
     use xz_native::{RawEncoder, RawMethod, RawOptions};
     let filter_sets = [
         vec![],
-        vec![Filter::Delta { distance: 2 }],
+        vec![Filter::delta(2).unwrap()],
         vec![
-            Filter::Bcj {
-                kind: BcjKind::Arm64,
-                start_offset: 64,
-            },
-            Filter::Delta { distance: 1 },
+            Filter::bcj_with_start_offset(BcjKind::Arm64, 64).unwrap(),
+            Filter::delta(1).unwrap(),
         ],
     ];
     for (name, data) in corpus() {
@@ -666,7 +656,7 @@ fn streaming_and_flushes_match_liblzma() {
     for (i, preset) in [0u32, 1, 4, 6, 9].into_iter().enumerate() {
         let mut o = preset_opts(preset, 1 << 18);
         if i % 2 == 1 {
-            o.filters = vec![Filter::Delta { distance: 3 }];
+            o.filters = vec![Filter::delta(3).unwrap()];
         }
         let mut chunks: Vec<(&[u8], Action)> = Vec::new();
         let mut pos = 0;
@@ -808,14 +798,9 @@ fn random_options_match_liblzma() {
         ][(r.next() % 4) as usize];
         for _ in 0..r.next() % 4 {
             o.filters.push(if r.next().is_multiple_of(2) {
-                Filter::Delta {
-                    distance: 1 + (r.next() % 256) as u16,
-                }
+                Filter::delta(1 + (r.next() % 256) as u16).unwrap()
             } else {
-                Filter::Bcj {
-                    kind: kinds[(r.next() % 8) as usize],
-                    start_offset: 0,
-                }
+                Filter::bcj(kinds[(r.next() % 8) as usize])
             });
         }
         if r.next().is_multiple_of(4) {
@@ -984,25 +969,13 @@ fn mt_checks_and_filters_match_liblzma() {
         check_mt(&format!("{check:?}"), &data, &o, &[1, 4]);
     }
     let chains = [
-        vec![Filter::Bcj {
-            kind: BcjKind::X86,
-            start_offset: 0,
-        }],
-        vec![Filter::Bcj {
-            kind: BcjKind::Arm64,
-            start_offset: 1 << 12,
-        }],
-        vec![Filter::Delta { distance: 4 }],
+        vec![Filter::bcj(BcjKind::X86)],
+        vec![Filter::bcj_with_start_offset(BcjKind::Arm64, 1 << 12).unwrap()],
+        vec![Filter::delta(4).unwrap()],
         vec![
-            Filter::Delta { distance: 2 },
-            Filter::Bcj {
-                kind: BcjKind::X86,
-                start_offset: 0,
-            },
-            Filter::Bcj {
-                kind: BcjKind::RiscV,
-                start_offset: 0,
-            },
+            Filter::delta(2).unwrap(),
+            Filter::bcj(BcjKind::X86),
+            Filter::bcj(BcjKind::RiscV),
         ],
     ];
     for filters in chains {
@@ -1029,7 +1002,7 @@ fn mt_incompressible_blocks_match_liblzma() {
     let mut data = random(45 << 20, 39);
     // A compressible Block between stored ones.
     data[20 << 20..21 << 20].copy_from_slice(&text(1 << 20, 40));
-    for filters in [vec![], vec![Filter::Delta { distance: 1 }]] {
+    for filters in [vec![], vec![Filter::delta(1).unwrap()]] {
         let mut o = preset_opts(0, 1 << 20);
         o.block_size = 20 << 20;
         o.filters = filters;
@@ -1060,7 +1033,7 @@ fn mt_streaming_and_flushes_match_liblzma() {
         let mut o = preset_opts(preset, 1 << 18);
         o.block_size = [0, 100_000, 300_001][i];
         if i == 1 {
-            o.filters = vec![Filter::Delta { distance: 3 }];
+            o.filters = vec![Filter::delta(3).unwrap()];
         }
         let mut chunks: Vec<(&[u8], Action)> = Vec::new();
         let mut pos = 0;
@@ -1123,10 +1096,7 @@ fn mt_random_options_match_liblzma() {
             xz_native::Check::Sha256,
         ][(r.next() % 4) as usize];
         if r.next().is_multiple_of(3) {
-            o.filters.push(Filter::Bcj {
-                kind: BcjKind::X86,
-                start_offset: 0,
-            });
+            o.filters.push(Filter::bcj(BcjKind::X86));
         }
         o.block_size = match r.next() % 3 {
             0 => 0,

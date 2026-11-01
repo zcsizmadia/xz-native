@@ -80,10 +80,7 @@ fn c_lzma1ext(
 }
 
 fn opts(preset: u32, size: Option<u64>, end_marker: bool) -> RawOptions {
-    let method = RawMethod::Lzma1Ext {
-        uncompressed_size: size,
-        end_marker,
-    };
+    let method = RawMethod::lzma1_ext(size, end_marker);
     RawOptions::preset(method, preset).unwrap()
 }
 

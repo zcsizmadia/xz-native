@@ -65,14 +65,9 @@ fn options(h: &[u8; HEADER]) -> (EncoderOptions, bool) {
     for i in 0..(h[7] % 4) as usize {
         let b = h[7].rotate_left(2 + 2 * i as u32);
         o.filters.push(if b & 1 != 0 {
-            Filter::Delta {
-                distance: 1 + (b >> 1) as u16 % 16,
-            }
+            Filter::delta(1 + (b >> 1) as u16 % 16).unwrap()
         } else {
-            Filter::Bcj {
-                kind: kinds[(b >> 1) as usize % 8],
-                start_offset: 0,
-            }
+            Filter::bcj(kinds[(b >> 1) as usize % 8])
         });
     }
     o.block_size = if h[8] < 200 {
@@ -112,7 +107,7 @@ fn liblzma(o: &EncoderOptions, alone: bool, data: &[u8]) -> Vec<u8> {
         let mut f = Filters::new();
         for filter in &o.filters {
             match *filter {
-                Filter::Delta { distance } => {
+                Filter::Delta { distance, .. } => {
                     f.delta_properties(&[(distance - 1) as u8]).unwrap();
                 }
                 Filter::Bcj { kind, .. } => {

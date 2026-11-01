@@ -261,7 +261,7 @@ pub(crate) fn parse<R: Read + Seek>(
             return Err(Error::Data.into());
         }
         if opts.unsupported_check == UnsupportedCheck::Fail
-            && matches!(flags.check, Check::Unsupported(_))
+            && matches!(flags.check, Check::Unsupported { .. })
         {
             return Err(Error::Options.into());
         }

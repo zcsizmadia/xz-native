@@ -501,4 +501,25 @@ mod tests {
             }
         }
     }
+
+    // The constructors reject these, so only crate-internal code can build
+    // them; the encoders still check.
+    #[test]
+    fn invalid_filters() {
+        let delta0 = Filter::Delta { distance: 0 };
+        let delta257 = Filter::Delta { distance: 257 };
+        let arm2 = Filter::Bcj {
+            kind: crate::BcjKind::Arm,
+            start_offset: 2,
+        };
+        for f in [delta0, delta257, arm2] {
+            assert_eq!(validate_filters(&[f]), Err(Error::InvalidOptions), "{f:?}");
+            let o = EncoderOptions::preset(1).unwrap().filters(alloc::vec![f]);
+            assert_eq!(o.encoder_memusage(), Err(Error::InvalidOptions), "{f:?}");
+            let r = crate::RawOptions::default().filters(alloc::vec![f]);
+            assert_eq!(crate::compress_raw(b"", &r), Err(Error::InvalidOptions));
+            assert_eq!(crate::decompress_raw(b"", &r), Err(Error::InvalidOptions));
+        }
+        assert_eq!(validate_filters(&[Filter::delta(256).unwrap()]), Ok(()));
+    }
 }

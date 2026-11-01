@@ -131,10 +131,7 @@ fn bcj_output_matches_xz() {
             for start in [0u32, 4096 + align] {
                 let opts = EncoderOptions::default()
                     .lzma(LzmaOptions::preset(0).unwrap())
-                    .filters(vec![Filter::Bcj {
-                        kind,
-                        start_offset: start,
-                    }]);
+                    .filters(vec![Filter::bcj_with_start_offset(kind, start).unwrap()]);
                 let ours = compress_with_options(&data, &opts).unwrap();
                 assert_eq!(
                     decompress(&ours).unwrap(),
@@ -198,10 +195,7 @@ fn single_instruction_matches_xz() {
     for (kind, name, data) in cases {
         let opts = EncoderOptions::default()
             .lzma(LzmaOptions::preset(0).unwrap())
-            .filters(vec![Filter::Bcj {
-                kind,
-                start_offset: 0,
-            }]);
+            .filters(vec![Filter::bcj(kind)]);
         let ours = compress_with_options(data, &opts).unwrap();
         let filter = format!("--{name}");
         let Some(theirs) = xz(&["-zc", "-T1", &filter, "--lzma2=preset=0"], data) else {
@@ -228,10 +222,7 @@ fn riscv_special_auipc_matches_xz() {
     }
     let opts = EncoderOptions::default()
         .lzma(LzmaOptions::preset(0).unwrap())
-        .filters(vec![Filter::Bcj {
-            kind: BcjKind::RiscV,
-            start_offset: 0,
-        }]);
+        .filters(vec![Filter::bcj(BcjKind::RiscV)]);
     let ours = compress_with_options(&data, &opts).unwrap();
     let Some(theirs) = xz(&["-zc", "-T1", "--riscv", "--lzma2=preset=0"], &data) else {
         return;

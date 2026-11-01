@@ -61,13 +61,13 @@ fn chain_c(filters: &[Filter], lzma: &LzmaOptions) -> (Vec<sys::lzma_filter>, Ve
             Filter::Bcj { start_offset, .. } => {
                 COptions::Bcj(sys::lzma_options_bcj { start_offset })
             }
-            Filter::Delta { distance } => COptions::Delta(DeltaOptions {
+            Filter::Delta { distance, .. } => COptions::Delta(DeltaOptions {
                 kind: 0,
                 dist: u32::from(distance),
                 reserved_int: [0; 4],
                 reserved_ptr: [std::ptr::null_mut(); 2],
             }),
-            Filter::Lzma2 { dict_size } => {
+            Filter::Lzma2 { dict_size, .. } => {
                 let mut c = lzma_c(lzma);
                 c.dict_size = dict_size;
                 COptions::Lzma(c)
@@ -343,10 +343,7 @@ fn opts(threads: usize, block_size: u64) -> EncoderOptions {
 }
 
 fn x86() -> Vec<Filter> {
-    vec![Filter::Bcj {
-        kind: BcjKind::X86,
-        start_offset: 0,
-    }]
+    vec![Filter::bcj(BcjKind::X86)]
 }
 
 fn decodes_to(xz: &[u8], parts: &[&[u8]]) {
@@ -360,11 +357,8 @@ fn between_blocks() {
     let mut lc0 = lzma(9, 1 << 17);
     (lc0.lc, lc0.lp, lc0.pb) = (0, 2, 0);
     let delta = vec![
-        Filter::Delta { distance: 4 },
-        Filter::Bcj {
-            kind: BcjKind::Arm64,
-            start_offset: 64,
-        },
+        Filter::delta(4).unwrap(),
+        Filter::bcj_with_start_offset(BcjKind::Arm64, 64).unwrap(),
     ];
     for threads in [1, 3] {
         let steps = [
@@ -389,8 +383,8 @@ fn invalid_options() {
     let d = sample(50_000, 2);
     let mut bad_lclp = lzma(6, 1 << 18);
     (bad_lclp.lc, bad_lclp.lp) = (3, 2);
-    let four = vec![Filter::Delta { distance: 1 }; 4];
-    let lzma2_inside = vec![Filter::Lzma2 { dict_size: 1 << 20 }];
+    let four = vec![Filter::delta(1).unwrap(); 4];
+    let lzma2_inside = vec![Filter::lzma2(1 << 20)];
     for threads in [1, 2] {
         let steps = [
             Step::Code(&d[..20_000], Action::FullFlush),
@@ -472,14 +466,8 @@ fn random_sequences() {
     let filter_sets = [
         Vec::new(),
         x86(),
-        vec![Filter::Delta { distance: 2 }],
-        vec![
-            Filter::Delta { distance: 1 },
-            Filter::Bcj {
-                kind: BcjKind::Arm,
-                start_offset: 0,
-            },
-        ],
+        vec![Filter::delta(2).unwrap()],
+        vec![Filter::delta(1).unwrap(), Filter::bcj(BcjKind::Arm)],
     ];
     let seeds = if cfg!(debug_assertions) { 10 } else { 200 };
     for seed in 0..seeds {

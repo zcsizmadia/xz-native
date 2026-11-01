@@ -99,7 +99,7 @@ fn filter_chain(filters: &[Filter]) -> String {
     let mut raw = RawOptions::default().method(RawMethod::Lzma2);
     for f in filters {
         match *f {
-            Filter::Lzma2 { dict_size } => raw.lzma.dict_size = dict_size,
+            Filter::Lzma2 { dict_size, .. } => raw.lzma.dict_size = dict_size,
             f => raw.filters.push(f),
         }
     }
@@ -596,18 +596,12 @@ mod tests {
 
     #[test]
     fn filter_chains() {
-        assert_eq!(
-            filter_chain(&[Filter::Lzma2 { dict_size: 8 << 20 }]),
-            "--lzma2=dict=8MiB"
-        );
+        assert_eq!(filter_chain(&[Filter::lzma2(8 << 20)]), "--lzma2=dict=8MiB");
         assert_eq!(
             filter_chain(&[
-                Filter::Delta { distance: 4 },
-                Filter::Bcj {
-                    kind: BcjKind::Arm64,
-                    start_offset: 4096
-                },
-                Filter::Lzma2 { dict_size: 3 << 11 }
+                Filter::delta(4).unwrap(),
+                Filter::bcj_with_start_offset(BcjKind::Arm64, 4096).unwrap(),
+                Filter::lzma2(3 << 11)
             ]),
             "--delta=dist=4 --arm64=start=4KiB --lzma2=dict=6KiB"
         );
