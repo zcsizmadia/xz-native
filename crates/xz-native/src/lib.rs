@@ -147,7 +147,7 @@ pub use raw::{RawDecoder, RawEncoder, RawMethod, RawOptions};
 #[cfg(feature = "std")]
 pub use seek::{BlockDetails, BlockInfo, StreamInfo, XzSeekableReader};
 pub use xz::encoder::{Action, XzEncoder};
-pub use xz::stream::{DecoderOptions, Status, XzDecoder};
+pub use xz::stream::{DecoderOptions, Status, UnsupportedCheck, XzDecoder};
 
 /// The xz/liblzma release this crate matches, as liblzma's
 /// `LZMA_VERSION_STRING` (the crate version carries it as build metadata,

@@ -312,7 +312,7 @@ fn lzma_header_dictionary_size_is_rounded() {
 /// A call without output space isn't truncation, even with `finish` and no
 /// input left; and a file with a check this crate can't verify decodes
 /// through the push API (with its check skipped) unless
-/// `fail_on_unsupported_check` is set.
+/// `UnsupportedCheck::Fail` is set.
 #[test]
 fn xz_decoder_no_space_and_unsupported_check() {
     let data = sample();
@@ -331,19 +331,20 @@ fn xz_decoder_no_space_and_unsupported_check() {
     let mut dec = XzDecoder::new();
     let (_, _, s) = dec.decode(&file, &mut out, true).unwrap();
     assert_eq!(s, Status::StreamEnd);
-    let opts = xz_native::DecoderOptions::new().fail_on_unsupported_check(true);
+    let opts =
+        xz_native::DecoderOptions::new().unsupported_check(xz_native::UnsupportedCheck::Fail);
     let mut dec = XzDecoder::with_options(opts);
     // The Stream Header is consumed first, then the error comes.
     assert_eq!(dec.decode(&file, &mut out, true), Ok((12, 0, Status::Ok)));
     assert_eq!(dec.decode(&file[12..], &mut out, true), Err(Error::Options));
 }
 
-/// `tell_unsupported_check`: an `Error::UnsupportedCheck` event per
+/// `UnsupportedCheck::Report`: an `Error::UnsupportedCheck` event per
 /// Stream, after which decoding goes on, in the push decoder and the
 /// readers, with and without threads.
 #[test]
-fn tell_unsupported_check() {
-    use xz_native::{AutoReader, DecoderOptions};
+fn report_unsupported_check() {
+    use xz_native::{AutoReader, DecoderOptions, UnsupportedCheck};
     let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../third_party/xz/tests/files/unsupported-check.xz");
     let file = std::fs::read(p).unwrap();
@@ -352,7 +353,7 @@ fn tell_unsupported_check() {
     let want = [plain.clone(), plain].concat();
     for threads in [1, 2] {
         let opts = DecoderOptions::new()
-            .tell_unsupported_check(true)
+            .unsupported_check(UnsupportedCheck::Report)
             .threads(threads);
         for step in [1, two.len()] {
             let mut dec = XzDecoder::with_options(opts);

@@ -98,6 +98,11 @@ jobs:
         run: |
           cargo test -p xz-native --profile ci --features tokio,futures-io --test async_io --test auto_traits
           cargo test -p xz-native --profile ci --features tokio,futures-io --doc
+      - name: Test (doc examples, unoptimized)
+        # Users' debug builds: large values on the stack overflow Windows'
+        # 1 MiB main thread stack without optimization.
+        if: runner.os == 'Windows'
+        run: cargo test -p xz-native --all-features --doc
       - name: Test (32-bit)
         # Dictionary and buffer sizes from untrusted headers hit the 32-bit
         # address space limits.

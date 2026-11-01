@@ -8,7 +8,16 @@ minor version may change the API.
 
 ## [Unreleased]
 
+### Changed
+- `DecoderOptions::unsupported_check` (`UnsupportedCheck::Ignore`,
+  `Report` or `Fail`) replaces the two flags `fail_on_unsupported_check`
+  and `tell_unsupported_check`, which allowed four combinations for three
+  behaviors. `Ignore` is the default, as before (#156).
+
 ### Fixed
+- `RawEncoder` (and `compress_raw`) overflowed the stack in unoptimized
+  builds on Windows: the LZ encoder was moved through the stack before
+  being boxed (#156).
 - Threaded decoding: `set_memlimit` below the cost of a Block already
   parsed ahead panicked (`assertion failed: paused`) once the Blocks in
   flight were out; that Block is now decoded on the calling thread. Block
