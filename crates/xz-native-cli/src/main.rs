@@ -13,6 +13,7 @@ mod num;
 mod progress;
 mod ram;
 mod signals;
+mod sparse;
 
 use args::{Action, Opts, V_ERROR, V_WARNING};
 use std::ffi::OsString;
@@ -150,7 +151,7 @@ Operation modifiers:
         s.push_str(
             "      --single-stream decompress only the first stream, and silently
                       ignore possible remaining input data
-      --no-sparse     accepted for compatibility (output is never sparse)
+      --no-sparse     do not create sparse files when decompressing
   -S, --suffix=.SUF   use the suffix '.SUF' on compressed files
       --files[=FILE]  read filenames to process from FILE; if FILE is
                       omitted, filenames are read from the standard input;

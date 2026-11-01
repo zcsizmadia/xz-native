@@ -66,6 +66,8 @@ pub struct Opts {
     pub memlimit_mt_decompress: Option<Limit>,
     pub auto_adjust: bool,
     pub single_stream: bool,
+    /// `--no-sparse`: don't make holes in decompressed files.
+    pub no_sparse: bool,
     pub ignore_check: bool,
     pub suffix: Option<String>,
     /// A custom filter chain; empty for the preset.
@@ -107,6 +109,7 @@ impl Default for Opts {
             memlimit_mt_decompress: None,
             auto_adjust: true,
             single_stream: false,
+            no_sparse: false,
             ignore_check: false,
             suffix: None,
             chain: Vec::new(),
@@ -485,7 +488,7 @@ fn apply(key: &str, value: Option<&str>, o: &mut Opts, action: &mut Action) -> R
         "info-memory" => *action = Action::InfoMemory,
         "V" => *action = Action::Version,
         "single-stream" => o.single_stream = true,
-        "no-sparse" => {}
+        "no-sparse" => o.no_sparse = true,
         "ignore-check" => o.ignore_check = true,
         "no-adjust" => o.auto_adjust = false,
         "S" => {
