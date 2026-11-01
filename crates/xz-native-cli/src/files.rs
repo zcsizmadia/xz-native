@@ -183,9 +183,9 @@ fn code_to_stdout(ctx: &mut Ctx, job: &Job, name: &str, input: &mut dyn Read, me
     }
     let mut out = BufWriter::with_capacity(1 << 16, io::stdout().lock());
     let r = if ctx.o.mode == Mode::Test {
-        code(ctx, job, input, None, meter)
+        code(ctx, job, name, input, None, meter)
     } else {
-        code(ctx, job, input, Some(&mut out), meter)
+        code(ctx, job, name, input, Some(&mut out), meter)
             .and_then(|()| out.flush().map_err(Failure::Write))
     };
     let ok = r.is_ok();
@@ -196,8 +196,9 @@ fn code_to_stdout(ctx: &mut Ctx, job: &Job, name: &str, input: &mut dyn Read, me
 }
 
 fn code(
-    ctx: &Ctx,
+    ctx: &mut Ctx,
     job: &Job,
+    name: &str,
     input: &mut dyn Read,
     output: Option<&mut dyn Write>,
     meter: &mut Meter,
@@ -211,7 +212,21 @@ fn code(
         (None, out) => {
             // `xz -dcf` copies input in an unknown format as is.
             let passthrough = ctx.o.mode == Mode::Decompress && ctx.o.stdout && ctx.o.force;
-            coder::decompress(ctx.o.format, job.decoder, input, out, passthrough, meter)
+            let format = ctx.o.format;
+            let mut warn = || {
+                ctx.warning(format!(
+                    "{name}: Unsupported type of integrity check; not verifying file integrity"
+                ));
+            };
+            coder::decompress(
+                format,
+                job.decoder,
+                input,
+                out,
+                passthrough,
+                meter,
+                &mut warn,
+            )
         }
     }
 }
@@ -343,12 +358,12 @@ fn file(ctx: &mut Ctx, job: &Job, src: &OsStr, pos: (usize, usize)) {
     let sparse = cfg!(unix) && ctx.o.mode == Mode::Decompress && !ctx.o.no_sparse;
     let r = if sparse {
         let mut w = BufWriter::with_capacity(1 << 16, Sparse::new(out));
-        code(ctx, job, &mut input, Some(&mut w), &mut meter)
+        code(ctx, job, &name, &mut input, Some(&mut w), &mut meter)
             .and_then(|()| w.into_inner().map_err(|e| Failure::Write(e.into_error())))
             .and_then(|s| s.finish().map_err(Failure::Write))
     } else {
         let mut w = BufWriter::with_capacity(1 << 16, out);
-        code(ctx, job, &mut input, Some(&mut w), &mut meter)
+        code(ctx, job, &name, &mut input, Some(&mut w), &mut meter)
             .and_then(|()| w.into_inner().map_err(|e| Failure::Write(e.into_error())))
     };
     let out = match r {

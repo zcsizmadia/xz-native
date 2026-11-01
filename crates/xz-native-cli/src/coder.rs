@@ -566,6 +566,8 @@ pub fn decoder_options(ctx: &Ctx, hw: &Hardware) -> DecoderOptions {
     d.memlimit = limit.unwrap_or(u64::MAX);
     d.concatenated = !o.single_stream;
     d.ignore_check = o.ignore_check;
+    // No warning about a check that is ignored anyway.
+    d.tell_unsupported_check = !o.ignore_check;
     d.threads = match o.threads {
         Threads::Auto => hw.cpus as usize,
         Threads::Single => 1,
@@ -1032,6 +1034,7 @@ pub fn decompress(
     mut output: Option<&mut dyn Write>,
     passthrough: bool,
     meter: &mut Meter,
+    unsupported_check: &mut dyn FnMut(),
 ) -> Result<(), Failure> {
     let recorded = RefCell::new(passthrough.then(Vec::new));
     let count = Cell::new(0);
@@ -1061,6 +1064,11 @@ pub fn decompress(
             }
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            // A warning per Stream, and decoding goes on, as in xz.
+            Err(e) if coder_error(&e) == Some(xz_native::Error::UnsupportedCheck) => {
+                unsupported_check();
+                continue;
+            }
             Err(e) => {
                 let Some(c) = coder_error(&e) else {
                     return Err(Failure::Read(e));

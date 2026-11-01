@@ -192,7 +192,7 @@ impl AutoDecoder {
         output: &mut [u8],
         finish: bool,
     ) -> Result<(usize, usize, Status)> {
-        if let Some(e) = self.error {
+        if let Some(e) = crate::push::pending(&mut self.error) {
             return Err(e);
         }
         if let Inner::Detect = self.inner {
