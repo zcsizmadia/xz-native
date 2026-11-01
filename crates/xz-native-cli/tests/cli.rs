@@ -705,3 +705,68 @@ fn files_from_lists() {
     let o = file_cmd(&dir, &["-k", "--files=missing"]);
     assert_eq!(status(&o), 1);
 }
+
+/// Starts `xz-native` on a file large and slow enough to be signalled
+/// while it works.
+#[cfg(unix)]
+fn slow_child(dir: &Path, args: &[&str]) -> std::process::Child {
+    let mut r = 0x9e37_79b9_7f4a_7c15u64;
+    let data: Vec<u8> = (0..64 << 20)
+        .map(|_| {
+            r ^= r << 13;
+            r ^= r >> 7;
+            r ^= r << 17;
+            r as u8
+        })
+        .collect();
+    fs::write(dir.join("big"), data).unwrap();
+    let mut c = bin();
+    c.current_dir(dir)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
+#[cfg(unix)]
+fn signal(child: &std::process::Child, sig: &str) {
+    // Long enough to be coding, well short of the end.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let ok = Command::new("kill")
+        .args([&format!("-{sig}"), &child.id().to_string()])
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "kill -{sig}");
+}
+
+/// Ctrl-C: the partial output is removed, the input kept, and the process
+/// ends with SIGINT, as with xz.
+#[cfg(unix)]
+#[test]
+fn sigint_removes_the_output() {
+    use std::os::unix::process::ExitStatusExt;
+    let dir = tmpdir("sigint");
+    let child = slow_child(&dir, &["-9e", "-T1", "big"]);
+    signal(&child, "INT");
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.signal(), Some(2), "{:?}", out.status);
+    assert!(!dir.join("big.xz").exists());
+    assert!(dir.join("big").exists());
+}
+
+/// SIGUSR1 prints the progress, even without -v.
+#[cfg(unix)]
+#[test]
+fn sigusr1_prints_progress() {
+    let dir = tmpdir("sigusr1");
+    let child = slow_child(&dir, &["-c", "-9e", "-T1", "big"]);
+    signal(&child, "USR1");
+    // Let it get to the next chunk, then stop it.
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    signal(&child, "INT");
+    let out = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("big (1/1)") && err.contains(" = "), "{err}");
+}

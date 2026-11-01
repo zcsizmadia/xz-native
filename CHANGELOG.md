@@ -44,6 +44,10 @@ minor version may change the API.
   and reads them (#123).
 - `xz-native --files`/`--files0`: file names from a file or standard input,
   newline or NUL separated, with xz's rules and errors (#123).
+- `xz-native` signals like xz: Ctrl-C (SIGINT) or SIGTERM stops at the next
+  chunk, removes the partial output and ends with the signal; SIGUSR1 (and
+  SIGINFO on the BSDs and macOS) prints the progress. The CLI uses
+  `signal-hook` for this; the library still has no dependencies (#123).
 
 ## [0.3.0+xz.5.8.4]
 

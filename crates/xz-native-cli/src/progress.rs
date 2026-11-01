@@ -23,6 +23,10 @@ pub struct Meter {
     active: bool,
     /// The last `(in, out)` seen.
     last: (u64, u64),
+    /// The `name (i/n)` heading, if the file gets one, and whether it is
+    /// out (`current_filename_printed`).
+    heading: Option<String>,
+    heading_printed: bool,
 }
 
 impl Meter {
@@ -30,16 +34,19 @@ impl Meter {
     /// (`message_filename()`).
     pub fn start(verbose: bool, name: &str, file_pos: usize, files: usize, compress: bool) -> Self {
         let automatic = std::io::stderr().is_terminal();
-        if verbose && automatic && (files != 1 || name != "(stdin)") {
-            // 0 files: the number isn't known (`--files`).
-            if files == 0 {
-                eprintln!("{name} ({file_pos})");
-            } else {
-                eprintln!("{name} ({file_pos}/{files})");
-            }
+        // `print_filename()`; 0 files: the number isn't known (`--files`).
+        let heading = (files != 1 || name != "(stdin)").then(|| match files {
+            0 => format!("{name} ({file_pos})"),
+            _ => format!("{name} ({file_pos}/{files})"),
+        });
+        let heading_printed = verbose && automatic;
+        if heading_printed && let Some(h) = &heading {
+            eprintln!("{h}");
         }
         Self {
             enabled: verbose,
+            heading,
+            heading_printed,
             automatic,
             name: name.to_owned(),
             compress,
@@ -70,14 +77,23 @@ impl Meter {
     /// on a terminal (`message_progress_update()`).
     pub fn tick(&mut self, pos: (u64, u64)) {
         self.last = pos;
-        if !self.enabled || !self.automatic {
+        // SIGUSR1 or SIGINFO asks for a line even without -v.
+        let requested = crate::signals::take_progress();
+        let live = self.enabled && self.automatic;
+        if !live && !requested {
             return;
         }
         let elapsed = self.start.elapsed().as_millis() as u64;
-        if elapsed < self.next_update {
+        if !requested && elapsed < self.next_update {
             return;
         }
         self.next_update = elapsed + 1000;
+        if !self.heading_printed {
+            self.heading_printed = true;
+            if let Some(h) = &self.heading {
+                eprintln!("{h}");
+            }
+        }
         let (input, output) = pos;
         let (c, u) = self.sizes((input, output));
         let line = format!(
@@ -89,7 +105,15 @@ impl Meter {
             remaining(input, self.expected_in, elapsed)
         );
         let _ = std::io::stderr().write_all(line.as_bytes());
-        self.active = true;
+        if live {
+            self.active = true;
+        } else {
+            // Not redrawn later: keep it on its own line.
+            let _ = std::io::stderr().write_all(
+                b"
+",
+            );
+        }
     }
 
     /// The final line at the last position (`progress_flush()`); `finished`

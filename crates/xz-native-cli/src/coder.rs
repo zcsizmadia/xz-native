@@ -431,6 +431,8 @@ pub enum Failure {
     /// The data or the coder: xz-native's error, and the memory the
     /// decoder needed.
     Coder(xz_native::Error, u64),
+    /// A signal asked to stop (`user_abort`).
+    Aborted,
 }
 
 /// xz's text for liblzma's errors (`message_strm()`).
@@ -469,6 +471,9 @@ pub fn compress(
     ) -> Result<(), Failure> {
         let mut buf = vec![0u8; BUF_SIZE];
         loop {
+            if crate::signals::aborted() {
+                return Err(Failure::Aborted);
+            }
             let n = match input.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => n,
@@ -518,6 +523,9 @@ fn compress_raw(
     let mut outbuf = vec![0u8; BUF_SIZE];
     let (mut total_in, mut total_out) = (0u64, 0u64);
     loop {
+        if crate::signals::aborted() {
+            return Err(Failure::Aborted);
+        }
         let (n, eof) = read_full(input, &mut inbuf)?;
         let action = if eof { Action::Finish } else { Action::Run };
         let mut start = 0;
@@ -556,6 +564,9 @@ pub fn decompress_raw(
     let mut outbuf = vec![0u8; BUF_SIZE];
     let (mut total_in, mut total_out) = (0u64, 0u64);
     loop {
+        if crate::signals::aborted() {
+            return Err(Failure::Aborted);
+        }
         let (n, eof) = read_full(input, &mut inbuf)?;
         let mut start = 0;
         loop {
@@ -634,6 +645,9 @@ fn compress_blocks(
     let (mut start, mut end) = (0, 0);
     let mut action = Action::Run;
     loop {
+        if crate::signals::aborted() {
+            return Err(Failure::Aborted);
+        }
         if start == end && action == Action::Run {
             let size = (BUF_SIZE as u64).min(remaining) as usize;
             let (n, eof) = read_full(input, &mut inbuf[..size])?;
@@ -767,6 +781,9 @@ pub fn decompress(
     };
     let mut buf = vec![0u8; BUF_SIZE];
     loop {
+        if crate::signals::aborted() {
+            return Err(Failure::Aborted);
+        }
         let n = match d.read(&mut buf) {
             Ok(0) => {
                 meter.tick(d.progress().unwrap_or((count.get(), written)));
@@ -805,6 +822,9 @@ fn copy_through(head: &[u8], input: &mut dyn Read, output: &mut dyn Write) -> Re
     let mut total = head.len() as u64;
     let mut buf = vec![0u8; BUF_SIZE];
     loop {
+        if crate::signals::aborted() {
+            return Err(Failure::Aborted);
+        }
         match input.read(&mut buf) {
             Ok(0) => return Ok(total),
             Ok(n) => {

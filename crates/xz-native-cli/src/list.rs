@@ -167,6 +167,9 @@ pub fn run(ctx: &mut Ctx) -> Result<(), String> {
     let mut first_printed = false;
     let mut i = 0;
     while let Some((name, stdin)) = names.next(ctx) {
+        if crate::signals::aborted() {
+            break;
+        }
         i += 1;
         let display = name.to_string_lossy().into_owned();
         if stdin && io::stdin().is_terminal() {

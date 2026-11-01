@@ -76,6 +76,9 @@ pub fn run(ctx: &mut Ctx) -> Result<(), String> {
     let mut names = Names::new(ctx.o.files.clone(), ctx.o.files_from.as_ref())?;
     let mut i = 0;
     while let Some((name, is_stdin)) = names.next(ctx) {
+        if crate::signals::aborted() {
+            break;
+        }
         i += 1;
         // 0: the number of files isn't known.
         let pos = (i, names.total.unwrap_or(0));
@@ -175,6 +178,8 @@ fn code(
 
 fn report(ctx: &mut Ctx, job: &Job, name: &str, f: Failure) {
     match f {
+        // Stopped by a signal: xz says nothing (the output is removed).
+        Failure::Aborted => ctx.status = crate::E_ERROR,
         Failure::Read(e) => ctx.error(format!("{name}: Read error: {}", os_error(&e))),
         Failure::Write(e) => {
             // A closed pipe on standard output isn't worth a message.
