@@ -7,6 +7,7 @@ use crate::args::{Format, Mode};
 use crate::coder::{self, Encoder, Failure, Hardware};
 use crate::names::Names;
 use crate::progress::Meter;
+use crate::sparse::Sparse;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, FileTimes, OpenOptions};
 use std::io::{self, BufWriter, IsTerminal, Read, Write};
@@ -293,9 +294,19 @@ fn file(ctx: &mut Ctx, job: &Job, src: &OsStr, pos: (usize, usize)) {
             return;
         }
     };
-    let mut w = BufWriter::with_capacity(1 << 16, out);
-    let r = code(ctx, job, &mut input, Some(&mut w), &mut meter)
-        .and_then(|()| w.into_inner().map_err(|e| Failure::Write(e.into_error())));
+    // Decompressed files get holes for blocks of zeros, as in xz (not on
+    // Windows).
+    let sparse = cfg!(unix) && ctx.o.mode == Mode::Decompress && !ctx.o.no_sparse;
+    let r = if sparse {
+        let mut w = BufWriter::with_capacity(1 << 16, Sparse::new(out));
+        code(ctx, job, &mut input, Some(&mut w), &mut meter)
+            .and_then(|()| w.into_inner().map_err(|e| Failure::Write(e.into_error())))
+            .and_then(|s| s.finish().map_err(Failure::Write))
+    } else {
+        let mut w = BufWriter::with_capacity(1 << 16, out);
+        code(ctx, job, &mut input, Some(&mut w), &mut meter)
+            .and_then(|()| w.into_inner().map_err(|e| Failure::Write(e.into_error())))
+    };
     let out = match r {
         Ok(f) => f,
         Err(f) => {

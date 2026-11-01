@@ -44,6 +44,9 @@ minor version may change the API.
   and reads them (#123).
 - `xz-native --files`/`--files0`: file names from a file or standard input,
   newline or NUL separated, with xz's rules and errors (#123).
+- `xz-native -d` writes sparse files: blocks of zeros become holes, as in xz
+  (not on Windows, and not to standard output); `--no-sparse` turns it off
+  (#123).
 
 ## [0.3.0+xz.5.8.4]
 

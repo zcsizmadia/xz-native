@@ -705,3 +705,36 @@ fn files_from_lists() {
     let o = file_cmd(&dir, &["-k", "--files=missing"]);
     assert_eq!(status(&o), 1);
 }
+
+/// Decompressed files get holes for blocks of zeros (on Unix, as in xz);
+/// the content is the same either way.
+#[test]
+fn sparse_output() {
+    let dir = tmpdir("sparse");
+    let mut data = vec![0u8; 8 << 20];
+    data[..5000].copy_from_slice(&sample(5000, 12));
+    data.extend_from_slice(b"end");
+    data.extend(std::iter::repeat_n(0u8, 3 << 20));
+    let xz = ours(&["-c", "-T1", "-1"], &data).stdout;
+    for (name, extra) in [("s", None), ("n", Some("--no-sparse"))] {
+        fs::write(dir.join(format!("{name}.xz")), &xz).unwrap();
+        let mut args = vec!["-d"];
+        args.extend(extra);
+        let file = format!("{name}.xz");
+        args.push(&file);
+        let o = file_cmd(&dir, &args);
+        assert_eq!(status(&o), 0, "{}", stderr(&o));
+        assert!(fs::read(dir.join(name)).unwrap() == data);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let used = |n: &str| fs::metadata(dir.join(n)).unwrap().blocks() * 512;
+        // Some file systems (tmpfs on old kernels, some CI disks) have no
+        // holes; then both are the same size.
+        assert!(used("s") <= used("n"));
+        if used("s") < used("n") {
+            assert!(used("s") < data.len() as u64 / 2);
+        }
+    }
+}
