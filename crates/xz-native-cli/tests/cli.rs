@@ -740,6 +740,8 @@ fn sparse_output() {
         // Standard output too: `>`, `>>` (O_APPEND is cleared and put back
         // for each file), and `1<>`, which writes over the start of a file
         // and so gets no holes.
+        // `-d` above removed the .xz files.
+        fs::write(dir.join("s.xz"), &xz).unwrap();
         let sh = |script: &str| {
             let o = Command::new("sh")
                 .current_dir(&dir)
