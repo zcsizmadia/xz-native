@@ -9,6 +9,11 @@ minor version may change the API.
 ## [Unreleased]
 
 ### Added
+- One-shot BCJ conversion like liblzma's `lzma_bcj_x86_encode()` (and the
+  ARM64 and RISC-V ones): `BcjKind::encode` and `BcjKind::decode`, for
+  every instruction set (#103).
+- `XZ_VERSION` and `XZ_VERSION_NUMBER`: the xz/liblzma release the crate
+  matches, as `LZMA_VERSION_STRING` and `LZMA_VERSION` (#103).
 - Filter strings like liblzma's `lzma_str_to_filters()` and
   `lzma_str_from_filters()`: `RawOptions::from_filter_str` (and
   `from_xz_filter_str` without LZMA1) parse the `xz --filters=` syntax with

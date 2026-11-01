@@ -119,11 +119,12 @@ The supported filters and their options are:
         }
         Ok(Action::Version) => {
             println!(
-                "{PROGRAM} {} (compatible with XZ Utils 5.8.4)",
+                "{PROGRAM} {} (compatible with XZ Utils {})",
                 env!("CARGO_PKG_VERSION")
                     .split('+')
                     .next()
-                    .unwrap_or_default()
+                    .unwrap_or_default(),
+                xz_native::XZ_VERSION
             );
             return ExitCode::SUCCESS;
         }
