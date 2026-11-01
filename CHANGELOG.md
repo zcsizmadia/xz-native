@@ -21,6 +21,9 @@ minor version may change the API.
   verified gives `Error::UnsupportedCheck` once, and decoding goes on with
   the next call or read (`XzDecoder`, `AutoDecoder` and the readers, with
   and without threads) (#105).
+- Filter Flags like liblzma's `lzma_filter_flags_encode()` and
+  `lzma_filter_flags_decode()`: `Filter::flags` and `Filter::from_flags`,
+  with liblzma's bytes and errors (#101).
 - Changing filters mid-stream like liblzma's `lzma_filters_update()`:
   `XzEncoder::update_filters` sets the filter chain and LZMA2 options for
   the next Block (after a full flush or barrier, or before any input),
@@ -74,6 +77,8 @@ minor version may change the API.
   the basic and the long help like xz's (#123).
 - `xz-native -d`/`-t` warns about an unsupported check type once per
   Stream and goes on, as xz does (not with `--ignore-check`) (#105).
+- `xz-native` keeps its default thread memory budget 64 MiB below the
+  data and address space limits (`ulimit -d`/`-v`), as xz does (#123).
 
 ## [0.3.0+xz.5.8.4]
 

@@ -730,6 +730,7 @@ dependencies = [
 name = "xz-native-cli"
 version = "0.3.0+xz.5.8.4"
 dependencies = [
+ "libc",
  "signal-hook",
  "xz-native",
 ]
