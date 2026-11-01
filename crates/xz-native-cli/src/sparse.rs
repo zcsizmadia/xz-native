@@ -1,6 +1,7 @@
-//! Sparse output files when decompressing (xz's `io_write()` with
-//! `dest_try_sparse`): output blocks of zeros become a hole by seeking
-//! over them instead of writing. Not on Windows, as in xz.
+//! Sparse output files, and standard output when it is a file, when
+//! decompressing (xz's `io_write()` with `dest_try_sparse`): output blocks
+//! of zeros become a hole by seeking over them instead of writing. Not on
+//! Windows, as in xz.
 
 use std::fs::File;
 use std::io::{self, Seek, SeekFrom, Write};
@@ -82,6 +83,50 @@ impl Write for Sparse {
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
+}
+
+/// Standard output for sparse output, if it can have holes
+/// (`io_open_dest_real()`): a regular file, written at its end. With
+/// O_APPEND (`>>`), it moves to the end and clears the flag, and the old
+/// flags are returned for [`restore_stdout`].
+#[cfg(unix)]
+#[allow(unsafe_code)]
+pub fn stdout() -> Option<(File, Option<libc::c_int>)> {
+    use std::os::fd::{AsFd, AsRawFd};
+    // A duplicate shares the offset and the flags with standard output.
+    let mut file = File::from(io::stdout().as_fd().try_clone_to_owned().ok()?);
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    let fd = file.as_raw_fd();
+    // SAFETY: F_GETFL on an open descriptor.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags == -1 {
+        return None;
+    }
+    if flags & libc::O_APPEND == 0 {
+        // Holes elsewhere than at the end would overwrite data.
+        return (file.stream_position().ok()? == meta.len()).then_some((file, None));
+    }
+    file.seek(SeekFrom::End(0)).ok()?;
+    // SAFETY: F_SETFL on an open descriptor.
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_APPEND) } == -1 {
+        return None;
+    }
+    Some((file, Some(flags)))
+}
+
+/// Puts back the flags [`stdout`] changed (`io_close_dest()`).
+#[cfg(unix)]
+#[allow(unsafe_code)]
+pub fn restore_stdout(flags: libc::c_int) -> io::Result<()> {
+    use std::os::fd::{AsFd, AsRawFd};
+    // SAFETY: F_SETFL on an open descriptor.
+    if unsafe { libc::fcntl(io::stdout().as_fd().as_raw_fd(), libc::F_SETFL, flags) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

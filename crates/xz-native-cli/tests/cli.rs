@@ -736,6 +736,34 @@ fn sparse_output() {
         if used("s") < used("n") {
             assert!(used("s") < data.len() as u64 / 2);
         }
+
+        // Standard output too: `>`, `>>` (O_APPEND is cleared and put back
+        // for each file), and `1<>`, which writes over the start of a file
+        // and so gets no holes.
+        let sh = |script: &str| {
+            let o = Command::new("sh")
+                .current_dir(&dir)
+                .args(["-c", script])
+                .arg(env!("CARGO_BIN_EXE_xz-native"))
+                .output()
+                .unwrap();
+            assert_eq!(status(&o), 0, "{script}: {}", stderr(&o));
+        };
+        sh("\"$0\" -dc s.xz > o");
+        assert!(fs::read(dir.join("o")).unwrap() == data);
+        assert!(used("o") <= used("n"));
+        fs::write(dir.join("a"), b"head").unwrap();
+        sh("\"$0\" -dc s.xz s.xz >> a && echo tail >> a");
+        let mut want = b"head".to_vec();
+        want.extend_from_slice(&data);
+        want.extend_from_slice(&data);
+        want.extend_from_slice(b"tail\n");
+        assert!(fs::read(dir.join("a")).unwrap() == want);
+        let mut over = vec![0xffu8; data.len() + 10];
+        fs::write(dir.join("w"), &over).unwrap();
+        sh("\"$0\" -dc s.xz 1<> w");
+        over[..data.len()].copy_from_slice(&data);
+        assert!(fs::read(dir.join("w")).unwrap() == over);
     }
 }
 

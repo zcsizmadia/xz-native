@@ -62,8 +62,9 @@ minor version may change the API.
   the thread count and the memory needed for compressing and decompressing
   (#123).
 - `xz-native -d` writes sparse files: blocks of zeros become holes, as in xz
-  (not on Windows, and not to standard output); `--no-sparse` turns it off
-  (#123).
+  (not on Windows); `--no-sparse` turns it off. Standard output gets holes
+  too when it is a regular file written at its end, with O_APPEND (`>>`)
+  cleared while writing and put back after, as xz does (#123).
 - `xz-native` signals like xz: Ctrl-C (SIGINT) or SIGTERM stops at the next
   chunk, removes the partial output and ends with the signal; SIGUSR1 (and
   SIGINFO on the BSDs and macOS) prints the progress. The CLI uses
