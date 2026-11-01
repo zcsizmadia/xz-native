@@ -89,8 +89,12 @@ fn main() -> ExitCode {
     let rest: Vec<OsString> = argv.collect();
     match args::parse(&rest, &mut o, None) {
         Ok(Action::Run) => {}
-        Ok(Action::Help) => {
-            print!("{}", help());
+        Ok(action @ (Action::Help | Action::LongHelp)) => {
+            print!("{}", help(action == Action::LongHelp));
+            return ExitCode::SUCCESS;
+        }
+        Ok(Action::InfoMemory) => {
+            print!("{}", coder::Hardware::detect().info_memory(&o));
             return ExitCode::SUCCESS;
         }
         Ok(Action::Version) => {
@@ -115,31 +119,72 @@ fn main() -> ExitCode {
     }
 }
 
-fn help() -> String {
-    format!(
+/// `--help` (`long` false: the basic options) and `--long-help`, laid out
+/// like xz's.
+fn help(long: bool) -> String {
+    let mut s = format!(
         "Usage: {PROGRAM} [OPTION]... [FILE]...
 Compress or decompress FILEs in the .xz format (an xz-compatible tool
 built on the pure Rust xz-native library).
 
+Mandatory arguments to long options are mandatory for short options too.
+
+Operation mode:
   -z, --compress      force compression
   -d, --decompress    force decompression
   -t, --test          test compressed file integrity
+  -l, --list          list information about .xz files
+
+Operation modifiers:
   -k, --keep          keep (don't delete) input files
   -f, --force         force overwrite of output file and (de)compress links
   -c, --stdout        write to standard output and don't delete input files
-      --single-stream decompress only the first stream, and silently
+"
+    );
+    if long {
+        s.push_str(
+            "      --single-stream decompress only the first stream, and silently
                       ignore possible remaining input data
-  -0 ... -9           compression preset; default is 6
+      --no-sparse     accepted for compatibility (output is never sparse)
+  -S, --suffix=.SUF   use the suffix '.SUF' on compressed files
+      --files[=FILE]  read filenames to process from FILE; if FILE is
+                      omitted, filenames are read from the standard input;
+                      filenames must be terminated with the newline character
+      --files0[=FILE] like --files but use the null character as terminator
+",
+        );
+    }
+    s.push_str(
+        "
+Basic file format and compression options:
+",
+    );
+    if long {
+        s.push_str(
+            "  -F, --format=FMT    file format to encode or decode; possible values are
+                      'auto' (default), 'xz', 'lzma', 'lzip', and 'raw'
+  -C, --check=CHECK   integrity check type: 'none' (use with caution),
+                      'crc32', 'crc64' (default), or 'sha256'
+      --ignore-check  don't verify the integrity check when decompressing
+",
+        );
+    }
+    s.push_str(
+        "  -0 ... -9           compression preset; default is 6
   -e, --extreme       try to improve compression ratio by using more CPU time
   -T, --threads=NUM   use at most NUM threads; the default is 0 which uses
                       as many threads as there are processor cores
-  -F, --format=FMT    file format to encode or decode; possible values are
-                      'auto' (default), 'xz', 'lzma', 'lzip', and 'raw'
-  -C, --check=CHECK   integrity check type: 'none', 'crc32', 'crc64' (default),
-                      or 'sha256'
-      --ignore-check  don't verify the integrity check when decompressing
-      --block-size=SIZE
+",
+    );
+    if long {
+        s.push_str(
+            "      --block-size=SIZE
                       start a new .xz block after every SIZE bytes of input
+      --block-list=BLOCKS
+                      start a new .xz block after the given comma-separated
+                      intervals of uncompressed data; optionally, specify a
+                      filter chain number (0-9) followed by a ':' before the
+                      uncompressed data size
       --memlimit-compress=LIMIT
       --memlimit-decompress=LIMIT
       --memlimit-mt-decompress=LIMIT
@@ -149,35 +194,69 @@ built on the pure Rust xz-native library).
                       bytes, % of RAM, or 0 for defaults
       --no-adjust     if compression settings exceed the memory usage limit,
                       give an error instead of adjusting the settings downwards
-  -S, --suffix=.SUF   use the suffix '.SUF' on compressed files
-  -q, --quiet         suppress warnings; specify twice to suppress errors too
-  -v, --verbose       be verbose
-  -Q, --no-warn       make warnings not affect the exit status
-  -h, --help          display this help and exit
-  -V, --version       display the version number and exit
 
-With no FILE, or when FILE is -, read standard input.
-  -l, --list          list information about .xz files (-v, -vv for more)
-      --robot         use machine-parsable messages (with --list)
-
-      --lzma1[=OPTS], --lzma2[=OPTS], --x86[=OPTS], --arm[=OPTS],
-      --armthumb[=OPTS], --arm64[=OPTS], --powerpc[=OPTS], --ia64[=OPTS],
-      --sparc[=OPTS], --riscv[=OPTS], --delta[=OPTS]
-                      add a filter to a custom filter chain (as in xz)
+Custom filter chain for compression (alternative to using presets):
       --filters=FILTERS
                       set the filter chain with a liblzma filter string
-
       --filters1=FILTERS ... --filters9=FILTERS
-                      filter chains for --block-list
-      --block-list=BLOCKS
-                      start a new .xz block after the given comma-separated
-                      intervals of uncompressed data; optionally, specify a
-                      filter chain number (0-9) followed by a ':' before the
-                      uncompressed data size
+                      set additional filter chains for --block-list
+  --lzma1[=OPTS]      LZMA1 or LZMA2; OPTS is a comma-separated list of zero or
+  --lzma2[=OPTS]      more of the following options (valid values; default):
+                        preset=PRE reset options to a preset (0-9[e])
+                        dict=NUM   dictionary size (4KiB - 1536MiB; 8MiB)
+                        lc=NUM     number of literal context bits (0-4; 3)
+                        lp=NUM     number of literal position bits (0-4; 0)
+                        pb=NUM     number of position bits (0-4; 2)
+                        mode=MODE  compression mode (fast, normal; normal)
+                        nice=NUM   nice length of a match (2-273; 64)
+                        mf=NAME    match finder (hc3, hc4, bt2, bt3, bt4; bt4)
+                        depth=NUM  maximum search depth; 0=automatic (default)
+  --x86[=OPTS]        x86 BCJ filter (32-bit and 64-bit)
+  --arm[=OPTS]        ARM BCJ filter
+  --armthumb[=OPTS]   ARM-Thumb BCJ filter
+  --arm64[=OPTS]      ARM64 BCJ filter
+  --powerpc[=OPTS]    PowerPC BCJ filter (big endian only)
+  --ia64[=OPTS]       IA-64 (Itanium) BCJ filter
+  --sparc[=OPTS]      SPARC BCJ filter
+  --riscv[=OPTS]      RISC-V BCJ filter
+                      Valid OPTS for all BCJ filters:
+                        start=NUM  start offset for conversions (default=0)
+  --delta[=OPTS]      Delta filter; valid OPTS (valid values; default):
+                        dist=NUM   distance between bytes being subtracted
+                                   from each other (1-256; 1)
+",
+        );
+    }
+    s.push_str(
+        "
+Other options:
+  -q, --quiet         suppress warnings; specify twice to suppress errors too
+  -v, --verbose       be verbose; specify twice for even more verbose
+",
+    );
+    if long {
+        s.push_str(
+            "  -Q, --no-warn       make warnings not affect the exit status
+      --robot         use machine-parsable messages (useful for scripts)
 
-      --files[=FILE]  read filenames to process from FILE (or standard input),
-                      one per line
-      --files0[=FILE] like --files but use the null character as the terminator
-"
-    )
+      --info-memory   display the total amount of RAM and the currently active
+                      memory usage limits, and exit
+  -h, --help          display the short help (lists only the basic options)
+  -H, --long-help     display this long help and exit
+",
+        );
+    } else {
+        s.push_str(
+            "  -h, --help          display this short help and exit
+  -H, --long-help     display the long help (lists also the advanced options)
+",
+        );
+    }
+    s.push_str(
+        "  -V, --version       display the version number and exit
+
+With no FILE, or when FILE is -, read standard input.
+",
+    );
+    s
 }
