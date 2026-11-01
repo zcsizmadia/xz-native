@@ -175,8 +175,10 @@ pub fn raw_options(ctx: &Ctx, hw: &Hardware) -> Result<RawOptions, String> {
             r.filters = first
                 .iter()
                 .map(|i| match *i {
-                    Item::Bcj(kind, start_offset) => Ok(Filter::Bcj { kind, start_offset }),
-                    Item::Delta(distance) => Ok(Filter::Delta { distance }),
+                    Item::Bcj(kind, start_offset) => {
+                        Filter::bcj_with_start_offset(kind, start_offset).map_err(|_| unsupported())
+                    }
+                    Item::Delta(distance) => Filter::delta(distance).map_err(|_| unsupported()),
                     _ => Err(unsupported()),
                 })
                 .collect::<Result<_, _>>()?;
@@ -227,8 +229,10 @@ fn xz_chain(items: &[Item]) -> Result<XzChain, String> {
     let filters = first
         .iter()
         .map(|i| match *i {
-            Item::Bcj(kind, start_offset) => Ok(Filter::Bcj { kind, start_offset }),
-            Item::Delta(distance) => Ok(Filter::Delta { distance }),
+            Item::Bcj(kind, start_offset) => {
+                Filter::bcj_with_start_offset(kind, start_offset).map_err(|_| unsupported())
+            }
+            Item::Delta(distance) => Filter::delta(distance).map_err(|_| unsupported()),
             _ => Err(unsupported()),
         })
         .collect::<Result<_, _>>()?;

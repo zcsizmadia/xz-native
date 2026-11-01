@@ -425,13 +425,7 @@ fn list_matches_xz() {
     c.extend_from_slice(&opts(&|o| {
         o.check = Check::Crc32;
         o.lzma.dict_size = 6 << 10;
-        o.filters = vec![
-            Filter::Delta { distance: 4 },
-            Filter::Bcj {
-                kind: BcjKind::X86,
-                start_offset: 0,
-            },
-        ];
+        o.filters = vec![Filter::delta(4).unwrap(), Filter::bcj(BcjKind::X86)];
     }));
     c.extend_from_slice(&[0; 4]);
     fs::write(dir.join("c.xz"), c).unwrap();

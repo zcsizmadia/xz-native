@@ -19,20 +19,29 @@ pub(crate) const FILTER_LZMA2: u64 = 0x21;
 pub(crate) const FILTER_RESERVED_START: u64 = 1 << 62;
 
 /// A filter in an .xz filter chain.
+///
+/// The variants are `#[non_exhaustive]`: build them with
+/// [`lzma2`](Self::lzma2), [`delta`](Self::delta), [`bcj`](Self::bcj) and
+/// [`bcj_with_start_offset`](Self::bcj_with_start_offset), which reject
+/// invalid values, and match their fields with `..`
+/// (`Filter::Delta { distance, .. }`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Filter {
     /// LZMA2 with the given dictionary size. Must be the last filter.
+    #[non_exhaustive]
     Lzma2 {
         /// Dictionary size in bytes.
         dict_size: u32,
     },
     /// Delta filter with a distance of 1-256 bytes.
+    #[non_exhaustive]
     Delta {
         /// Distance in bytes.
         distance: u16,
     },
     /// BCJ filter.
+    #[non_exhaustive]
     Bcj {
         /// Instruction set.
         kind: BcjKind,
@@ -42,6 +51,75 @@ pub enum Filter {
 }
 
 impl Filter {
+    /// LZMA2 with a dictionary of `dict_size` bytes (liblzma
+    /// `lzma_options_lzma.dict_size`). The size isn't checked:
+    /// [`properties`](Self::properties) rounds it up to the next size the
+    /// format can store. The encoders take the dictionary size from
+    /// [`LzmaOptions::dict_size`](crate::LzmaOptions::dict_size), which they
+    /// check, and don't accept this filter in
+    /// [`EncoderOptions::filters`](crate::EncoderOptions::filters).
+    pub const fn lzma2(dict_size: u32) -> Self {
+        Filter::Lzma2 { dict_size }
+    }
+
+    /// The Delta filter with a distance of `distance` bytes (liblzma
+    /// `lzma_options_delta.dist`), which must be 1-256; anything else is
+    /// [`Error::InvalidOptions`].
+    ///
+    /// ```
+    /// use xz_native::{Error, Filter};
+    ///
+    /// let f = Filter::delta(4)?;
+    /// assert!(matches!(f, Filter::Delta { distance: 4, .. }));
+    /// assert_eq!(Filter::delta(0), Err(Error::InvalidOptions));
+    /// assert_eq!(Filter::delta(257), Err(Error::InvalidOptions));
+    /// # Ok::<(), xz_native::Error>(())
+    /// ```
+    pub fn delta(distance: u16) -> Result<Self> {
+        if !(1..=256).contains(&distance) {
+            return Err(Error::InvalidOptions);
+        }
+        Ok(Filter::Delta { distance })
+    }
+
+    /// The BCJ filter for `kind` with a start offset of 0.
+    ///
+    /// ```
+    /// use xz_native::{BcjKind, Filter};
+    ///
+    /// assert_eq!(Filter::bcj(BcjKind::X86).id(), 0x04);
+    /// ```
+    pub const fn bcj(kind: BcjKind) -> Self {
+        Filter::Bcj {
+            kind,
+            start_offset: 0,
+        }
+    }
+
+    /// The BCJ filter for `kind` with a start offset (liblzma
+    /// `lzma_options_bcj.start_offset`), the address the start of the data
+    /// is assumed to have. It must be a multiple of the instruction
+    /// alignment (1 for x86, 2 for ARM-Thumb and RISC-V, 16 for IA-64 and
+    /// 4 for the others), or it's [`Error::InvalidOptions`].
+    ///
+    /// ```
+    /// use xz_native::{BcjKind, Error, Filter};
+    ///
+    /// let f = Filter::bcj_with_start_offset(BcjKind::Arm, 0x100)?;
+    /// assert_eq!(f.properties(), [0, 1, 0, 0]);
+    /// assert_eq!(
+    ///     Filter::bcj_with_start_offset(BcjKind::Arm, 2),
+    ///     Err(Error::InvalidOptions)
+    /// );
+    /// # Ok::<(), xz_native::Error>(())
+    /// ```
+    pub fn bcj_with_start_offset(kind: BcjKind, start_offset: u32) -> Result<Self> {
+        if !start_offset.is_multiple_of(kind.alignment()) {
+            return Err(Error::InvalidOptions);
+        }
+        Ok(Filter::Bcj { kind, start_offset })
+    }
+
     /// The Filter ID (as in .xz Filter Flags and .7z coders).
     pub fn id(&self) -> u64 {
         match self {
@@ -59,9 +137,9 @@ impl Filter {
     /// ```
     /// use xz_native::{BcjKind, Filter};
     ///
-    /// let f = Filter::Lzma2 { dict_size: 8 << 20 };
+    /// let f = Filter::lzma2(8 << 20);
     /// assert_eq!((f.id(), f.properties()), (0x21, vec![22]));
-    /// let bcj = Filter::Bcj { kind: BcjKind::X86, start_offset: 0 };
+    /// let bcj = Filter::bcj(BcjKind::X86);
     /// assert!(bcj.properties().is_empty());
     /// assert_eq!(Filter::from_properties(0x21, &[22])?, f);
     /// # Ok::<(), xz_native::Error>(())
@@ -69,7 +147,10 @@ impl Filter {
     pub fn properties(&self) -> Vec<u8> {
         match *self {
             Filter::Lzma2 { dict_size } => alloc::vec![crate::options::lzma2_dict_byte(dict_size)],
-            Filter::Delta { distance } => alloc::vec![(distance - 1) as u8],
+            Filter::Delta { distance } => {
+                debug_assert!((1..=256).contains(&distance), "Delta distance {distance}");
+                alloc::vec![(distance - 1) as u8]
+            }
             Filter::Bcj {
                 start_offset: 0, ..
             } => Vec::new(),
@@ -94,7 +175,7 @@ impl Filter {
     /// ```
     /// use xz_native::Filter;
     ///
-    /// let f = Filter::Delta { distance: 4 };
+    /// let f = Filter::delta(4)?;
     /// assert_eq!(f.flags(), [0x03, 1, 3]);
     /// assert_eq!(Filter::from_flags(&[0x03, 1, 3, 0xff])?, (f, 3));
     /// # Ok::<(), xz_native::Error>(())

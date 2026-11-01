@@ -211,10 +211,7 @@ fn flush_sequence_is_checked() {
 /// misses the headers written before the error.
 #[test]
 fn encoder_error_is_final() {
-    let opts = EncoderOptions::default().filters(vec![Filter::Bcj {
-        kind: BcjKind::X86,
-        start_offset: 0,
-    }]);
+    let opts = EncoderOptions::default().filters(vec![Filter::bcj(BcjKind::X86)]);
     let mut e = XzEncoder::with_options(opts).unwrap();
     let mut out = [0u8; 4096];
     assert_eq!(

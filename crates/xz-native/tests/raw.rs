@@ -23,8 +23,10 @@ fn xz_args(opts: &RawOptions, preset: &str) -> Vec<String> {
     let mut args = vec!["--format=raw".to_string()];
     for f in &opts.filters {
         args.push(match *f {
-            Filter::Delta { distance } => format!("--delta=dist={distance}"),
-            Filter::Bcj { kind, start_offset } => {
+            Filter::Delta { distance, .. } => format!("--delta=dist={distance}"),
+            Filter::Bcj {
+                kind, start_offset, ..
+            } => {
                 let name = match kind {
                     BcjKind::X86 => "x86",
                     BcjKind::PowerPc => "powerpc",
@@ -69,11 +71,8 @@ fn cases() -> Vec<(RawOptions, &'static str)> {
         o.lzma.lp = 2;
         o.lzma.pb = 0;
         o.filters = vec![
-            Filter::Delta { distance: 4 },
-            Filter::Bcj {
-                kind: BcjKind::X86,
-                start_offset: 4096,
-            },
+            Filter::delta(4).unwrap(),
+            Filter::bcj_with_start_offset(BcjKind::X86, 4096).unwrap(),
         ];
         v.push((o, "1"));
     }
@@ -232,13 +231,8 @@ fn unsupported_actions_and_options() {
     assert!(RawDecoder::with_options(&bad).is_ok());
 
     for filters in [
-        vec![Filter::Lzma2 { dict_size: 1 << 20 }],
-        vec![Filter::Delta { distance: 0 }],
-        vec![Filter::Delta { distance: 1 }; 4],
-        vec![Filter::Bcj {
-            kind: BcjKind::Arm,
-            start_offset: 2,
-        }],
+        vec![Filter::lzma2(1 << 20)],
+        vec![Filter::delta(1).unwrap(); 4],
     ] {
         let o = RawOptions::default().filters(filters);
         assert_eq!(
@@ -307,7 +301,7 @@ fn memusage() {
     };
     let base = o.decoder_memusage();
     assert_eq!(base, (8 << 20) + 66_168 + extra);
-    o.filters.push(Filter::Delta { distance: 2 });
+    o.filters.push(Filter::delta(2).unwrap());
     assert_eq!(o.decoder_memusage(), base + 352);
     o.lzma = o.lzma.dict_size(4096);
     assert_eq!(o.decoder_memusage(), 4096 + 66_168 + 352 + extra);
@@ -321,16 +315,8 @@ fn memusage() {
 fn lzma1ext() {
     use xz_native::{RawDecoder, RawMethod, RawOptions, Status};
     let data = b"lzma1ext without an end marker ".repeat(100);
-    let ext = |size, end_marker| {
-        RawOptions::preset(
-            RawMethod::Lzma1Ext {
-                uncompressed_size: size,
-                end_marker,
-            },
-            6,
-        )
-        .unwrap()
-    };
+    let ext =
+        |size, end_marker| RawOptions::preset(RawMethod::lzma1_ext(size, end_marker), 6).unwrap();
     let lzma1 = RawOptions::preset(RawMethod::Lzma1, 6).unwrap();
     assert_eq!(
         ext(None, false).decoder_memusage(),

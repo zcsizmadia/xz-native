@@ -287,11 +287,8 @@ fn memusage_matches_liblzma() {
     for dict in [4096u32, 5000, 1 << 20, (3 << 20) + 1] {
         for filters in [
             vec![],
-            vec![Filter::Bcj {
-                kind: BcjKind::X86,
-                start_offset: 0,
-            }],
-            vec![Filter::Delta { distance: 4 }],
+            vec![Filter::bcj(BcjKind::X86)],
+            vec![Filter::delta(4).unwrap()],
         ] {
             let mut opts = EncoderOptions::preset(1).unwrap().filters(filters.clone());
             opts.lzma.dict_size = dict;

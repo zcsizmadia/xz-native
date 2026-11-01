@@ -90,7 +90,7 @@ use xz_native::{BcjKind, Check, EncoderOptions, Filter};
 
 let mut opts = EncoderOptions::preset(9 | xz_native::PRESET_EXTREME)?;
 opts.check = Check::Sha256;
-opts.filters = vec![Filter::Bcj { kind: BcjKind::X86, start_offset: 0 }];
+opts.filters = vec![Filter::bcj(BcjKind::X86)];
 opts.block_size = 16 << 20; // like `xz --block-size=16MiB`
 let compressed = xz_native::compress_with_options(&data, &opts)?;
 ```

@@ -8,6 +8,17 @@ minor version may change the API.
 
 ## [Unreleased]
 
+### Changed
+- Breaking: the variants `Filter::Lzma2`, `Filter::Delta`, `Filter::Bcj`,
+  `RawMethod::Lzma1Ext` and `Check::Unsupported` are `#[non_exhaustive]`,
+  so invalid values can't be built outside the crate and fields can be
+  added later. Build them with `Filter::lzma2`, `Filter::delta` (distance
+  1-256), `Filter::bcj`, `Filter::bcj_with_start_offset` (aligned start
+  offset; both checked ones return `Error::InvalidOptions`) and
+  `RawMethod::lzma1_ext`; `Check::Unsupported` comes only from
+  `Check::from_id`. Patterns need `..` (`Filter::Delta { distance, .. }`,
+  `Check::Unsupported { .. }`) (#156).
+
 ## [0.4.0+xz.5.8.4]
 
 Still compatible with xz/liblzma 5.8.4. New APIs that close the remaining

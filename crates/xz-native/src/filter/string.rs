@@ -495,7 +495,7 @@ impl RawOptions {
     /// let o = RawOptions::from_filter_str("x86 lzma2:preset=1,dict=1MiB")?;
     /// assert_eq!(o.method, RawMethod::Lzma2);
     /// assert_eq!(o.lzma.dict_size, 1 << 20);
-    /// assert_eq!(o.filters, [Filter::Bcj { kind: BcjKind::X86, start_offset: 0 }]);
+    /// assert_eq!(o.filters, [Filter::bcj(BcjKind::X86)]);
     ///
     /// let e = RawOptions::from_filter_str("x86 bogus").unwrap_err();
     /// assert_eq!((e.position(), e.message()), (4, "Unknown filter name"));

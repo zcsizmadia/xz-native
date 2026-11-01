@@ -56,9 +56,7 @@ pub(crate) fn vli_len(v: u64) -> usize {
 
 /// The Filter Flags of the whole chain: the filters, then LZMA2.
 pub(crate) fn filter_flags(opts: &EncoderOptions) -> Vec<u8> {
-    let lzma2 = Filter::Lzma2 {
-        dict_size: opts.lzma.dict_size,
-    };
+    let lzma2 = Filter::lzma2(opts.lzma.dict_size);
     opts.filters
         .iter()
         .chain([&lzma2])
@@ -302,7 +300,7 @@ impl XzEncoder {
     /// // A Block of text, then one of x86 code with the BCJ filter.
     /// let (_, mut n, st) = enc.encode(b"some text", &mut out, Action::FullFlush)?;
     /// assert_eq!(st, Status::StreamEnd);
-    /// let x86 = [Filter::Bcj { kind: BcjKind::X86, start_offset: 0 }];
+    /// let x86 = [Filter::bcj(BcjKind::X86)];
     /// enc.update_filters(&x86, LzmaOptions::preset(6)?)?;
     /// let (_, w, st) = enc.encode(b"\xe8\0\0\0\0", &mut out[n..], Action::Finish)?;
     /// assert_eq!(st, Status::StreamEnd);
@@ -657,10 +655,7 @@ mod tests {
     #[test]
     fn update_filters() {
         let data = sample(30_000);
-        let x86 = [Filter::Bcj {
-            kind: crate::BcjKind::X86,
-            start_offset: 0,
-        }];
+        let x86 = [Filter::bcj(crate::BcjKind::X86)];
         let fast = LzmaOptions::preset(1).unwrap();
         for threads in [1, 2] {
             let opts = EncoderOptions {

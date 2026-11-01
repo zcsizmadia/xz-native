@@ -30,6 +30,14 @@ pub enum Check {
     Sha256,
     /// A check ID reserved by the .xz format that this implementation can't
     /// verify (2, 3, 5-9, 11-15). Like liblzma, the decoder skips it.
+    ///
+    /// The variant is `#[non_exhaustive]`: only [`Check::from_id`] creates
+    /// it, so it never holds the ID of a supported check (there is no
+    /// `Unsupported(4)` that would differ from [`Check::Crc64`]). Outside
+    /// this crate, match it with braces, `Check::Unsupported { .. }` (or
+    /// `Check::Unsupported { 0: id, .. }`), and read the ID with
+    /// [`Check::id`].
+    #[non_exhaustive]
     Unsupported(u8),
 }
 
