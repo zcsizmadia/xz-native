@@ -576,3 +576,71 @@ pub(crate) fn cap_dict(dict_size: u32, uncompressed: Option<u64>) -> u32 {
         None => dict_size,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    /// The streaming BCJ decoder stage gives the original data for every
+    /// combination of output space per call and input from the next
+    /// stage per call (its buffer full, empty or in between at every
+    /// step), like one-shot conversion.
+    #[test]
+    fn bcj_stage_any_split() {
+        let mut r = 0x9E37_79B9_7F4A_7C15u64;
+        let data: Vec<u8> = (0..3000)
+            .map(|i| {
+                r ^= r << 13;
+                r ^= r >> 7;
+                r ^= r << 17;
+                // Many x86 calls and ARM64/RISC-V/ARM-like opcode bytes.
+                match i % 5 {
+                    0 => 0xE8,
+                    2 => 0x94,
+                    3 => 0x17,
+                    _ => r as u8,
+                }
+            })
+            .collect();
+        for kind in [
+            BcjKind::X86,
+            BcjKind::Arm64,
+            BcjKind::RiscV,
+            BcjKind::Ia64,
+            BcjKind::ArmThumb,
+            BcjKind::PowerPc,
+        ] {
+            let mut encoded = data.clone();
+            kind.encode(0, &mut encoded);
+            assert!(encoded != data, "{kind:?}");
+            for out_step in [1, 2, 3, 5, 7, 16, 31, 32, 33, 100, 4096] {
+                for in_step in [1, 2, 3, 4, 7, 13, 64, 1000] {
+                    let mut stage = BcjStage::new(kind, 0, false);
+                    let mut src = 0;
+                    let mut out = Vec::new();
+                    let mut buf = vec![0u8; out_step];
+                    for _ in 0..100_000 {
+                        let mut next = |_: &[u8], o: &mut [u8]| {
+                            let n = o.len().min(in_step).min(encoded.len() - src);
+                            o[..n].copy_from_slice(&encoded[src..src + n]);
+                            src += n;
+                            let p = if src == encoded.len() {
+                                Progress::End
+                            } else {
+                                Progress::Ok
+                            };
+                            Ok((0, n, p))
+                        };
+                        let (_, w, p) = stage.decode(&mut next, &[], &mut buf).unwrap();
+                        out.extend_from_slice(&buf[..w]);
+                        if p == Progress::End {
+                            break;
+                        }
+                    }
+                    assert!(out == data, "{kind:?} out {out_step} in {in_step}");
+                }
+            }
+        }
+    }
+}
