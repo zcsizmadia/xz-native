@@ -912,3 +912,46 @@ fn flush_timeout() {
         }
     }
 }
+
+/// `-vv`: the filter chain, the threads and the memory needed, as in xz.
+#[test]
+fn debug_output_matches_xz() {
+    let data = sample(100_000, 15);
+    for args in [
+        &["-vv", "-c", "-T1"][..],
+        &["-vv", "-c", "-T3"],
+        &["-vv", "-c", "-T1", "--x86", "--lzma2=preset=1"],
+        &["-vv", "-c", "--format=lzma"],
+        &["-vv", "-c", "-T1", "-M", "50MiB", "-9"],
+        &["-vv", "-c", "-T2", "-M", "300MiB", "-8"],
+        &["-vv", "-c", "-F", "raw", "--lzma1=preset=2"],
+        &[
+            "-vv",
+            "-c",
+            "-T1",
+            "--delta=dist=4",
+            "--arm64=start=4096",
+            "--lzma2=dict=6KiB,mode=fast",
+        ],
+    ] {
+        let a = in_c_locale_input(bin(), args, &data);
+        let Ok(_) = Command::new("xz").arg("--version").output() else {
+            return;
+        };
+        let b = in_c_locale_input(Command::new("xz"), args, &data);
+        assert_eq!(
+            stderr(&a).replace("xz-native:", "xz:"),
+            stderr(&b).replace('\r', ""),
+            "{args:?}"
+        );
+    }
+}
+
+/// Runs `cmd` with `input` on standard input in the C locale.
+fn in_c_locale_input(mut cmd: Command, args: &[&str], input: &[u8]) -> Output {
+    cmd.args(args)
+        .env("LC_ALL", "C")
+        .env_remove("XZ_DEFAULTS")
+        .env_remove("XZ_OPT");
+    run(cmd, input)
+}
