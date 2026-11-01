@@ -9,6 +9,8 @@ use crate::num::{int as group, mib};
 use crate::progress::Meter;
 use std::cell::{Cell, RefCell};
 use std::io::{self, BufReader, Read, Write};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, sync_channel};
+use std::time::{Duration, Instant};
 use xz_native::{
     Action, AutoReader, Check, DecoderOptions, EncoderOptions, Filter, LzipReader, LzmaOptions,
     LzmaReader, LzmaWriter, PRESET_EXTREME, RawDecoder, RawEncoder, RawMethod, RawOptions, Status,
@@ -214,10 +216,60 @@ pub fn with_chain(opts: &EncoderOptions, chain: &XzChain) -> EncoderOptions {
     o
 }
 
+/// `--flush-timeout` needs filters that can sync-flush (LZMA2 and Delta) and
+/// one thread, as in xz. Chains that are invalid for other reasons are left
+/// to [`encoder`], so that its error comes first, as in xz.
+fn flush_timeout_check(ctx: &mut Ctx) -> Result<(), String> {
+    let o = &ctx.o;
+    let ok = |items: &[Item]| {
+        items
+            .iter()
+            .all(|i| matches!(i, Item::Lzma2(_) | Item::Delta(_)))
+    };
+    let bad = match o.format {
+        // .lzma is always LZMA1.
+        Format::Lzma => matches!(o.chain.as_slice(), [] | [Item::Lzma1(_)]).then_some(0),
+        Format::Raw => (!ok(&o.chain)).then_some(0),
+        _ if o.chain.iter().any(|i| matches!(i, Item::Lzma1(_))) => None,
+        _ => {
+            let used: Vec<usize> = match &o.block_list {
+                Some(list) => list.iter().map(|e| e.0).collect(),
+                None => vec![0],
+            };
+            let mut used = used;
+            used.sort_unstable();
+            used.into_iter().find(|&n| {
+                let items = if n == 0 {
+                    &o.chain[..]
+                } else {
+                    o.block_chains[n].as_deref().unwrap_or_default()
+                };
+                !ok(items)
+            })
+        }
+    };
+    if let Some(n) = bad {
+        return Err(format!(
+            "Filter chain {n} is incompatible with --flush-timeout"
+        ));
+    }
+    if o.threads != Threads::Single {
+        ctx.note(
+            V_WARNING,
+            "Switching to single-threaded mode due to --flush-timeout",
+        );
+        ctx.o.threads = Threads::Single;
+    }
+    Ok(())
+}
+
 /// `coder_set_compression_settings()`: the preset or the custom chains,
 /// then fewer threads, single-threaded mode and a smaller dictionary until
 /// the memory limit is met.
 pub fn encoder(ctx: &mut Ctx, hw: &Hardware) -> Result<Encoder, String> {
+    if ctx.o.flush_timeout != 0 {
+        flush_timeout_check(ctx)?;
+    }
     let o = &ctx.o;
     let preset = o.preset | if o.extreme { PRESET_EXTREME } else { 0 };
     let invalid = |e: xz_native::Error| e.to_string();
@@ -557,6 +609,114 @@ pub fn compress(
                 LzmaWriter::with_options(output, *lzma).map_err(|e| Failure::Coder(e, 0))?;
             let progress = |w: &LzmaWriter<_>| (w.total_in(), w.total_out());
             run(&mut w, input, meter, progress, LzmaWriter::try_finish)
+        }
+    }
+}
+
+/// Reads standard input on a thread, so that waiting for it can time out
+/// (xz's non-blocking `io_read()` with `io_wait()`). The channel ends at
+/// the end of the input.
+fn stdin_chunks() -> Receiver<io::Result<Vec<u8>>> {
+    let (tx, rx) = sync_channel(4);
+    std::thread::spawn(move || {
+        let mut stdin = io::stdin();
+        loop {
+            let mut buf = vec![0u8; BUF_SIZE];
+            match stdin.read(&mut buf) {
+                Ok(0) => return,
+                Ok(n) => {
+                    buf.truncate(n);
+                    if tx.send(Ok(buf)).is_err() {
+                        return;
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                    return;
+                }
+            }
+        }
+    });
+    rx
+}
+
+/// Compresses standard input with `--flush-timeout` (xz's `coder_normal()`
+/// with `flush_needed`): when no input arrives for `timeout_ms` after
+/// some has, the encoder sync-flushes and the output is written out, so
+/// that what came so far can be decompressed.
+pub fn compress_flushing(
+    enc: &Encoder,
+    timeout_ms: u64,
+    output: &mut dyn Write,
+    meter: &mut Meter,
+) -> Result<(), Failure> {
+    enum Push {
+        Xz(XzEncoder),
+        Raw(RawEncoder),
+    }
+    let coder = |e| Failure::Coder(e, 0);
+    let mut push = match enc {
+        Encoder::Xz(plan) => Push::Xz(XzEncoder::with_options(plan.opts.clone()).map_err(coder)?),
+        Encoder::Raw(opts) => Push::Raw(RawEncoder::with_options(opts).map_err(coder)?),
+        Encoder::Lzma(_) => unreachable!("--flush-timeout rejects .lzma"),
+    };
+    let mut outbuf = vec![0u8; BUF_SIZE];
+    let mut totals = (0u64, 0u64);
+    // Encodes `input` with `action`: Run until it is used, the others until
+    // the end of the flush or the stream.
+    let mut code = |input: &[u8], action: Action, output: &mut dyn Write| {
+        let mut pos = 0;
+        loop {
+            let (used, written, status) = match &mut push {
+                Push::Xz(e) => e.encode(&input[pos..], &mut outbuf, action),
+                Push::Raw(e) => e.encode(&input[pos..], &mut outbuf, action),
+            }
+            .map_err(coder)?;
+            pos += used;
+            totals.0 += used as u64;
+            totals.1 += written as u64;
+            output
+                .write_all(&outbuf[..written])
+                .map_err(Failure::Write)?;
+            meter.tick(totals);
+            let done = match action {
+                Action::Run => pos == input.len() && written < outbuf.len(),
+                _ => status == Status::StreamEnd,
+            };
+            if done {
+                return Ok(());
+            }
+        }
+    };
+    let chunks = stdin_chunks();
+    let timeout = Duration::from_millis(timeout_ms);
+    // When to flush: the timeout after the first input since the last
+    // flush (`mytime_set_flush_time()`).
+    let mut deadline: Option<Instant> = None;
+    loop {
+        if crate::signals::aborted() {
+            return Err(Failure::Aborted);
+        }
+        // Wake up now and then to notice a signal.
+        let wait = deadline.map_or(Duration::from_millis(100), |d| {
+            d.saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(100))
+        });
+        match chunks.recv_timeout(wait) {
+            Ok(Ok(chunk)) => {
+                deadline.get_or_insert_with(|| Instant::now() + timeout);
+                code(&chunk, Action::Run, output)?;
+            }
+            Ok(Err(e)) => return Err(Failure::Read(e)),
+            Err(RecvTimeoutError::Timeout) => {
+                if deadline.is_some_and(|d| Instant::now() >= d) {
+                    code(&[], Action::SyncFlush, output)?;
+                    output.flush().map_err(Failure::Write)?;
+                    deadline = None;
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => return code(&[], Action::Finish, output),
         }
     }
 }

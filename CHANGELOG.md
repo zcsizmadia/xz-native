@@ -44,6 +44,10 @@ minor version may change the API.
   and reads them (#123).
 - `xz-native --files`/`--files0`: file names from a file or standard input,
   newline or NUL separated, with xz's rules and errors (#123).
+- `xz-native --flush-timeout=MS`: when compressing standard input, a sync
+  flush after MS milliseconds without input, so that the data so far can be
+  decompressed (LZMA2 and Delta only, single-threaded, as in xz; also on
+  Windows, where xz ignores it) (#123).
 - `xz-native` signals like xz: Ctrl-C (SIGINT) or SIGTERM stops at the next
   chunk, removes the partial output and ends with the signal; SIGUSR1 (and
   SIGINFO on the BSDs and macOS) prints the progress. The CLI uses

@@ -122,6 +122,20 @@ fn stdin(ctx: &mut Ctx, job: &Job, pos: (usize, usize), stdin_names: bool) {
         return;
     }
     let mut meter = meter(ctx, STDIN_NAME, pos);
+    let flushing = ctx.o.flush_timeout != 0 && ctx.o.block_list.is_none();
+    if let (Some(enc), true) = (&job.encoder, flushing) {
+        // Only standard input can make reads wait, so only it can time
+        // out (regular files never do in xz either). Not with --block-list.
+        let mut out = BufWriter::with_capacity(1 << 16, io::stdout().lock());
+        let r = coder::compress_flushing(enc, ctx.o.flush_timeout, &mut out, &mut meter)
+            .and_then(|()| out.flush().map_err(Failure::Write));
+        let ok = r.is_ok();
+        if let Err(f) = r {
+            report(ctx, job, STDIN_NAME, f);
+        }
+        meter.finish(ok);
+        return;
+    }
     let mut input = io::stdin().lock();
     code_to_stdout(ctx, job, STDIN_NAME, &mut input, &mut meter);
 }

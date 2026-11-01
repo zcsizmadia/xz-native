@@ -802,3 +802,80 @@ fn info_memory_and_help() {
     assert!(!text(&short).contains("--lzma2") && text(&long).contains("--lzma2"));
     assert!(text(&long).contains("--info-memory"));
 }
+
+/// `--flush-timeout`: after a pause in the input, what came so far is in
+/// the output and decodes; the errors and the warning are xz's.
+#[test]
+fn flush_timeout() {
+    use std::io::Read;
+    use std::sync::{Arc, Mutex};
+    let first = sample(100_000, 13);
+    let second = sample(50_000, 14);
+    let mut child = bin()
+        .args(["-c", "--flush-timeout=100"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let got = Arc::new(Mutex::new(Vec::new()));
+    let reader = {
+        let got = got.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = stdout.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                got.lock().unwrap().extend_from_slice(&buf[..n]);
+            }
+        })
+    };
+    stdin.write_all(&first).unwrap();
+    stdin.flush().unwrap();
+    // Well past the timeout: the first part must be decodable already.
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let so_far = got.lock().unwrap().clone();
+    let mut dec = xz_native::XzDecoder::new();
+    let mut out = vec![0u8; first.len() + 1000];
+    let (_, n, _) = dec.decode(&so_far, &mut out, false).unwrap();
+    assert!(
+        out[..n] == first[..],
+        "decoded {n} of {} bytes",
+        first.len()
+    );
+    stdin.write_all(&second).unwrap();
+    drop(stdin);
+    let exit = child.wait().unwrap();
+    reader.join().unwrap();
+    assert!(exit.success());
+    let all = got.lock().unwrap().clone();
+    assert!(xz_native::decompress(&all).unwrap() == [first, second].concat());
+
+    for args in [
+        &["-c", "--flush-timeout=100"][..],
+        &["-c", "-T1", "--flush-timeout=100", "--x86", "--lzma2"],
+        &["-c", "-T1", "--flush-timeout=100", "-F", "lzma"],
+        &[
+            "-c",
+            "-T1",
+            "--flush-timeout=100",
+            "--delta",
+            "--lzma2=preset=1",
+        ],
+    ] {
+        let a = ours(args, b"data");
+        let Some(b) = xz(args, b"data") else { return };
+        assert_eq!(status(&a), status(&b), "{args:?}");
+        assert_eq!(
+            stderr(&a).replace("xz-native:", "xz:"),
+            stderr(&b).replace('\r', ""),
+            "{args:?}"
+        );
+        if status(&a) == 0 {
+            assert!(a.stdout == b.stdout, "{args:?}");
+        }
+    }
+}
