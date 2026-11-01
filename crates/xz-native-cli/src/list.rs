@@ -4,6 +4,7 @@
 
 use crate::Ctx;
 use crate::args::{Format, V_DEBUG, V_VERBOSE, V_WARNING};
+use crate::names::Names;
 use crate::num::{int, mib, nice, ratio};
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -155,23 +156,27 @@ pub fn run(ctx: &mut Ctx) -> Result<(), String> {
         }
         return Err(msg);
     }
-    if ctx.o.files.is_empty() {
-        ctx.o.files.push("-".into());
-    }
     let mut opts = DecoderOptions::new();
     opts.memlimit = crate::coder::Hardware::detect()
         .bytes(ctx.o.memlimit_decompress)
         .unwrap_or(u64::MAX);
-    let files = ctx.o.files.clone();
+    let mut names = Names::new(ctx.o.files.clone(), ctx.o.files_from.as_ref())?;
     let mut totals = Info::default();
     let mut files_ok = 0u64;
     let mut out = String::new();
     let mut first_printed = false;
-    for (i, name) in files.iter().enumerate() {
+    let mut i = 0;
+    while let Some((name, stdin)) = names.next(ctx) {
+        i += 1;
         let display = name.to_string_lossy().into_owned();
-        let stdin = name == "-";
         if stdin && io::stdin().is_terminal() {
             ctx.error("Compressed data cannot be read from a terminal");
+            continue;
+        }
+        if stdin && names.stdin_names {
+            ctx.error(
+                "Cannot read data from standard input when reading filenames from standard \n                 input",
+            );
             continue;
         }
         let display = if stdin { "(stdin)".to_owned() } else { display };
@@ -181,7 +186,14 @@ pub fn run(ctx: &mut Ctx) -> Result<(), String> {
                 out.push('\n');
             }
             first_printed = true;
-            let _ = writeln!(out, "{display} ({}/{})", i + 1, files.len());
+            match names.total {
+                Some(n) => {
+                    let _ = writeln!(out, "{display} ({i}/{n})");
+                }
+                None => {
+                    let _ = writeln!(out, "{display} ({i})");
+                }
+            }
         }
         if stdin {
             print!("{out}");

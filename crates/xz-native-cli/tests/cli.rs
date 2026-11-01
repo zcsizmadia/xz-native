@@ -652,3 +652,56 @@ fn raw_format_matches_xz() {
     assert_eq!(status(&o), 0, "{}", stderr(&o));
     assert!(fs::read(dir.join("f")).unwrap() == data);
 }
+
+#[test]
+fn files_from_lists() {
+    let dir = tmpdir("files-from");
+    let reset = || {
+        for f in ["a.xz", "b.xz", "-.xz"] {
+            let _ = fs::remove_file(dir.join(f));
+        }
+    };
+    fs::write(dir.join("a"), b"alpha").unwrap();
+    fs::write(dir.join("b"), b"beta").unwrap();
+    fs::write(dir.join("-"), b"dash").unwrap();
+    fs::write(dir.join("list"), b"a\n\n\nb\n").unwrap();
+    fs::write(dir.join("list0"), b"a\0b\0").unwrap();
+    fs::write(dir.join("nonl"), b"a\nb").unwrap();
+    fs::write(dir.join("zero"), b"a\0b\n").unwrap();
+    fs::write(dir.join("dash"), b"-\n").unwrap();
+    for args in [&["-k", "--files=list"][..], &["-k", "--files0=list0"]] {
+        reset();
+        let o = file_cmd(&dir, args);
+        assert_eq!(status(&o), 0, "{args:?}: {}", stderr(&o));
+        assert_eq!(
+            xz_native::decompress(&fs::read(dir.join("a.xz")).unwrap()).unwrap(),
+            b"alpha"
+        );
+        assert_eq!(
+            xz_native::decompress(&fs::read(dir.join("b.xz")).unwrap()).unwrap(),
+            b"beta"
+        );
+    }
+    // Names from standard input; "-" there is a file, not standard input.
+    reset();
+    let mut c = bin();
+    c.current_dir(&dir).args(["-k", "--files"]);
+    assert_eq!(status(&run(c, b"a\n-\n")), 0);
+    assert!(dir.join("a.xz").exists() && dir.join("-.xz").exists());
+    // xz's errors.
+    reset();
+    let o = file_cmd(&dir, &["-k", "--files=nonl"]);
+    assert_eq!(status(&o), 1);
+    assert!(stderr(&o).contains("nonl: Unexpected end of input when reading filenames"));
+    assert!(dir.join("a.xz").exists() && !dir.join("b.xz").exists());
+    let o = file_cmd(&dir, &["-k", "--files=zero"]);
+    assert!(stderr(&o).contains("maybe you meant to use '--files0'"));
+    let o = file_cmd(&dir, &["--files=list", "--files0=list0"]);
+    assert!(stderr(&o).contains("Only one file can be specified"));
+    let mut c = bin();
+    c.current_dir(&dir).args(["-kf", "--files", "-"]);
+    let o = run(c, b"a\n");
+    assert!(stderr(&o).contains("Cannot read data from standard input when reading filenames"));
+    let o = file_cmd(&dir, &["-k", "--files=missing"]);
+    assert_eq!(status(&o), 1);
+}

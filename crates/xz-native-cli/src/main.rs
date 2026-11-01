@@ -8,6 +8,7 @@ mod chain;
 mod coder;
 mod files;
 mod list;
+mod names;
 mod num;
 mod progress;
 mod ram;
@@ -174,7 +175,9 @@ With no FILE, or when FILE is -, read standard input.
                       filter chain number (0-9) followed by a ':' before the
                       uncompressed data size
 
-Not supported yet: --files.
+      --files[=FILE]  read filenames to process from FILE (or standard input),
+                      one per line
+      --files0[=FILE] like --files but use the null character as the terminator
 "
     )
 }

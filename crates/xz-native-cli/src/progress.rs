@@ -31,7 +31,12 @@ impl Meter {
     pub fn start(verbose: bool, name: &str, file_pos: usize, files: usize, compress: bool) -> Self {
         let automatic = std::io::stderr().is_terminal();
         if verbose && automatic && (files != 1 || name != "(stdin)") {
-            eprintln!("{name} ({file_pos}/{files})");
+            // 0 files: the number isn't known (`--files`).
+            if files == 0 {
+                eprintln!("{name} ({file_pos})");
+            } else {
+                eprintln!("{name} ({file_pos}/{files})");
+            }
         }
         Self {
             enabled: verbose,
