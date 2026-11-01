@@ -9,6 +9,9 @@ minor version may change the API.
 ## [Unreleased]
 
 ### Added
+- `DecoderOptions::fail_fast`, like liblzma's `LZMA_FAIL_FAST`: with
+  threads, an error is reported as soon as it is found, without first
+  returning the output before it (#103).
 - MicroLZMA like liblzma's `lzma_microlzma_encoder()` and
   `lzma_microlzma_decoder()` (as EROFS uses it): `microlzma_encode` packs
   as much input as fits into a fixed-size output, and `microlzma_decode`

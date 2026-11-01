@@ -839,6 +839,18 @@ impl MtDecoder {
     }
 
     /// Ends the output with `e`, after the `written` bytes already copied.
+    /// The first error found so far in the queue, by the parser or a
+    /// worker, with output before it still waiting.
+    fn first_error(&self) -> Option<Error> {
+        self.queue.iter().find_map(|item| match item {
+            Item::Fail(e) => Some(*e),
+            Item::Block {
+                data: Some((_, e)), ..
+            } => *e,
+            _ => None,
+        })
+    }
+
     fn fail(&mut self, e: Error, written: usize) -> io::Result<usize> {
         self.failed = Some(e);
         self.parse = Parse::Done;
@@ -886,6 +898,12 @@ impl MtDecoder {
                 Err(e) => return if written > 0 { Ok(written) } else { Err(e) },
             };
             self.collect(false);
+            // `LZMA_FAIL_FAST`: an error anywhere ahead ends decoding now.
+            if self.opts.fail_fast
+                && let Some(e) = self.first_error()
+            {
+                return self.fail(e, written);
+            }
             let Some(front) = self.queue.front_mut() else {
                 // Parsing stops only at an item in the queue or for input.
                 assert!(paused);

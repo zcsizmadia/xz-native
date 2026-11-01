@@ -657,3 +657,47 @@ fn memlimit_threading_default() {
     assert_eq!(DecoderOptions::default().memlimit_threading, expected);
     assert_eq!(DecoderOptions::new().memlimit_threading, expected);
 }
+
+/// `fail_fast`: a broken last Block is reported as soon as a worker finds
+/// it, before the output of the Blocks ahead of it has all been read.
+/// Without it, all that output comes first, as without threads.
+#[test]
+fn fail_fast_reports_errors_early() {
+    let data = text(400_000, 11);
+    let opts = xz_native::EncoderOptions::preset(1)
+        .unwrap()
+        .threads(4)
+        .block_size(100_000);
+    let mut c = xz_native::compress_with_options(&data, &opts).unwrap();
+    let bl = blocks(&c, 0);
+    assert_eq!(bl.len(), 4);
+    let (off, size, total) = bl[3];
+    c[off + size + (total - size) / 2] ^= 0x55;
+    for fail_fast in [false, true] {
+        let opts = DecoderOptions::new().threads(4).fail_fast(fail_fast);
+        let mut r = XzReader::with_options(&c[..], opts);
+        let mut got = 0;
+        let mut b = [0u8; 1];
+        let e = loop {
+            match r.read(&mut b) {
+                Ok(0) => panic!("no error"),
+                Ok(_) => got += 1,
+                Err(e) => break e,
+            }
+            if got == 1 {
+                // Time for the workers to decode every Block.
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        };
+        let e = e.get_ref().and_then(|e| e.downcast_ref::<Error>()).copied();
+        assert!(
+            matches!(e, Some(Error::Data | Error::CheckMismatch)),
+            "{e:?}"
+        );
+        if fail_fast {
+            assert!(got < 300_000, "fail_fast: {got} bytes before the error");
+        } else {
+            assert!(got >= 300_000, "{got} bytes before the error");
+        }
+    }
+}
