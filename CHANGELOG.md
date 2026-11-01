@@ -12,6 +12,11 @@ minor version may change the API.
 - `RawEncoder` (and `compress_raw`) overflowed the stack in unoptimized
   builds on Windows: the LZ encoder was moved through the stack before
   being boxed (#156).
+- Threaded decoding: `set_memlimit` below the cost of a Block already
+  parsed ahead panicked (`assertion failed: paused`) once the Blocks in
+  flight were out; that Block is now decoded on the calling thread. Block
+  Headers whose sizes add up past `u64::MAX` (with an unlimited
+  `memlimit_threading`) overflowed the in-flight accounting (#156).
 
 ## [0.4.0+xz.5.8.4]
 
