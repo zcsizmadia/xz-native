@@ -36,9 +36,13 @@ jobs:
         with:
           toolchain: nightly
           components: miri
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: cargo-nextest
       - run: cargo miri setup --target ${{ matrix.target }}
       - name: Unit tests
-        run: cargo miri test -p xz-native --lib --target ${{ matrix.target }}
+        # Each test in its own Miri process, one per CPU.
+        run: cargo miri nextest run -p xz-native --lib --target ${{ matrix.target }}
       - name: xz test files
         run: cargo miri test -p xz-native --test xz_test_files --target ${{ matrix.target }}
         env:
