@@ -1077,7 +1077,10 @@ mod tests {
 
     /// The huge page hint takes any table (empty, smaller than a huge page,
     /// unaligned) and never changes its contents.
+    /// Not under Miri: the hint is compiled out there, and filling the
+    /// 20 MiB table took most of an hour.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn hugepage_hint_any_table() {
         hugepage_hint::<u32>(&[]);
         hugepage_hint(&[1u8, 2, 3]);
