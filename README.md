@@ -14,9 +14,10 @@ build scripts or the memory-safety risk. Sibling of the C# library
 [![License](https://img.shields.io/crates/l/xz-native)](LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/zcsizmadia/xz-native/badge)](https://scorecard.dev/viewer/?uri=github.com/zcsizmadia/xz-native)
 
-> **Status:** early development, not yet 1.0. Decoding of `.xz`, `.lzma` and
-> `.lz` and encoding of `.xz` and `.lzma` work and are heavily tested; the
-> encoder output is byte-identical to liblzma 5.8.4 for the same options. See the
+> **Status:** stable since 1.0: only a major release breaks code (see
+> [Stability](#stability)). Decoding of `.xz`, `.lzma` and `.lz` and
+> encoding of `.xz` and `.lzma` are heavily tested; the encoder output is
+> byte-identical to liblzma 5.8.4 for the same options. See the
 > [roadmap](docs/PROPOSAL.md#milestones) and the
 > [issues](https://github.com/zcsizmadia/xz-native/issues).
 
