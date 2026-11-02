@@ -130,6 +130,25 @@ struct Current {
 /// end, and the decoded size must match the Index. Errors are
 /// [`std::io::Error`]s wrapping an [`Error`] (see [`std::io::Error::get_ref`]).
 /// [`DecoderOptions::concatenated`] is ignored: all Streams are read.
+///
+/// ```
+/// use std::io::{Cursor, Read, Seek, SeekFrom};
+/// use xz_native::{EncoderOptions, XzSeekableReader};
+///
+/// let data: Vec<u8> = (0..200_000u32).flat_map(|i| i.to_le_bytes()).collect();
+/// // 64 KiB Blocks, as `xz --block-size=64KiB` writes them.
+/// let opts = EncoderOptions::preset(1)?.block_size(64 << 10);
+/// let packed = xz_native::compress_with_options(&data, &opts)?;
+///
+/// let mut r = XzSeekableReader::new(Cursor::new(packed))?;
+/// assert_eq!(r.uncompressed_size(), data.len() as u64);
+/// assert_eq!(r.block_count(), 13);
+/// r.seek(SeekFrom::Start(500_000))?; // decodes only the Block holding it
+/// let mut buf = [0u8; 8];
+/// r.read_exact(&mut buf)?;
+/// assert_eq!(buf, data[500_000..500_008]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct XzSeekableReader<R> {
     inner: R,

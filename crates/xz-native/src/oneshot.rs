@@ -38,11 +38,31 @@ fn decode_all(
 }
 
 /// Decompresses .xz data (concatenated streams allowed) in one call.
+///
+/// # Errors
+///
+/// [`Error::Format`](crate::Error::Format) if the input isn't .xz,
+/// [`Error::Data`](crate::Error::Data) for corrupt data or data after the
+/// end that isn't Stream Padding or another Stream,
+/// [`Error::CheckMismatch`](crate::Error::CheckMismatch) for a wrong
+/// integrity check, [`Error::Options`](crate::Error::Options) for an
+/// unsupported filter, and [`Error::Truncated`](crate::Error::Truncated) if
+/// the input ends early (also for data after the end that is shorter than
+/// a Stream Header). There is no memory limit: for untrusted input,
+/// see [`decompress_with_options`] and [`DecoderOptions::memlimit`].
 pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
     decompress_with_options(input, DecoderOptions::default())
 }
 
 /// Decompresses .xz data with options.
+///
+/// # Errors
+///
+/// As [`decompress`], plus [`Error::MemLimit`](crate::Error::MemLimit)
+/// above [`DecoderOptions::memlimit`] and, with
+/// [`UnsupportedCheck::Fail`](crate::UnsupportedCheck::Fail),
+/// [`Error::Options`](crate::Error::Options) for a check type that can't
+/// be verified.
 pub fn decompress_with_options(input: &[u8], opts: DecoderOptions) -> Result<Vec<u8>> {
     #[cfg(feature = "std")]
     if opts.threads != 1 {
@@ -284,6 +304,11 @@ fn encode_all(
 /// Compresses `data` to .xz with a preset (0-9, optionally ORed with
 /// [`crate::PRESET_EXTREME`]) and a CRC64 check, like `xz -6`. The output
 /// is byte-identical to liblzma 5.8.4's for the same options.
+///
+/// # Errors
+///
+/// [`Error::InvalidOptions`](crate::Error::InvalidOptions) for a preset
+/// above 9 or other bits set.
 pub fn compress(data: &[u8], preset: u32) -> Result<Vec<u8>> {
     compress_with_options(data, &EncoderOptions::preset(preset)?)
 }
@@ -293,6 +318,10 @@ pub fn compress(data: &[u8], preset: u32) -> Result<Vec<u8>> {
 /// [`EncoderOptions::multithreaded`], the Blocks are encoded in parallel
 /// and the output is byte-identical to liblzma's multithreaded encoder
 /// (`xz -T`) for any thread count.
+///
+/// # Errors
+///
+/// As [`XzEncoder::with_options`](crate::XzEncoder::with_options).
 pub fn compress_with_options(data: &[u8], opts: &EncoderOptions) -> Result<Vec<u8>> {
     #[cfg(feature = "std")]
     if opts.is_multithreaded() {

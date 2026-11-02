@@ -177,6 +177,34 @@ enum Seq {
 /// of threads and any input split; only the options and the flushes
 /// decide it. [`Action::SyncFlush`] isn't supported then, and calls may
 /// wait for worker threads. See [`EncoderOptions::block_size`].
+///
+/// Feeding input in pieces, then finishing: [`Action::Finish`] is repeated
+/// with the input that is left until [`Status::StreamEnd`].
+///
+/// ```
+/// use xz_native::{Action, Status, XzEncoder};
+///
+/// let mut enc = XzEncoder::new(6)?;
+/// let mut out = Vec::new();
+/// let mut buf = [0u8; 4096];
+/// for piece in [&b"hello "[..], b"push ", b"encoder"] {
+///     let mut input = piece;
+///     while !input.is_empty() {
+///         let (used, written, _) = enc.encode(input, &mut buf, Action::Run)?;
+///         input = &input[used..];
+///         out.extend_from_slice(&buf[..written]);
+///     }
+/// }
+/// loop {
+///     let (_, written, status) = enc.encode(&[], &mut buf, Action::Finish)?;
+///     out.extend_from_slice(&buf[..written]);
+///     if status == Status::StreamEnd {
+///         break;
+///     }
+/// }
+/// assert_eq!(xz_native::decompress(&out)?, b"hello push encoder");
+/// # Ok::<(), xz_native::Error>(())
+/// ```
 #[derive(Debug)]
 pub struct XzEncoder {
     inner: Inner,
@@ -196,11 +224,23 @@ enum Inner {
 impl XzEncoder {
     /// Creates an encoder for a preset (0-9, optionally ORed with
     /// [`crate::PRESET_EXTREME`]) with a CRC64 check, like `xz -0`...`-9e`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidOptions`] for a preset above 9 or other bits set.
     pub fn new(preset: u32) -> Result<Self> {
         Self::with_options(EncoderOptions::preset(preset)?)
     }
 
     /// Creates an encoder with options.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidOptions`] for options liblzma rejects (out-of-range
+    /// LZMA2 settings, a filter chain that isn't valid, an unsupported
+    /// check, too many threads, a too large Block size, or threads without
+    /// the `std` feature). With threads, [`Error::MemLimit`] if a Block
+    /// size doesn't fit in memory on this platform.
     pub fn with_options(opts: EncoderOptions) -> Result<Self> {
         #[cfg(feature = "std")]
         if opts.is_multithreaded() {
@@ -224,10 +264,15 @@ impl XzEncoder {
     /// written, status)`; [`Status::StreamEnd`] means that the stream is
     /// complete ([`Action::Finish`]) or the flush is done.
     ///
+    /// # Errors
+    ///
     /// As in liblzma, once a flush or [`Action::Finish`] has started, every
     /// call must pass the same action and the input that is left until
-    /// [`Status::StreamEnd`]; anything else is [`Error::Usage`]. `Usage` and
-    /// [`Error::MemLimit`] leave the encoder as it was, to call again; other
+    /// [`Status::StreamEnd`]; anything else is [`Error::Usage`], as is
+    /// [`Action::SyncFlush`] with threads. [`Error::InvalidOptions`] for a
+    /// [`Action::SyncFlush`] the filter chain can't do (BCJ filters), and
+    /// [`Error::MemLimit`] when no worker thread can be started. `Usage`
+    /// and `MemLimit` leave the encoder as it was, to call again; other
     /// errors are final: later calls return them again.
     pub fn encode(
         &mut self,

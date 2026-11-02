@@ -521,6 +521,33 @@ enum Seq {
 /// waits for one (it does not wait for more input). The input consumed runs
 /// ahead of the output by up to `2 * threads` Blocks, within
 /// `min(memlimit, memlimit_threading)` bytes of Blocks in flight.
+///
+/// Decoding input that arrives in pieces (from a socket, say), with a
+/// memory limit for untrusted data; `finish` tells it that no more input
+/// follows:
+///
+/// ```
+/// use xz_native::{DecoderOptions, Status, XzDecoder};
+///
+/// let packed = xz_native::compress(b"hello push decoder", 6)?;
+/// let mut dec = XzDecoder::with_options(DecoderOptions::new().memlimit(64 << 20));
+/// let mut out = Vec::new();
+/// let mut buf = [0u8; 4096];
+/// let mut chunks = packed.chunks(7).peekable();
+/// while let Some(mut chunk) = chunks.next() {
+///     let last = chunks.peek().is_none();
+///     loop {
+///         let (used, written, status) = dec.decode(chunk, &mut buf, last)?;
+///         chunk = &chunk[used..];
+///         out.extend_from_slice(&buf[..written]);
+///         if status == Status::StreamEnd || (chunk.is_empty() && written == 0) {
+///             break;
+///         }
+///     }
+/// }
+/// assert_eq!(out, b"hello push decoder");
+/// # Ok::<(), xz_native::Error>(())
+/// ```
 #[derive(Debug)]
 pub struct XzDecoder {
     opts: DecoderOptions,
@@ -648,7 +675,16 @@ impl XzDecoder {
     /// the end of the data. Returns `(input consumed, output written,
     /// status)`.
     ///
-    /// Errors work like liblzma's: the progress made before an error is
+    /// # Errors
+    ///
+    /// [`Error::Format`] if the input isn't .xz, [`Error::Data`] or
+    /// [`Error::CheckMismatch`] for corrupt data, [`Error::Options`] for a
+    /// filter or option this implementation doesn't support,
+    /// [`Error::MemLimit`] above [`DecoderOptions::memlimit`],
+    /// [`Error::Truncated`] when `finish` is set and the input ends early,
+    /// and [`Error::UnsupportedCheck`] with [`UnsupportedCheck::Report`].
+    ///
+    /// They work like liblzma's: the progress made before an error is
     /// returned first, as `Ok`, and the next call returns the error. After
     /// that, every call returns it again, except for [`Error::MemLimit`]
     /// (raise the limit with [`set_memlimit`](Self::set_memlimit) and call

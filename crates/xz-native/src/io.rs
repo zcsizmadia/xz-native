@@ -45,7 +45,21 @@ fn read_with<D: PushDecoder, R: BufRead>(
 ///
 /// After an error, every later read returns it again. A reader can't
 /// continue after [`Error::MemLimit`](crate::Error::MemLimit); for that, use
-/// [`XzDecoder`] and [`XzDecoder::set_memlimit`].
+/// [`XzDecoder`] and [`XzDecoder::set_memlimit`]. Read errors are
+/// [`std::io::Error`]s that wrap the [`Error`](crate::Error) (see there).
+///
+/// ```no_run
+/// use std::fs::File;
+/// use std::io::{BufReader, Read};
+/// use xz_native::{DecoderOptions, XzReader};
+///
+/// // Untrusted input: a memory limit, and threads for multi-Block files.
+/// let opts = DecoderOptions::new().memlimit(256 << 20).threads(0);
+/// let mut reader = XzReader::with_options(BufReader::new(File::open("data.xz")?), opts);
+/// let mut text = String::new();
+/// reader.read_to_string(&mut text)?;
+/// # Ok::<(), std::io::Error>(())
+/// ```
 ///
 /// With [`DecoderOptions::threads`] other than 1, Blocks whose headers store
 /// their sizes (as `xz -T` and liblzma's multithreaded encoder write them)
@@ -401,6 +415,18 @@ impl<E: PushEncoder> WriterCore<E> {
 /// stream stays detectably incomplete). [`flush`](Write::flush) writes out the compressed data
 /// produced so far without flushing the encoder (which would cost
 /// compression).
+///
+/// ```
+/// use std::io::Write;
+/// use xz_native::XzWriter;
+///
+/// let mut w = XzWriter::new(Vec::new(), 6)?;
+/// w.write_all(b"hello ")?;
+/// w.write_all(b"writer")?;
+/// let packed = w.finish()?; // the end of the stream, and any write error
+/// assert_eq!(xz_native::decompress(&packed)?, b"hello writer");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct XzWriter<W: Write> {
     inner: Option<W>,
