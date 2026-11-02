@@ -9,6 +9,16 @@ Stability section. Before 1.0, a minor version could change the API.
 
 ## [Unreleased]
 
+## [1.0.1+xz.5.8.4]
+
+Still compatible with xz/liblzma 5.8.4. Documentation only; the code is
+unchanged.
+
+### Fixed
+- The README's status line still said "early development, not yet 1.0";
+  it now says the crate is stable since 1.0 and links the Stability
+  section (#175).
+
 ## [1.0.0+xz.5.8.4]
 
 Still compatible with xz/liblzma 5.8.4. The first stable release: from
@@ -371,7 +381,8 @@ First release. Compatible with xz/liblzma 5.8.4.
   the `portable` feature disables them.
 - `no_std` + `alloc` without the default `std` feature. MSRV 1.89.
 
-[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v1.0.1...HEAD
+[1.0.1+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v1.0.0...v1.0.1
 [1.0.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.4.0...v1.0.0
 [0.4.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.3.0...v0.4.0
 [0.3.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.2.0...v0.3.0

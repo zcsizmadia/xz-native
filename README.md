@@ -288,8 +288,8 @@ The OpenSSF Scorecard and CodeQL watch the workflows themselves: actions are pin
 ## Versioning
 
 The crate follows SemVer for its own API, and the build metadata names the
-xz release whose behavior and encoder output it matches: `1.0.0+xz.5.8.4` is
-release 1.0.0, compatible with xz 5.8.4. Depend on it as
+xz release whose behavior and encoder output it matches: `1.0.1+xz.5.8.4` is
+release 1.0.1, compatible with xz 5.8.4. Depend on it as
 `xz-native = "1"`; Cargo ignores the metadata. A major release (2.0) may
 break code, a minor release (1.1) adds API or follows a new xz release,
 and a patch release (1.0.1) fixes bugs. Git tags are `vX.Y.Z`.
