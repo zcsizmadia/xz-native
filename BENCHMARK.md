@@ -122,7 +122,10 @@ streaming `Read` adapter); runs at fbc016c and 50313e9 had 0.97-1.00x and
 0.95-0.98x, and 1.01-1.03x and 0.99-1.02x. Both libraries executed the
 same instructions in those runs
 (`perf stat`, to 0.002%): the ratio moves by about 3% between builds and
-runs with code layout. In cycles of the decode loops alone, xz-native is
+runs with code layout. Two builds with the same library code (eb0213b and
+6e7c974, which changed only the benchmark harness), run alternately three
+times on the EPYC, decoded text at 1.008x and 0.96-0.98x of liblzma; even
+liblzma's own numbers moved 1-2% between the two binaries. In cycles of the decode loops alone, xz-native is
 0.5-1.5% behind on text and even on binary. It was 3-6% behind until [#87]
 ported the last range decoder assembly that mattered ([#81]). Against the
 `liblzma-sys` build, whose CRC64 costs it about 10%, xz-native is
@@ -427,7 +430,9 @@ keep the memory on that node too, for example
 `numactl --physcpubind=32 --membind=1 cargo bench -p xz-bench`. Each
 decode and encode benchmark takes 10 samples; `XZ_BENCH_SAMPLES=30` (with
 `-- --measurement-time 20`) gives steadier numbers in about three times
-the time. Criterion writes reports
+the time. Longer runs narrow the confidence intervals (0.20% to 0.11% on the
+EPYC) but not the build-to-build layout effect above, so compare builds
+alternately in one session rather than across runs. Criterion writes reports
 to `target/criterion`, and
 
 ```sh
