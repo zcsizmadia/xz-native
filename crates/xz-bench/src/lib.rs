@@ -12,6 +12,18 @@ impl Rng {
     }
 }
 
+/// Criterion samples per benchmark in the decode and encode suites: 10 by
+/// default (each iteration takes up to seconds), or `XZ_BENCH_SAMPLES` for
+/// longer, steadier runs. Criterion's `--sample-size` can't override it,
+/// since a group's own setting wins.
+pub fn sample_size() -> usize {
+    std::env::var("XZ_BENCH_SAMPLES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|&n| n >= 10)
+        .unwrap_or(10)
+}
+
 /// Benchmark inputs. Set `XZ_BENCH_FILE` to add a real file (for example a
 /// tarball of the Silesia corpus).
 pub fn datasets() -> Vec<(String, Vec<u8>)> {

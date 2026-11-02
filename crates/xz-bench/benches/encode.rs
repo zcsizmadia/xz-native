@@ -62,7 +62,7 @@ fn encode(c: &mut Criterion) {
             assert!(ours == liblzma_compress(&data, c_preset), "{name} -{label}");
             let mut g = c.benchmark_group(format!("encode/{name}/xz-{label}"));
             g.throughput(Throughput::Bytes(data.len() as u64));
-            g.sample_size(10);
+            g.sample_size(xz_bench::sample_size());
             g.bench_function(BenchmarkId::from_parameter("xz-native"), |b| {
                 b.iter(|| xz_native::compress(black_box(&data), native_preset).unwrap())
             });
