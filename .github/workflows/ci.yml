@@ -170,7 +170,7 @@ jobs:
       - name: Unit tests
         # The unsafe code: checksums, decoder, match finder prefetch. The
         # encoder tests are safe code and slow under Miri (about 45 minutes);
-        # miri.yml runs them after merges and weekly.
+        # miri.yml runs them weekly and before each release.
         run: >
           cargo miri test -p xz-native --lib --target ${{ matrix.target }} --
           --skip lzma2_encoder:: --skip range_encoder:: --skip xz::encoder::

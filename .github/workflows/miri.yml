@@ -1,24 +1,19 @@
 name: Miri
 
 # All unit tests, including the encoder ones that the miri job in ci.yml
-# skips (about an hour per target): after each merge that changes the
-# library, and weekly for new Miri checks in the nightly toolchain.
+# skips (one to two hours per target): weekly, for new Miri checks in the
+# nightly toolchain, and by hand before each release (docs/RELEASING.md).
+# Not on every merge: merges came faster than a run, so each push cancelled
+# the run before it and few ever finished.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "crates/xz-native/**"
-      - ".github/workflows/miri.yml"
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
 
 concurrency:
-  # Pushes to main share a group: a newer push cancels the older run, so
-  # only the latest commit runs to the end. Scheduled and manual runs get
-  # their own group, so a push never cancels them.
-  group: miri-${{ (github.event_name == 'pull_request' || github.event_name == 'push') && github.ref || github.run_id }}
-  cancel-in-progress: true
+  # One run per ref at a time; a newer one waits instead of cancelling it.
+  group: miri-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
