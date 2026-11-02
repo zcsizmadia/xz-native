@@ -17,7 +17,9 @@ crates.io is permanent: a version can be yanked but never replaced.
    the `[Unreleased]` notes in `CHANGELOG.md` under the new version.
 2. Check the package: `cargo package -p xz-native --list` and
    `cargo publish -p xz-native --dry-run`.
-3. PR, squash-merge once CI is green.
+3. PR, squash-merge once CI is green. Before tagging, run the Miri
+   workflow on `main` (`gh workflow run miri.yml`, one to two hours) and
+   wait for it to pass: CI's Miri job skips the slow encoder tests.
 4. Tag `main` and push the tag:
    `git tag vX.Y.Z && git push origin vX.Y.Z`.
 5. The Release workflow (`.github/workflows/release.yml`) checks that the

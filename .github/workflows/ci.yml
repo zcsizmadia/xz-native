@@ -178,16 +178,23 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: miri-${{ matrix.target }}
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: cargo-nextest
       - run: cargo miri setup --target ${{ matrix.target }}
       - name: Unit tests
         # The unsafe code: checksums, decoder, match finder prefetch. The
-        # encoder tests are safe code and slow under Miri (about 45 minutes);
-        # miri.yml runs them after merges and weekly.
+        # encoder tests and the BCJ split test are safe code and slow under
+        # Miri (about 45 and 17 minutes); miri.yml runs them weekly and
+        # before each release. nextest runs
+        # each test in its own Miri process, one per CPU.
         run: >
-          cargo miri test -p xz-native --lib --target ${{ matrix.target }} --
-          --skip lzma2_encoder:: --skip range_encoder:: --skip xz::encoder::
-          --skip xz::mt_encoder:: --skip normalization_is_transparent
-          --skip binary_trees_find_longest_match
+          cargo miri nextest run -p xz-native --lib --target ${{ matrix.target }}
+          -E 'not (test(~lzma2_encoder::) | test(~range_encoder::)
+          | test(~xz::encoder::) | test(~xz::mt_encoder::)
+          | test(~normalization_is_transparent)
+          | test(~binary_trees_find_longest_match)
+          | test(~bcj_stage_any_split))'
       - name: xz test files
         run: cargo miri test -p xz-native --test xz_test_files --target ${{ matrix.target }}
         env:
