@@ -178,6 +178,10 @@ pub mod bufread {
     impl<R: BufRead> XzEncoder<R> {
         /// Compresses with a preset (0-9, optionally ORed with
         /// [`crate::PRESET_EXTREME`]) and a CRC64 check, like `xz -6`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if `level` is not a valid preset.
         pub fn new(inner: R, level: u32) -> Self {
             Self::new_encoder(inner, push_encoder(level))
         }
@@ -327,6 +331,10 @@ pub mod read {
 
     impl<R: Read> XzEncoder<R> {
         /// Compresses with a preset, like `xz -6`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if `level` is not a valid preset.
         pub fn new(inner: R, level: u32) -> Self {
             Self {
                 inner: bufread::XzEncoder::new(BufReader::with_capacity(BUF_SIZE, inner), level),
@@ -397,6 +405,10 @@ pub mod write {
 
     impl<W: Write> XzEncoder<W> {
         /// Compresses with a preset, like `xz -6`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if `level` is not a valid preset.
         pub fn new(inner: W, level: u32) -> Self {
             Self::new_encoder(inner, push_encoder(level))
         }
