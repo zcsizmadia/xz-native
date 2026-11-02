@@ -3,10 +3,20 @@
 All notable changes to xz-native. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the crate
 follows [Semantic Versioning](https://semver.org/) for its own API, with the
-xz release it matches as build metadata (`0.1.0+xz.5.8.4`). Before 1.0, a
-minor version may change the API.
+xz release it matches as build metadata (`1.0.0+xz.5.8.4`). From 1.0, only
+a major version breaks code; what the promise covers is in the README's
+Stability section. Before 1.0, a minor version could change the API.
 
 ## [Unreleased]
+
+## [1.0.0+xz.5.8.4]
+
+Still compatible with xz/liblzma 5.8.4. The first stable release: from
+here on, only a major release breaks code (README, Stability). The last
+breaking changes settle the API for that promise: non_exhaustive variants
+with checked constructors, one enum for unsupported checks, and no
+silently ignored threads without `std`. Compression at presets 6-9e is
+10-13% faster on Linux.
 
 ### Changed
 - Faster compression on Linux: the match finder asks for transparent huge
@@ -361,7 +371,8 @@ First release. Compatible with xz/liblzma 5.8.4.
   the `portable` feature disables them.
 - `no_std` + `alloc` without the default `std` feature. MSRV 1.89.
 
-[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v1.0.0...HEAD
+[1.0.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.4.0...v1.0.0
 [0.4.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.3.0...v0.4.0
 [0.3.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.2.0...v0.3.0
 [0.2.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.1.0...v0.2.0

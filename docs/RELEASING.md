@@ -6,10 +6,13 @@ crates.io is permanent: a version can be yanked but never replaced.
 
 ## Each release
 
-1. Choose the version from the `[Unreleased]` notes: before 1.0, any
-   change to the API or to behavior callers can rely on (errors returned,
-   when they are returned) needs a minor bump (0.1.x -> 0.2.0); a patch
-   release is for fixes that don't change what correct callers see.
+1. Choose the version from the `[Unreleased]` notes, by the promise in
+   the README's Stability section: a change that breaks code needs a
+   major bump (1.x -> 2.0.0); new API, a raised minimum Rust version or a
+   new xz release (new build metadata) needs a minor bump (1.0.x ->
+   1.1.0); a patch release is for fixes that don't change what correct
+   callers see. Run `cargo semver-checks -p xz-native` against the last
+   release to confirm.
    Branch, then update `version` in the workspace `Cargo.toml` and move
    the `[Unreleased]` notes in `CHANGELOG.md` under the new version.
 2. Check the package: `cargo package -p xz-native --list` and
