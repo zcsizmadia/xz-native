@@ -149,7 +149,7 @@ Linux has the same cost for large outputs. glibc reuses freed memory for
 allocations below its mmap threshold, which grows up to 32 MiB; from 32 MiB
 on, every new `Vec` gets fresh pages, faulted in 4 KiB at a time unless
 transparent huge pages are on for the heap. `examples/alloc_probe` with
-`XZ_PROBE_MIB` on the Ryzen 5 3500U (Ubuntu 26.04), GiB/s:
+`XZ_PROBE_MIB` on the Ryzen 5 3500U (Ubuntu 26.04), before [#182], GiB/s:
 
 | Output | `decompress` | `decompress_into` (reused) | copy into a fresh `Vec` | copy into a reused buffer |
 |---|---|---|---|---|
@@ -158,9 +158,23 @@ transparent huge pages are on for the heap. `examples/alloc_probe` with
 | 32 MiB | 1.24 | 3.75 | 1.41 | 8.6 |
 | 64 MiB | 1.23 | 3.48 | 1.41 | 7.4 |
 
-So for outputs of 32 MiB and more, decode into a reused buffer
-(`decompress_into`) or stream (`XzReader`). Below that size the Ryzen's
-ceiling is its CRC64 (10.5 GiB/s, 128-bit PCLMULQDQ only), not memory.
+Below 32 MiB the Ryzen's ceiling is its CRC64 (10.5 GiB/s, 128-bit
+PCLMULQDQ only), not memory.
+
+Since [#182], one-shot decoding asks for transparent huge pages for its
+output before writing it, so where the kernel's THP mode is `madvise`
+(Ubuntu's default) a fresh output faults in 2 MiB at a time. On the EPYC
+7543 (one pinned core, memory on its node), before and after, GiB/s:
+
+| Output | `decompress` before | after | `decompress_into` (reused) before | after |
+|---|---|---|---|---|
+| 16 MiB | 10.9 | 12.2-13.1 | 12.5 | 13.3-13.6 |
+| 64 MiB | 1.47 | **5.8-5.9** | 6.4 | 9.5 |
+
+So `decompress` of large outputs is no longer 4x behind a reused buffer
+there, though `decompress_into` (or streaming with `XzReader`) still
+avoids the remaining cost of fresh memory. With THP mode `never`, and on
+other systems, the Ryzen numbers above still apply.
 
 [#49]: https://github.com/zcsizmadia/xz-native/pull/49
 
@@ -170,28 +184,51 @@ ceiling is its CRC64 (10.5 GiB/s, 128-bit PCLMULQDQ only), not memory.
 
 64 MiB (text and binary repeated 8 times) compressed at `xz -6` with 1 MiB
 Blocks and a CRC64 check (as `xz` writes), decoded with the one-shot API
-and compared with liblzma's multithreaded decoder (the `liblzma-sys`
-build, without CLMUL CRC; with
-`memlimit_threading` raised so that it uses every thread).
-`examples/profile_decode`.
+and compared with liblzma's multithreaded decoder (with
+`memlimit_threading` raised so that it uses every thread), both C builds.
+With one thread, each library runs its single-threaded decoder.
+`examples/profile_decode` with the input dumped once
+(`XZ_PROBE_DUMP`/`XZ_PROBE_LOAD`).
 
-**Linux (EPYC 7543)**, at 798d326, pinned to the 32 cores of one idle NUMA
-node (`taskset -c 32-63`):
+**Linux (EPYC 7543)**, xz-native at [#182] (8868e54 plus the huge page
+hint for decoder output), pinned to the 32 cores of one idle NUMA node
+with its memory (`numactl --physcpubind=32-63 --membind=1`), medians of
+three interleaved rounds. Ratios are xz-native over the tuned build, then
+over the `liblzma-sys` build:
 
-| Threads | text xz-native | text liblzma | ratio | binary xz-native | binary liblzma | ratio |
+| Data | Threads | xz-native | C liblzma, tuned | C liblzma, `liblzma-sys` | xz-native / tuned | xz-native / `liblzma-sys` |
 |---|---|---|---|---|---|---|
-| 1 | **100.1** | 96.0 | 1.04x | **90.8** | 87.4 | 1.04x |
-| 4 | **375.6** | 356.2 | 1.05x | **331.9** | 314.0 | 1.06x |
-| 8 | **697.2** | 655.2 | 1.06x | **620.2** | 595.1 | 1.04x |
-| 16 | **1246** | 1138 | 1.10x | **1071** | 888 | 1.21x |
-| 32 | **2110** | 1409 | 1.50x | **1766** | 1381 | 1.28x |
+| text | 1 | 104.0 | **109.1** | 97.9 | 0.95x | 1.06x |
+| text | 4 | **426.7** | 378.9 | 332.7 | 1.13x | 1.28x |
+| text | 8 | **825.9** | 711.2 | 658.9 | 1.16x | 1.25x |
+| text | 16 | **1506** | 1261 | 1191 | 1.19x | 1.27x |
+| text | 32 | **2690** | 1784 | 1671 | 1.51x | 1.61x |
+| binary | 1 | 94.2 | **95.2** | 89.2 | 0.99x | 1.06x |
+| binary | 4 | **377.9** | 336.8 | 314.6 | 1.12x | 1.20x |
+| binary | 8 | **726.9** | 629.7 | 594.5 | 1.15x | 1.22x |
+| binary | 16 | **1355** | 1187 | 1119 | 1.14x | 1.21x |
+| binary | 32 | **2371** | 1377 | 1451 | 1.72x | 1.63x |
 
-The check matters for the comparison: without one, the decode loops alone
-are within 1-3% of each other (liblzma ahead on large outputs), and
-xz-native's lead at low thread counts comes from its faster CRC64 ([#50]).
-This was measured before [#87]; against a liblzma with CLMUL CRC (the
-tuned build above), expect the two about even at low thread counts, as in
-single-threaded decoding.
+liblzma's multithreaded runs vary more between rounds than xz-native's
+(binary at 32 threads: 1310-1476 tuned, against 2334-2376), so read its
+16- and 32-thread cells as ±5%.
+
+Fresh output memory decides most of the multithreaded lead. Both decoders
+write a new 64 MiB output, and with 4 KiB pages the kernel faults it in
+4 KiB at a time, which at 16 threads cost about as much as the decoding:
+before [#182], xz-native was 0.90-0.95x of the tuned liblzma there
+([#179]). Since [#182] the output (and the dictionary of a new streaming
+decoder) asks for transparent huge pages before it is first written, like
+the match finder's tables ([#167]); in a same-session A/B that cut page
+faults by 88% and made 8-32 threads 13-28% faster. liblzma doesn't ask,
+so it keeps paying for 4 KiB faults. With one thread, nothing changed
+(same instructions), and xz-native is 0.95x (text) and 0.99x (binary) of
+the tuned build on these 1 MiB Blocks, as before [#182] ([#179]); not yet
+investigated beyond the code-layout effect described above.
+
+[#179]: https://github.com/zcsizmadia/xz-native/issues/179
+
+[#182]: https://github.com/zcsizmadia/xz-native/pull/182
 
 **Windows (i7-12800H)**, text, at 798d326 (mean of two runs):
 

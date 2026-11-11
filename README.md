@@ -34,8 +34,9 @@ build scripts or the memory-safety risk. Sibling of the C# library
   `portable` feature selects (no `unsafe` code runs then). Every push is
   fuzzed, and the results are compared with C liblzma on millions of
   mutated files.
-- **As fast as liblzma: about even at decompression, faster at compression
-  (every preset), checksums and incompressible data.** Two C
+- **As fast as liblzma: about even at single-threaded decompression, faster
+  at multithreaded decompression, compression (every preset), checksums
+  and incompressible data.** Two C
   references: liblzma configured like its own build (fast unaligned
   access, CLMUL CRC, assembly decoder), and the `liblzma-sys` build that
   `xz2`/`liblzma` give Rust users, which has neither of the first two.
@@ -48,7 +49,7 @@ build scripts or the memory-safety risk. Sibling of the C# library
   | Compression, multithreaded, Linux | | 1.30-1.48x at preset 1, 1.04-1.13x at 6 |
   | Decompression, single thread, Linux (streaming) | 0.99-1.01x (even; see BENCHMARK.md) | 1.06-1.12x |
   | Decompression, single thread, Windows (MSVC) | | 1.3-1.4x |
-  | Decompression, multithreaded, Linux | | 1.04-1.06x at 1-8 threads, 1.10-1.50x at 16-32 |
+  | Decompression, multithreaded, Linux (one-shot) | 1.12-1.19x at 4-16 threads, 1.51-1.72x at 32 | 1.20-1.28x at 4-16 threads, 1.61-1.63x at 32 |
   | Decompression of incompressible data, Linux | 2.4x | 14x |
   | CRC32 / CRC64, Linux (Zen 3) | 1.9-2.1x | 13-23x |
 
