@@ -236,8 +236,19 @@ the match finder's tables ([#167]); in a same-session A/B that cut page
 faults by 88% and made 8-32 threads 13-28% faster. liblzma doesn't ask,
 so it keeps paying for 4 KiB faults. With one thread, nothing changed
 (same instructions), and xz-native is 0.95x (text) and 0.99x (binary) of
-the tuned build on these 1 MiB Blocks, as before [#182] ([#179]); not yet
-investigated beyond the code-layout effect described above.
+the tuned build on these 1 MiB Blocks, as before [#182] ([#179]).
+
+That one-thread gap is not a cost per Block. Measured again at 1.0.2
+(0018d25, same pinning, five interleaved rounds), xz-native is 0.98x
+(text, 105.3 against 107.5 MiB/s) and 1.00x (binary) of the tuned build,
+within the code-layout spread. It runs 4% more instructions and 9-10% more
+branches than liblzma, the same overhead as with one large Block ([#183]),
+and takes fewer page faults (134k against 158k for 8 decodes). Growing the
+output Block by Block costs nothing measurable: glibc moves a large
+allocation with `mremap` instead of copying it, and decoding into an
+output reserved in full up front was 1.5% slower (more page faults).
+
+[#183]: https://github.com/zcsizmadia/xz-native/issues/183
 
 [#179]: https://github.com/zcsizmadia/xz-native/issues/179
 
