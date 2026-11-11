@@ -22,14 +22,17 @@ const LARGE: usize = 32 << 20;
 /// memory can't be allocated (liblzma's `LZMA_MEM_ERROR`). Large buffers
 /// are probed with a fallible reservation first. The probe doesn't touch
 /// the memory, and the zeroed allocation after it gets fresh pages, which
-/// a reservation followed by a fill wouldn't.
+/// a reservation followed by a fill wouldn't. Those fresh pages are asked
+/// to be huge pages (see [`crate::hugepage`]) before anything writes them.
 pub(crate) fn zeroed(len: usize) -> Result<Vec<u8>> {
     if len >= LARGE {
         Vec::<u8>::new()
             .try_reserve_exact(len)
             .map_err(|_| Error::MemLimit)?;
     }
-    Ok(vec![0; len])
+    let v = vec![0; len];
+    crate::hugepage::hint(&v);
+    Ok(v)
 }
 
 #[derive(Debug)]

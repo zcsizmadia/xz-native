@@ -124,6 +124,7 @@ pub(crate) fn decode_block(
         .ok_or(Error::MemLimit)?;
     // Plus the slack that the LZMA decoder's over-copying needs past the end.
     out.reserve(total.min(comp_len.saturating_mul(MAX_RATIO) as u64) as usize + DICT_EXTRA);
+    crate::hugepage::hint_spare(out);
 
     let Some(&Filter::Lzma2 { dict_size }) = hdr.filters.last() else {
         unreachable!("validated chain")
@@ -179,6 +180,7 @@ fn decode_flat(
         if cap < lim + DICT_EXTRA {
             let want = lim.max(cap.saturating_mul(2).min(target)) + DICT_EXTRA;
             dict.buf.reserve(want - dict.buf.len());
+            crate::hugepage::hint_spare(&mut dict.buf);
         }
         dict.limit = lim;
         let before = (ip, dict.pos);

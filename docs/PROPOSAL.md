@@ -151,7 +151,9 @@ third_party/xz/     xz 5.8.4 source (reference only)
   unaligned loads), the x86-64 range-decoder assembly ported from liblzma
   (`lzma/x86_asm.rs`, `core::arch::asm!`, baseline x86-64 only), a few
   benchmarked hot-path reads and the prefetch hints of the binary tree
-  match finder (`lzma/lz_encoder.rs`, +2-7% at presets 4-9). Each has a SAFETY comment and debug assertions
+  match finder (`lzma/lz_encoder.rs`, +2-7% at presets 4-9), and the
+  Linux huge page hint for large buffers (`hugepage.rs`, `madvise`, the
+  only OS call; the match finder's tables and fresh decoder output). Each has a SAFETY comment and debug assertions
   and a safe Rust fallback that `portable` selects (the decoder's hot-path
   reads become checked indexing), so a `portable` build runs no `unsafe`
   code; CI runs the whole test suite both ways. New `unsafe` needs a
