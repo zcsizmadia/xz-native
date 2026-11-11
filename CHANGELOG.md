@@ -9,6 +9,11 @@ Stability section. Before 1.0, a minor version could change the API.
 
 ## [Unreleased]
 
+## [1.0.2+xz.5.8.4]
+
+Still compatible with xz/liblzma 5.8.4. A faster decoder on Linux; the API
+is unchanged.
+
 ### Changed
 - Faster multithreaded one-shot decompression on Linux: the output, and
   the dictionary of a new streaming decoder, ask for transparent huge pages
@@ -17,8 +22,10 @@ Stability section. Before 1.0, a minor version could change the API.
   a time instead of 4 KiB, which at many threads cost as much as the
   decoding: on an EPYC 7543, 64 MiB decodes 13% faster with 8 threads,
   17-18% with 16 and 23-28% with 24-32, and 16 threads are now ahead of
-  liblzma's multithreaded decoder (#179). Single-threaded decoding is
-  unchanged.
+  liblzma's multithreaded decoder (#179). Single-threaded decoding gains
+  only where page faults dominate, such as one-shot decoding of large,
+  poorly compressible data (64 MiB: 1.5 to 5.8 GiB/s); its decoding loop
+  is unchanged.
 
 ## [1.0.1+xz.5.8.4]
 
@@ -392,7 +399,8 @@ First release. Compatible with xz/liblzma 5.8.4.
   the `portable` feature disables them.
 - `no_std` + `alloc` without the default `std` feature. MSRV 1.89.
 
-[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v1.0.2...HEAD
+[1.0.2+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v1.0.1...v1.0.2
 [1.0.1+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v1.0.0...v1.0.1
 [1.0.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.4.0...v1.0.0
 [0.4.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.3.0...v0.4.0
