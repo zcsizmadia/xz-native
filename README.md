@@ -46,9 +46,9 @@ build scripts or the memory-safety risk. Sibling of the C# library
   |---|---|---|
   | Compression, single thread, Linux, presets 0-1 | 1.36-1.71x | 1.43-1.75x |
   | Compression, single thread, Linux, presets 6-9e | 1.10-1.91x | 1.22-1.91x |
-  | Compression, multithreaded, Linux | | 1.30-1.48x at preset 1, 1.04-1.13x at 6 |
+  | Compression, multithreaded, Linux | 1.38-1.47x at preset 1, 1.10-1.14x at 6 | 1.42-1.52x at preset 1, 1.26-1.30x at 6 |
   | Decompression, single thread, Linux (streaming) | 0.99-1.01x (even; see BENCHMARK.md) | 1.06-1.12x |
-  | Decompression, single thread, Windows (MSVC) | | 1.3-1.4x |
+  | Decompression, single thread, Windows (MSVC, no assembly) | 1.24-1.36x | 1.34-1.57x |
   | Decompression, multithreaded, Linux (one-shot) | 1.12-1.19x at 4-16 threads, 1.51-1.72x at 32 | 1.20-1.28x at 4-16 threads, 1.61-1.63x at 32 |
   | Decompression of incompressible data, Linux | 2.4x | 14x |
   | CRC32 / CRC64, Linux (Zen 3) | 1.9-2.1x | 13-23x |
