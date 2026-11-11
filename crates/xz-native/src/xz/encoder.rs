@@ -15,6 +15,7 @@ use crate::options::{EncoderOptions, LzmaOptions};
 use crate::xz::stream::Status;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::task::{Context, Poll};
 
 /// What the encoder should do after the given input (`lzma_action`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -176,7 +177,8 @@ enum Seq {
 /// the output is the same as liblzma's multithreaded encoder for any number
 /// of threads and any input split; only the options and the flushes
 /// decide it. [`Action::SyncFlush`] isn't supported then, and calls may
-/// wait for worker threads. See [`EncoderOptions::block_size`].
+/// wait for worker threads ([`poll_encode`](Self::poll_encode) returns
+/// instead). See [`EncoderOptions::block_size`].
 ///
 /// Feeding input in pieces, then finishing: [`Action::Finish`] is repeated
 /// with the input that is left until [`Status::StreamEnd`].
@@ -291,6 +293,73 @@ impl XzEncoder {
             self.total_out += written as u64;
         }
         r
+    }
+
+    /// [`encode`](Self::encode) for async code: where the multithreaded
+    /// encoder would wait for a worker to finish a Block before it can take
+    /// input or write output, it returns [`Poll::Pending`] instead, and a
+    /// worker wakes `cx`'s waker when it finishes one. `Pending` means that
+    /// nothing was taken or written; call again with the same arguments
+    /// once woken. A call that made progress before it would have waited
+    /// returns that progress. Single-threaded, it never returns `Pending`.
+    ///
+    /// The async writers ([`crate::tokio`], [`crate::futures`]) use it, so
+    /// they don't block the executor thread while workers compress.
+    ///
+    /// ```
+    /// use std::task::{Context, Poll, Waker};
+    /// use xz_native::{Action, EncoderOptions, Status, XzEncoder};
+    ///
+    /// let data = vec![7u8; 1 << 20];
+    /// let mut enc = XzEncoder::with_options(
+    ///     EncoderOptions::preset(1)?.threads(2).block_size(256 << 10),
+    /// )?;
+    /// // A real executor provides the waker; this one only spins.
+    /// let mut cx = Context::from_waker(Waker::noop());
+    /// let (mut input, mut out, mut buf) = (&data[..], Vec::new(), vec![0u8; 4096]);
+    /// loop {
+    ///     match enc.poll_encode(&mut cx, input, &mut buf, Action::Finish) {
+    ///         Poll::Pending => std::thread::yield_now(),
+    ///         Poll::Ready(r) => {
+    ///             let (used, written, status) = r?;
+    ///             input = &input[used..];
+    ///             out.extend_from_slice(&buf[..written]);
+    ///             if status == Status::StreamEnd {
+    ///                 break;
+    ///             }
+    ///         }
+    ///     }
+    /// }
+    /// assert_eq!(xz_native::decompress(&out)?, data);
+    /// # Ok::<(), xz_native::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// As [`encode`](Self::encode).
+    pub fn poll_encode(
+        &mut self,
+        cx: &mut Context<'_>,
+        input: &[u8],
+        output: &mut [u8],
+        action: Action,
+    ) -> Poll<Result<(usize, usize, Status)>> {
+        #[cfg(feature = "std")]
+        if let Inner::Multi(e) = &mut self.inner {
+            e.waker = Some(cx.waker().clone());
+            e.blocked = false;
+            let r = self.encode(input, output, action);
+            let Inner::Multi(e) = &mut self.inner else {
+                unreachable!()
+            };
+            e.waker = None;
+            if e.blocked && matches!(r, Ok((0, 0, _))) {
+                return Poll::Pending;
+            }
+            return Poll::Ready(r);
+        }
+        let _ = cx;
+        Poll::Ready(self.encode(input, output, action))
     }
 
     /// Uncompressed bytes taken from the input so far.

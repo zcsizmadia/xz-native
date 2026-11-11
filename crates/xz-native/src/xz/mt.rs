@@ -38,6 +38,7 @@ use alloc::vec::Vec;
 use core::any::Any;
 use core::fmt;
 use core::sync::atomic::{AtomicU64, Ordering};
+use core::task::Waker;
 use std::io::{self, BufRead};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -56,6 +57,48 @@ pub(crate) fn thread_count(threads: usize) -> usize {
         0 => std::thread::available_parallelism().map_or(1, |n| n.get()),
         n => n,
     }
+}
+
+/// The waker of a caller that polls instead of waiting for a worker
+/// (`poll_decode`, `poll_encode`); a worker wakes it after each Block it
+/// returns.
+#[derive(Default)]
+pub(crate) struct Notify(Mutex<Option<Waker>>);
+
+impl Notify {
+    fn slot(&self) -> std::sync::MutexGuard<'_, Option<Waker>> {
+        // The slot holds no invariant a panic could break.
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Wakes the registered waker, if any (once).
+    pub(crate) fn wake(&self) {
+        let waker = self.slot().take();
+        if let Some(w) = waker {
+            w.wake();
+        }
+    }
+}
+
+/// Takes a returned Block from `rx`: waits for one, or with `waker`
+/// registers it and returns `None` when none is ready yet. A worker sends
+/// its Block before waking, and the waker is registered before the second
+/// look, so a Block returned in between is either seen or wakes it.
+pub(crate) fn receive<T>(rx: &Receiver<T>, notify: &Notify, waker: Option<&Waker>) -> Option<T> {
+    let Some(waker) = waker else {
+        // The pool holds a sender, so this only fails if it is gone.
+        return Some(rx.recv().expect("xz-native worker threads exited"));
+    };
+    if let Ok(d) = rx.try_recv() {
+        return Some(d);
+    }
+    {
+        let mut slot = notify.slot();
+        if !slot.as_ref().is_some_and(|w| w.will_wake(waker)) {
+            *slot = Some(waker.clone());
+        }
+    }
+    rx.try_recv().ok()
 }
 
 /// A Block for a worker: its data after the header, through the check.
@@ -174,6 +217,7 @@ fn decode_job(job: &mut Job, opts: &DecoderOptions) -> Option<Error> {
 fn worker(
     jobs: &Mutex<Receiver<Job>>,
     done: &Sender<Done>,
+    notify: &Notify,
     stop: &AtomicU64,
     opts: DecoderOptions,
 ) {
@@ -202,6 +246,7 @@ fn worker(
         if done.send(done_job).is_err() {
             return;
         }
+        notify.wake();
     }
 }
 
@@ -212,6 +257,7 @@ struct Pool {
     jobs_rx: Arc<Mutex<Receiver<Job>>>,
     done_tx: Sender<Done>,
     done: Mutex<Receiver<Done>>,
+    notify: Arc<Notify>,
     /// Jobs with this id or higher are skipped.
     stop: Arc<AtomicU64>,
     opts: DecoderOptions,
@@ -227,6 +273,7 @@ impl Pool {
             jobs_rx: Arc::new(Mutex::new(jobs_rx)),
             done_tx,
             done: Mutex::new(done),
+            notify: Arc::default(),
             stop: Arc::new(AtomicU64::new(u64::MAX)),
             opts,
             handles: Vec::new(),
@@ -235,15 +282,16 @@ impl Pool {
 
     /// Starts a worker; false if the OS refuses a new thread.
     fn spawn(&mut self) -> bool {
-        let (jobs, done, stop) = (
+        let (jobs, done, notify, stop) = (
             self.jobs_rx.clone(),
             self.done_tx.clone(),
+            self.notify.clone(),
             self.stop.clone(),
         );
         let opts = self.opts;
         let spawned = std::thread::Builder::new()
             .name("xz-native-decoder".into())
-            .spawn(move || worker(&jobs, &done, &stop, opts));
+            .spawn(move || worker(&jobs, &done, &notify, &stop, opts));
         match spawned {
             Ok(handle) => {
                 self.handles.push(handle);
@@ -469,6 +517,11 @@ pub(crate) struct MtDecoder {
     consumed: u64,
     decoded: u64,
     with_workers: u64,
+    /// Set for a `poll_decode` call: wait for workers by registering it
+    /// instead of blocking.
+    pub(crate) waker: Option<Waker>,
+    /// The call stopped because it would have had to wait for a worker.
+    pub(crate) blocked: bool,
 }
 
 impl fmt::Debug for MtDecoder {
@@ -508,6 +561,8 @@ impl MtDecoder {
             consumed: 0,
             decoded: 0,
             with_workers: 0,
+            waker: None,
+            blocked: false,
         }
     }
 
@@ -817,18 +872,25 @@ impl MtDecoder {
         });
     }
 
-    /// Stores finished Blocks; with `wait`, waits for at least one.
-    fn collect(&mut self, mut wait: bool) {
-        let Some(pool) = &self.pool else { return };
+    /// Stores finished Blocks; with `wait`, waits for at least one, or
+    /// with a [`waker`](Self::waker) returns false if none is ready.
+    fn collect(&mut self, mut wait: bool) -> bool {
+        let Some(pool) = &self.pool else { return true };
         let rx = pool.done.lock().unwrap();
         loop {
             let d = if wait {
                 wait = false;
-                rx.recv().expect("xz-native decoder threads exited")
+                match receive(&rx, &pool.notify, self.waker.as_ref()) {
+                    Some(d) => d,
+                    None => {
+                        self.blocked = true;
+                        return false;
+                    }
+                }
             } else {
                 match rx.try_recv() {
                     Ok(d) => d,
-                    Err(_) => return,
+                    Err(_) => return true,
                 }
             };
             if let Some(p) = d.panic {
@@ -964,7 +1026,10 @@ impl MtDecoder {
                     if written > 0 {
                         break;
                     }
-                    self.collect(true);
+                    if !self.collect(true) {
+                        // `poll_decode`: the caller is woken instead.
+                        return Err(io::ErrorKind::WouldBlock.into());
+                    }
                 }
                 Item::Direct(dec) => {
                     // As `XzReader` without threads: one call per input chunk.

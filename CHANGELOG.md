@@ -9,6 +9,15 @@ Stability section. Before 1.0, a minor version could change the API.
 
 ## [Unreleased]
 
+### Added
+- `XzEncoder::poll_encode`, `XzDecoder::poll_decode` and
+  `AutoDecoder::poll_decode`, also on the `PushEncoder` and `PushDecoder`
+  traits: where the multithreaded coder would wait for a worker, they
+  return `Poll::Pending` and the worker wakes the task when it finishes a
+  Block (#90). The tokio and futures-io readers and writers use them, so
+  with threads they no longer block the executor thread while the workers
+  compress or decompress. Single-threaded coders always return `Ready`.
+
 ## [1.0.2+xz.5.8.4]
 
 Still compatible with xz/liblzma 5.8.4. A faster decoder on Linux; the API

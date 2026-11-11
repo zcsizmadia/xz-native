@@ -154,6 +154,9 @@ The push-style [`XzDecoder`](crates/xz-native/src/xz/stream.rs) and
 Async readers and writers come with the `tokio` feature
 (`xz_native::tokio`) or the `futures-io` feature (`xz_native::futures`, for
 async-std, smol and `futures`). Without them the crate has no dependencies.
+With threads, their workers do the coding and a poll that would wait for
+them returns `Pending`, so the executor thread stays free; the push coders
+offer the same as `poll_encode` and `poll_decode`.
 
 ```rust
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

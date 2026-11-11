@@ -4,9 +4,12 @@
 //!
 //! The coding runs inside `poll_read`/`poll_write`, on the executor thread.
 //! With threads (`DecoderOptions::threads` or `EncoderOptions::threads`
-//! other than 1), a poll can also wait for a worker to finish a Block; for
-//! large inputs on a shared executor, consider `spawn_blocking` with the
-//! `std` readers and writers.
+//! other than 1), the workers do the coding: a poll that would have to wait
+//! for one returns `Pending` and the worker wakes the task when it finishes
+//! a Block. Single-threaded, a poll codes a buffer at a time on the
+//! executor thread; for large inputs and heavy presets on a shared
+//! executor, consider threads or `spawn_blocking` with the `std` readers
+//! and writers.
 //!
 //! ```
 //! # #[tokio::main(flavor = "current_thread")]

@@ -6,6 +6,7 @@ use crate::check::Check;
 use crate::error::{Error, Result};
 use crate::lzip::LzipDecoder;
 use crate::xz::stream::{DecoderOptions, Status, XzDecoder};
+use core::task::{Context, Poll, Waker};
 
 /// A compressed file format that [`AutoDecoder`] detects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,12 +155,44 @@ impl AutoDecoder {
         output: &mut [u8],
         finish: bool,
     ) -> Result<(usize, usize, Status)> {
-        let r = self.decode_inner(input, output, finish);
+        match self.decode_waking(None, input, output, finish) {
+            Poll::Ready(r) => r,
+            Poll::Pending => unreachable!("only with a waker"),
+        }
+    }
+
+    /// [`decode`](Self::decode) for async code; see
+    /// [`XzDecoder::poll_decode`]. Only .xz with threads can return
+    /// [`Poll::Pending`].
+    ///
+    /// # Errors
+    ///
+    /// As [`decode`](Self::decode).
+    pub fn poll_decode(
+        &mut self,
+        cx: &mut Context<'_>,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+    ) -> Poll<Result<(usize, usize, Status)>> {
+        self.decode_waking(Some(cx.waker()), input, output, finish)
+    }
+
+    fn decode_waking(
+        &mut self,
+        waker: Option<&Waker>,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+    ) -> Poll<Result<(usize, usize, Status)>> {
+        let Some(r) = self.decode_inner(waker, input, output, finish).transpose() else {
+            return Poll::Pending;
+        };
         if let Ok((used, written, _)) = r {
             self.total_in += used as u64;
             self.total_out += written as u64;
         }
-        r
+        Poll::Ready(r)
     }
 
     /// Compressed bytes consumed from the input so far.
@@ -186,12 +219,14 @@ impl AutoDecoder {
         }
     }
 
+    /// `None`: the .xz decoder returned [`Poll::Pending`].
     fn decode_inner(
         &mut self,
+        waker: Option<&Waker>,
         input: &[u8],
         output: &mut [u8],
         finish: bool,
-    ) -> Result<(usize, usize, Status)> {
+    ) -> Result<Option<(usize, usize, Status)>> {
         if let Some(e) = crate::push::pending(&mut self.error) {
             return Err(e);
         }
@@ -199,7 +234,7 @@ impl AutoDecoder {
             let opts = self.opts;
             self.inner = match input.first() {
                 None if finish => return Err(Error::Truncated),
-                None => return Ok((0, 0, Status::Ok)),
+                None => return Ok(Some((0, 0, Status::Ok))),
                 Some(0xFD) => Inner::Xz(XzDecoder::with_options(opts)),
                 Some(0x4C) => Inner::Lzip(LzipDecoder::with_options(opts)),
                 Some(_) => Inner::Lzma(LzmaDecoder::with_options(opts).picky()),
@@ -210,12 +245,15 @@ impl AutoDecoder {
         } else {
             let (u, w, status) = match &mut self.inner {
                 Inner::Detect => unreachable!(),
-                Inner::Xz(d) => d.decode(input, output, finish)?,
+                Inner::Xz(d) => match d.decode_waking(waker, input, output, finish) {
+                    Poll::Ready(r) => r?,
+                    Poll::Pending => return Ok(None),
+                },
                 Inner::Lzma(d) => d.decode(input, output, finish)?,
                 Inner::Lzip(d) => d.decode(input, output, finish)?,
             };
             if status != Status::StreamEnd || !self.opts.concatenated {
-                return Ok((u, w, status));
+                return Ok(Some((u, w, status)));
             }
             self.finishing = true;
             (u, w)
@@ -227,6 +265,6 @@ impl AutoDecoder {
         } else {
             Ok(Status::Ok)
         };
-        crate::push::settle(&mut self.error, used, written, r)
+        crate::push::settle(&mut self.error, used, written, r).map(Some)
     }
 }
