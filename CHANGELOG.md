@@ -9,6 +9,17 @@ Stability section. Before 1.0, a minor version could change the API.
 
 ## [Unreleased]
 
+### Changed
+- Faster multithreaded one-shot decompression on Linux: the output, and
+  the dictionary of a new streaming decoder, ask for transparent huge pages
+  before they are first written (`madvise(MADV_HUGEPAGE)`, as the match
+  finder does since 1.0.0). The kernel then faults fresh memory in 2 MiB at
+  a time instead of 4 KiB, which at many threads cost as much as the
+  decoding: on an EPYC 7543, 64 MiB decodes 13% faster with 8 threads,
+  17-18% with 16 and 23-28% with 24-32, and 16 threads are now ahead of
+  liblzma's multithreaded decoder (#179). Single-threaded decoding is
+  unchanged.
+
 ## [1.0.1+xz.5.8.4]
 
 Still compatible with xz/liblzma 5.8.4. Documentation only; the code is

@@ -122,6 +122,7 @@ mod error;
 mod filter;
 #[cfg(feature = "futures-io")]
 pub mod futures;
+mod hugepage;
 #[cfg(feature = "std")]
 mod io;
 mod lzip;
