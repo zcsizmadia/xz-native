@@ -46,8 +46,9 @@ detects on each platform (`.cargo/config.toml` sets the per-target
 the fair reference for "as fast as liblzma", and its CRC runs at 13.7
 GiB/s on the EPYC. The plain **`liblzma-sys`** build is what `xz2`/`liblzma`
 users run today; the comment in `.cargo/config.toml` shows how to measure
-it. On the EPYC the tables show both. The other machines and the
-multithreaded tables were measured against the `liblzma-sys` build only.
+it. The EPYC tables (single and multithreaded) and the Windows
+decompression table show both; the other Windows tables and the other
+machines were measured against the `liblzma-sys` build only.
 
 [#86]: https://github.com/zcsizmadia/xz-native/pull/86
 
@@ -105,15 +106,26 @@ the `liblzma-sys` build at 223f72c (the C library is the same source in both)
 | binary, xz -6 | **181.1** | 177.5 | 105.0 | 175.4 | 158.7 |
 | random (GiB/s) | **15.4** | 6.9-8.4 | 0.42-0.43 | 5.1-6.7 | 1.07 |
 
-**Windows (i7-12800H)**, at da40bf3
+**Windows (i7-12800H, mains power, High performance plan)**, at ae85aee.
+MSVC can't build liblzma's x86-64 assembly decoder (GCC/Clang inline asm),
+so the tuned build here has CLMUL CRC and fast unaligned access but not the
+assembly. Medians of three interleaved rounds of `profile_decode` (20
+iterations each); lzma-rust2 and the random row from two `cargo bench`
+rounds in the same session:
 
-| Input | xz-native one-shot | xz-native XzReader | lzma-rust2 | C liblzma |
-|---|---|---|---|---|
-| text, xz -1 | **116.7** | 113.3 | 81.5 | 83.3 |
-| text, xz -6 | **127.5** | 120.7 | 77.6 | 92.3 |
-| binary, xz -1 | **98.4** | 95.8 | 69.2 | 70.8 |
-| binary, xz -6 | **174.4** | 167.6 | 110.0 | 134.6 |
-| random (GiB/s) | **3.72-3.76** | 1.90-2.71 | 0.38-0.44 | 0.82-0.97 |
+| Input | xz-native one-shot | xz-native XzReader | lzma-rust2 | C liblzma, tuned | C liblzma, `liblzma-sys` |
+|---|---|---|---|---|---|
+| text, xz -1 | **120.0** | 117.1 | 77.6-78.7 | 88.4 | 76.3 |
+| text, xz -6 | **124.4** | 119.6 | 77.3-79.5 | 92.3 | 82.5 |
+| binary, xz -1 | **100.3** | 98.6 | 68.1-68.7 | 74.9 | 69.5 |
+| binary, xz -6 | **175.1** | 168.1 | 105.5-106.4 | 135.8 | 125.1 |
+| random (GiB/s) | **3.63-3.81** | 1.86-2.68 | 0.37-0.43 | 1.83-2.58 | 0.83-0.97 |
+
+xz-native is 1.29-1.36x faster one-shot and 1.24-1.32x streaming than the
+tuned build, and 1.40-1.57x and 1.34-1.53x than the `liblzma-sys` build.
+The `liblzma-sys` numbers are 2-11% lower than at da40bf3 (83.3, 92.3,
+70.8 and 134.6 MiB/s) with the same C source, so part of the larger lead
+over it is this laptop's conditions or the MSVC version, not xz-native.
 
 Against the tuned liblzma (assembly decoder, CLMUL CRC64), xz-native is
 about even. This run has it at 0.99-1.03x one-shot and 0.99-1.01x through
@@ -129,8 +141,9 @@ liblzma's own numbers moved 1-2% between the two binaries. In cycles of the deco
 0.5-1.5% behind on text and even on binary. It was 3-6% behind until [#87]
 ported the last range decoder assembly that mattered ([#81]). Against the
 `liblzma-sys` build, whose CRC64 costs it about 10%, xz-native is
-1.07-1.14x one-shot and 1.06-1.12x streaming. Against the MSVC build (at
-da40bf3) it is 1.3-1.4x faster. On
+1.07-1.14x one-shot and 1.06-1.12x streaming. Against the MSVC builds (at
+ae85aee) it is 1.24-1.36x faster than the tuned one and 1.34-1.57x than
+`liblzma-sys`. On
 every machine, xz-native is about 1.5x faster than lzma-rust2
 (1.42-1.73x).
 
@@ -334,20 +347,37 @@ liblzma still runs its multithreaded encoder with one worker.
 At preset 6, 64 MiB is only three 24 MiB Blocks, so neither encoder scales
 past three threads.
 
-**Linux (EPYC 7543)**, at da40bf3, 256 MiB input, best of 2, pinned to the
-32 cores of one NUMA node, xz-native vs liblzma's multithreaded encoder
-(ratio in brackets):
+**Linux (EPYC 7543)**, at ae85aee, 256 MiB input, `examples/profile_encode`
+(default Block size, as `xz -T`), pinned to the 32 cores of one NUMA node
+with its memory (`numactl --physcpubind=32-63 --membind=1`), medians of
+three interleaved rounds, xz-native vs liblzma's multithreaded encoder in
+both C builds. Ratios are xz-native over the tuned build, then over the
+`liblzma-sys` build:
 
-| Data, preset | 4 threads | 8 threads | 16 threads | 32 threads |
-|---|---|---|---|---|
-| text -1 | **82.9** vs 58.0 (1.43x) | **164.4** vs 115.3 (1.43x) | **301.9** vs 208.6 (1.45x) | **553.0** vs 373.1 (1.48x) |
-| binary -1 | **70.7** vs 52.3 (1.35x) | **133.2** vs 102.1 (1.30x) | **257.3** vs 188.0 (1.37x) | **474.2** vs 335.7 (1.41x) |
-| text -6 | **10.37** vs 9.94 (1.04x) | **15.86** vs 15.03 (1.06x) | **25.38** vs 24.33 (1.04x) | **25.41** vs 24.02 (1.06x) |
-| binary -6 | **10.88** vs 9.73 (1.12x) | **16.30** vs 14.64 (1.11x) | **27.47** vs 24.34 (1.13x) | **26.99** vs 24.98 (1.08x) |
+| Data, preset | Threads | xz-native | C liblzma, tuned | C liblzma, `liblzma-sys` | xz-native / tuned | xz-native / `liblzma-sys` |
+|---|---|---|---|---|---|---|
+| text -1 | 4 | **86.2** | 61.1 | 58.8 | 1.41x | 1.47x |
+| text -1 | 8 | **169.3** | 120.4 | 115.3 | 1.41x | 1.47x |
+| text -1 | 16 | **305.9** | 215.9 | 206.3 | 1.42x | 1.48x |
+| text -1 | 32 | **536.1** | 365.7 | 351.8 | 1.47x | 1.52x |
+| binary -1 | 4 | **75.1** | 54.6 | 53.0 | 1.38x | 1.42x |
+| binary -1 | 8 | **145.1** | 105.4 | 102.3 | 1.38x | 1.42x |
+| binary -1 | 16 | **265.7** | 191.0 | 185.9 | 1.39x | 1.43x |
+| binary -1 | 32 | **467.5** | 329.0 | 319.7 | 1.42x | 1.46x |
+| text -6 | 4 | **12.69** | 11.36 | 9.93 | 1.12x | 1.28x |
+| text -6 | 8 | **19.33** | 17.20 | 15.09 | 1.12x | 1.28x |
+| text -6 | 16 | **30.68** | 27.51 | 24.31 | 1.12x | 1.26x |
+| text -6 | 32 | **30.31** | 27.66 | 24.09 | 1.10x | 1.26x |
+| binary -6 | 4 | **13.16** | 11.57 | 10.12 | 1.14x | 1.30x |
+| binary -6 | 8 | **19.77** | 17.55 | 15.30 | 1.13x | 1.29x |
+| binary -6 | 16 | **32.08** | 28.70 | 25.21 | 1.12x | 1.27x |
+| binary -6 | 32 | **32.27** | 28.69 | 25.47 | 1.12x | 1.27x |
 
-At -6, 256 MiB is eleven 24 MiB Blocks, so neither encoder gains past 11
-threads; the -1 ratio is the single-thread gain, kept at every thread
-count.
+The rounds agree within 1-2%. At -6, 256 MiB is eleven 24 MiB Blocks, so
+neither encoder gains past 11 threads; the -1 ratio is the single-thread
+gain, kept at every thread count. At -6 xz-native leads by more than it
+did before [#167] (1.04-1.13x over `liblzma-sys` at da40bf3): each
+worker's match finder gets huge pages, as in single-threaded compression.
 
 ### Why compression is faster
 
