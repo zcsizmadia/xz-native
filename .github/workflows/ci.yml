@@ -183,11 +183,16 @@ jobs:
           tool: cargo-nextest
       - run: cargo miri setup --target ${{ matrix.target }}
       - name: Unit tests
-        # The unsafe code: checksums, decoder, match finder prefetch. The
-        # encoder tests and the BCJ split test are safe code and slow under
-        # Miri (about 45 and 17 minutes); miri.yml runs them weekly and
-        # before each release. nextest runs
-        # each test in its own Miri process, one per CPU.
+        # The unsafe code: the decoder's hot-path reads, the match finder
+        # prefetch hints and the checksums. Miri reports only the target's
+        # compile-time CPU features, so here the checksums take the generic
+        # code; the next step runs the SIMD paths. Not covered by Miri at
+        # all: the x86-64 decoder assembly (Miri can't run inline asm) and
+        # the huge page hint (an OS call), both compiled out under
+        # cfg(miri). The encoder tests and the BCJ split test are safe code
+        # and slow under Miri (about 45 and 17 minutes); miri.yml runs them
+        # weekly and before each release. nextest runs each test in its own
+        # Miri process, one per CPU.
         run: >
           cargo miri nextest run -p xz-native --lib --target ${{ matrix.target }}
           -E 'not (test(~lzma2_encoder::) | test(~range_encoder::)
@@ -195,6 +200,25 @@ jobs:
           | test(~normalization_is_transparent)
           | test(~binary_trees_find_longest_match)
           | test(~bcj_stage_any_split))'
+      - name: SIMD checksums
+        # The CPU features enabled at compile time, so that Miri's feature
+        # detection reports them and the check:: tests compare each SIMD
+        # path (x86-64: CLMUL, VPCLMUL, SHA; AArch64, interpreted on this
+        # runner: CRC32, PMULL, SHA2) with the generic code (#178).
+        # XZ_NATIVE_REQUIRE_SIMD fails the run if a path isn't selected.
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        env:
+          MIRIFLAGS: -Zmiri-env-forward=XZ_NATIVE_REQUIRE_SIMD
+        run: |
+          cargo miri setup --target aarch64-unknown-linux-gnu
+          XZ_NATIVE_REQUIRE_SIMD=clmul,vpclmul,sha \
+          RUSTFLAGS="-C target-feature=+pclmulqdq,+ssse3,+sse4.1,+avx2,+vpclmulqdq,+sha" \
+            cargo miri test -p xz-native --lib --target x86_64-unknown-linux-gnu \
+            --target-dir target/miri-simd check::
+          XZ_NATIVE_REQUIRE_SIMD=clmul,crc,sha \
+          RUSTFLAGS="-C target-feature=+crc,+aes,+sha2" \
+            cargo miri test -p xz-native --lib --target aarch64-unknown-linux-gnu \
+            --target-dir target/miri-simd check::
       - name: xz test files
         run: cargo miri test -p xz-native --test xz_test_files --target ${{ matrix.target }}
         env:
