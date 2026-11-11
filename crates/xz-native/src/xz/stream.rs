@@ -8,6 +8,7 @@ use crate::filter::ChainDecoder;
 use crate::lzma::Progress;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::task::{Context, Poll, Waker};
 
 /// Status returned by streaming decoders and encoders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -518,7 +519,8 @@ enum Seq {
 /// the input and decoded in parallel by worker threads, and the output is
 /// the same as without threads. A call then returns the decoded data of the
 /// Blocks that are done, and when none is and there is output space, it
-/// waits for one (it does not wait for more input). The input consumed runs
+/// waits for one (it does not wait for more input;
+/// [`poll_decode`](Self::poll_decode) returns instead). The input consumed runs
 /// ahead of the output by up to `2 * threads` Blocks, within
 /// `min(memlimit, memlimit_threading)` bytes of Blocks in flight.
 ///
@@ -696,23 +698,103 @@ impl XzDecoder {
         output: &mut [u8],
         finish: bool,
     ) -> Result<(usize, usize, Status)> {
+        match self.decode_waking(None, input, output, finish) {
+            Poll::Ready(r) => r,
+            Poll::Pending => unreachable!("only with a waker"),
+        }
+    }
+
+    /// [`decode`](Self::decode), or with `waker` [`poll_decode`](Self::poll_decode).
+    pub(crate) fn decode_waking(
+        &mut self,
+        waker: Option<&Waker>,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+    ) -> Poll<Result<(usize, usize, Status)>> {
         if let Some(e) = crate::push::pending(&mut self.error) {
-            return Err(e);
+            return Poll::Ready(Err(e));
         }
         let (mut ip, mut op) = (0, 0);
         #[cfg(feature = "std")]
         let r = match &mut self.mt {
-            Some(mt) => mt.decode(input, output, finish, &mut ip, &mut op),
+            Some(mt) => {
+                mt.waker = waker.cloned();
+                mt.blocked = false;
+                let r = mt.decode(input, output, finish, &mut ip, &mut op);
+                mt.waker = None;
+                if mt.blocked && ip == 0 && op == 0 && r.is_ok() {
+                    return Poll::Pending;
+                }
+                r
+            }
             None => self.run(input, output, finish, &mut ip, &mut op),
         };
         #[cfg(not(feature = "std"))]
-        let r = self.run(input, output, finish, &mut ip, &mut op);
+        let r = {
+            let _ = waker;
+            self.run(input, output, finish, &mut ip, &mut op)
+        };
         let r = crate::push::settle(&mut self.error, ip, op, r);
         if let Ok((used, written, _)) = r {
             self.total_in += used as u64;
             self.total_out += written as u64;
         }
-        r
+        Poll::Ready(r)
+    }
+
+    /// [`decode`](Self::decode) for async code: where the multithreaded
+    /// decoder would wait for a worker to finish the next Block, it returns
+    /// [`Poll::Pending`] instead, and a worker wakes `cx`'s waker when it
+    /// finishes one. `Pending` means that nothing was consumed or written;
+    /// call again with the same arguments once woken. A call that made
+    /// progress before it would have waited returns that progress.
+    /// Without threads, it never returns `Pending`.
+    ///
+    /// The async readers ([`crate::tokio`], [`crate::futures`]) use it, so
+    /// they don't block the executor thread while workers decode.
+    ///
+    /// ```
+    /// use std::task::{Context, Poll, Waker};
+    /// use xz_native::{DecoderOptions, EncoderOptions, Status, XzDecoder};
+    ///
+    /// let data = vec![7u8; 1 << 20];
+    /// let packed = xz_native::compress_with_options(
+    ///     &data,
+    ///     &EncoderOptions::preset(1)?.threads(2).block_size(256 << 10),
+    /// )?;
+    /// let mut dec = XzDecoder::with_options(DecoderOptions::default().threads(2));
+    /// // A real executor provides the waker; this one only spins.
+    /// let mut cx = Context::from_waker(Waker::noop());
+    /// let (mut input, mut out, mut buf) = (&packed[..], Vec::new(), vec![0u8; 4096]);
+    /// loop {
+    ///     match dec.poll_decode(&mut cx, input, &mut buf, true) {
+    ///         Poll::Pending => std::thread::yield_now(),
+    ///         Poll::Ready(r) => {
+    ///             let (used, written, status) = r?;
+    ///             input = &input[used..];
+    ///             out.extend_from_slice(&buf[..written]);
+    ///             if status == Status::StreamEnd {
+    ///                 break;
+    ///             }
+    ///         }
+    ///     }
+    /// }
+    /// assert_eq!(out, data);
+    /// # Ok::<(), xz_native::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// As [`decode`](Self::decode).
+    pub fn poll_decode(
+        &mut self,
+        cx: &mut Context<'_>,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+    ) -> Poll<Result<(usize, usize, Status)>> {
+        self.decode_waking(Some(cx.waker()), input, output, finish)
     }
 
     /// Compressed bytes consumed from the input so far.

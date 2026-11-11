@@ -8,6 +8,7 @@ use crate::lzip::LzipDecoder;
 use crate::raw::{RawDecoder, RawEncoder};
 use crate::xz::encoder::{Action, XzEncoder};
 use crate::xz::stream::{Status, XzDecoder};
+use core::task::{Context, Poll};
 
 mod sealed {
     pub trait Sealed {}
@@ -53,6 +54,26 @@ pub trait PushDecoder: sealed::Sealed {
         output: &mut [u8],
         finish: bool,
     ) -> Result<(usize, usize, Status)>;
+
+    /// [`decode`](Self::decode) for async code: where the decoder would
+    /// wait for its worker threads, it returns [`Poll::Pending`] instead and
+    /// wakes `cx`'s waker later; see [`XzDecoder::poll_decode`]. Only
+    /// [`XzDecoder`] and [`AutoDecoder`] with threads can return `Pending`;
+    /// the others always return `Ready`.
+    ///
+    /// # Errors
+    ///
+    /// As [`decode`](Self::decode).
+    fn poll_decode(
+        &mut self,
+        cx: &mut Context<'_>,
+        input: &[u8],
+        output: &mut [u8],
+        finish: bool,
+    ) -> Poll<Result<(usize, usize, Status)>> {
+        let _ = cx;
+        Poll::Ready(self.decode(input, output, finish))
+    }
 }
 
 /// A push-style encoder: [`XzEncoder`], [`LzmaEncoder`] or [`RawEncoder`].
@@ -70,10 +91,30 @@ pub trait PushEncoder: sealed::Sealed {
         output: &mut [u8],
         action: Action,
     ) -> Result<(usize, usize, Status)>;
+
+    /// [`encode`](Self::encode) for async code: where the encoder would
+    /// wait for its worker threads, it returns [`Poll::Pending`] instead and
+    /// wakes `cx`'s waker later; see [`XzEncoder::poll_encode`]. Only
+    /// [`XzEncoder`] with threads can return `Pending`; the others always
+    /// return `Ready`.
+    ///
+    /// # Errors
+    ///
+    /// As [`encode`](Self::encode).
+    fn poll_encode(
+        &mut self,
+        cx: &mut Context<'_>,
+        input: &[u8],
+        output: &mut [u8],
+        action: Action,
+    ) -> Poll<Result<(usize, usize, Status)>> {
+        let _ = cx;
+        Poll::Ready(self.encode(input, output, action))
+    }
 }
 
 macro_rules! push_decoders {
-    ($($t:ty),*) => {$(
+    ($($t:ty $(=> $poll:ident)?),*) => {$(
         impl sealed::Sealed for $t {}
         impl PushDecoder for $t {
             #[inline]
@@ -85,12 +126,24 @@ macro_rules! push_decoders {
             ) -> Result<(usize, usize, Status)> {
                 <$t>::decode(self, input, output, finish)
             }
+            $(
+                #[inline]
+                fn poll_decode(
+                    &mut self,
+                    cx: &mut Context<'_>,
+                    input: &[u8],
+                    output: &mut [u8],
+                    finish: bool,
+                ) -> Poll<Result<(usize, usize, Status)>> {
+                    <$t>::$poll(self, cx, input, output, finish)
+                }
+            )?
         }
     )*};
 }
 
 macro_rules! push_encoders {
-    ($($t:ty),*) => {$(
+    ($($t:ty $(=> $poll:ident)?),*) => {$(
         impl sealed::Sealed for $t {}
         impl PushEncoder for $t {
             #[inline]
@@ -102,12 +155,31 @@ macro_rules! push_encoders {
             ) -> Result<(usize, usize, Status)> {
                 <$t>::encode(self, input, output, action)
             }
+            $(
+                #[inline]
+                fn poll_encode(
+                    &mut self,
+                    cx: &mut Context<'_>,
+                    input: &[u8],
+                    output: &mut [u8],
+                    action: Action,
+                ) -> Poll<Result<(usize, usize, Status)>> {
+                    <$t>::$poll(self, cx, input, output, action)
+                }
+            )?
         }
     )*};
 }
 
-push_decoders!(XzDecoder, LzmaDecoder, LzipDecoder, RawDecoder, AutoDecoder);
-push_encoders!(XzEncoder, LzmaEncoder, RawEncoder);
+// The .xz coders override the `poll_` methods; the others never wait.
+push_decoders!(
+    XzDecoder => poll_decode,
+    LzmaDecoder,
+    LzipDecoder,
+    RawDecoder,
+    AutoDecoder => poll_decode
+);
+push_encoders!(XzEncoder => poll_encode, LzmaEncoder, RawEncoder);
 
 /// Ends a push decoder call the way liblzma's `lzma_code` does: the progress
 /// made before an error is returned first, as `Ok`, and the error comes

@@ -41,7 +41,7 @@ impl<D: PushDecoder> ReadCore<D> {
         loop {
             let input = ready!(fill(inner.as_mut(), cx))?;
             let eof = input.is_empty();
-            let (used, written, status) = self.dec.decode(input, out, eof)?;
+            let (used, written, status) = ready!(self.dec.poll_decode(cx, input, out, eof))?;
             consume(inner.as_mut(), used);
             if status == Status::StreamEnd {
                 self.done = true;
@@ -115,7 +115,8 @@ impl<E: PushEncoder> WriteCore<E> {
         }
         loop {
             ready!(self.poll_drain(cx, inner.as_mut(), &write))?;
-            let (used, written, _) = self.enc.encode(data, &mut self.buf, Action::Run)?;
+            let (used, written, _) =
+                ready!(self.enc.poll_encode(cx, data, &mut self.buf, Action::Run))?;
             self.len = written;
             self.total_in += used as u64;
             if used > 0 || data.is_empty() {
@@ -149,7 +150,8 @@ impl<E: PushEncoder> WriteCore<E> {
             if self.finished {
                 return Poll::Ready(Ok(()));
             }
-            let (_, written, status) = self.enc.encode(&[], &mut self.buf, Action::Finish)?;
+            let (_, written, status) =
+                ready!(self.enc.poll_encode(cx, &[], &mut self.buf, Action::Finish))?;
             self.len = written;
             self.finished = status == Status::StreamEnd;
         }
@@ -190,8 +192,9 @@ macro_rules! adapters {
         }
 
         /// .xz decompressing reader. With [`DecoderOptions::threads`] other
-        /// than 1, it decodes with worker threads, and a poll can block
-        /// while it waits for them (see [`XzDecoder`]).
+        /// than 1, it decodes with worker threads, and a poll that would
+        /// wait for them returns `Pending` instead (see
+        /// [`XzDecoder::poll_decode`]).
         pub type XzReader<R> = Reader<R, XzDecoder>;
         /// Legacy .lzma decompressing reader.
         pub type LzmaReader<R> = Reader<R, LzmaDecoder>;
@@ -296,9 +299,10 @@ macro_rules! adapters {
         ///
         /// Compression is CPU work done inside `poll_write`, a buffer at a
         /// time; only the I/O is asynchronous. Heavy presets belong on a
-        /// blocking thread, and the multithreaded encoder
-        /// ([`EncoderOptions::threads`]) can block while it waits for its
-        /// workers. Shut the writer down to finish the stream: unlike the
+        /// blocking thread, or on the multithreaded encoder
+        /// ([`EncoderOptions::threads`]), whose workers compress while a poll
+        /// that would wait for them returns `Pending` (see
+        /// [`XzEncoder::poll_encode`]). Shut the writer down to finish the stream: unlike the
         /// `std::io` writers, dropping it can't write the end. The inner
         /// writer must be [`Unpin`]; wrap others in `Box::pin`.
         #[derive(Debug)]

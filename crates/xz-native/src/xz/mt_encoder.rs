@@ -33,7 +33,7 @@ use super::encoder::{
     filter_flags, write_block_header,
 };
 use super::format::STREAM_HEADER_SIZE;
-use super::mt::thread_count;
+use super::mt::{Notify, receive, thread_count};
 use super::stream::Status;
 use crate::check::CheckState;
 use crate::error::{Error, Result};
@@ -48,6 +48,7 @@ use alloc::vec::Vec;
 use core::any::Any;
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::task::Waker;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
@@ -475,7 +476,7 @@ struct Done {
     panic: Option<Box<dyn Any + Send>>,
 }
 
-fn worker(jobs: &Mutex<Receiver<Job>>, done: &Sender<Done>, stop: &AtomicBool) {
+fn worker(jobs: &Mutex<Receiver<Job>>, done: &Sender<Done>, notify: &Notify, stop: &AtomicBool) {
     let mut coder = BlockCoder::default();
     loop {
         let Ok(rx) = jobs.lock() else { return };
@@ -506,6 +507,7 @@ fn worker(jobs: &Mutex<Receiver<Job>>, done: &Sender<Done>, stop: &AtomicBool) {
         if done.send(d).is_err() {
             return;
         }
+        notify.wake();
     }
 }
 
@@ -516,6 +518,7 @@ struct Pool {
     jobs_rx: Arc<Mutex<Receiver<Job>>>,
     done_tx: Sender<Done>,
     done: Mutex<Receiver<Done>>,
+    notify: Arc<Notify>,
     stop: Arc<AtomicBool>,
     handles: Vec<JoinHandle<()>>,
 }
@@ -529,6 +532,7 @@ impl Pool {
             jobs_rx: Arc::new(Mutex::new(jobs_rx)),
             done_tx,
             done: Mutex::new(done),
+            notify: Arc::default(),
             stop: Arc::new(AtomicBool::new(false)),
             handles: Vec::new(),
         }
@@ -536,14 +540,15 @@ impl Pool {
 
     /// Starts a worker; false if the OS refuses a new thread.
     fn spawn(&mut self) -> bool {
-        let (jobs, done, stop) = (
+        let (jobs, done, notify, stop) = (
             self.jobs_rx.clone(),
             self.done_tx.clone(),
+            self.notify.clone(),
             self.stop.clone(),
         );
         let spawned = std::thread::Builder::new()
             .name("xz-native-encoder".into())
-            .spawn(move || worker(&jobs, &done, &stop));
+            .spawn(move || worker(&jobs, &done, &notify, &stop));
         match spawned {
             Ok(handle) => {
                 self.handles.push(handle);
@@ -613,6 +618,11 @@ pub(crate) struct MtEncoder {
     /// The largest progress reported, so that it never goes down (a Block
     /// stored uncompressed can end below where its worker was).
     reported: [AtomicU64; 2],
+    /// Set for a `poll_encode` call: wait for workers by registering it
+    /// instead of blocking.
+    pub(crate) waker: Option<Waker>,
+    /// The call stopped because it would have had to wait for a worker.
+    pub(crate) blocked: bool,
 }
 
 impl fmt::Debug for MtEncoder {
@@ -648,6 +658,8 @@ impl MtEncoder {
             done_in: 0,
             done_out: STREAM_HEADER_SIZE as u64,
             reported: Default::default(),
+            waker: None,
+            blocked: false,
         })
     }
 
@@ -734,7 +746,10 @@ impl MtEncoder {
                     // Input is waiting for a worker or the flush for the
                     // Blocks before it.
                     debug_assert!(self.busy > 0);
-                    self.collect(true)?;
+                    if !self.collect(true)? {
+                        // `poll_encode`: the caller is woken instead.
+                        return Ok((ip, op, Status::Ok));
+                    }
                 }
                 Seq::Done => return Ok((ip, op, Status::StreamEnd)),
             }
@@ -819,20 +834,27 @@ impl MtEncoder {
         Ok(())
     }
 
-    /// Stores encoded Blocks; with `wait`, waits for at least one.
-    fn collect(&mut self, mut wait: bool) -> Result<()> {
+    /// Stores encoded Blocks; with `wait`, waits for at least one, or with
+    /// a [`waker`](Self::waker) returns false if none is ready.
+    fn collect(&mut self, mut wait: bool) -> Result<bool> {
         let Some(pool) = &self.pool else {
-            return Ok(());
+            return Ok(true);
         };
         let rx = pool.done.lock().unwrap();
         loop {
             let d = if wait {
                 wait = false;
-                rx.recv().expect("xz-native encoder threads exited")
+                match receive(&rx, &pool.notify, self.waker.as_ref()) {
+                    Some(d) => d,
+                    None => {
+                        self.blocked = true;
+                        return Ok(false);
+                    }
+                }
             } else {
                 match rx.try_recv() {
                     Ok(d) => d,
-                    Err(_) => return Ok(()),
+                    Err(_) => return Ok(true),
                 }
             };
             if let Some(panic) = d.panic {
