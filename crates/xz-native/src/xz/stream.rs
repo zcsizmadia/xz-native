@@ -518,9 +518,11 @@ enum Seq {
 /// `xz -T` and liblzma's multithreaded encoder write them) are copied from
 /// the input and decoded in parallel by worker threads, and the output is
 /// the same as without threads. A call then returns the decoded data of the
-/// Blocks that are done, and when none is and there is output space, it
-/// waits for one (it does not wait for more input;
-/// [`poll_decode`](Self::poll_decode) returns instead). The input consumed runs
+/// Blocks that are done. When none is, a call that was given input returns
+/// after consuming it, so that the next call brings more Blocks to the
+/// workers; only a call without new input, or one that can't take more
+/// Blocks for now, waits for a Block if there is output space
+/// ([`poll_decode`](Self::poll_decode) returns `Pending` instead). The input consumed runs
 /// ahead of the output by up to `2 * threads` Blocks, within
 /// `min(memlimit, memlimit_threading)` bytes of Blocks in flight.
 ///

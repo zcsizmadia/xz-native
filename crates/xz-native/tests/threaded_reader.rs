@@ -7,7 +7,9 @@ mod common;
 
 use common::{Rng, push_xz, read_xz, threads, xz};
 use std::io::{BufRead, BufReader, Read};
-use xz_native::{DecoderOptions, Error, Status, XzDecoder, XzReader};
+use xz_native::{
+    AutoDecoder, DecoderOptions, EncoderOptions, Error, PushDecoder, Status, XzDecoder, XzReader,
+};
 
 fn text(n: usize, seed: u64) -> Vec<u8> {
     let words = [
@@ -509,6 +511,46 @@ fn push_decoder_reads_ahead() {
         assert_eq!(ahead, expected, "threads {t}: Blocks read");
         drop(dec);
     }
+}
+
+/// Fed in small chunks, `XzDecoder` and `AutoDecoder` with threads keep
+/// parsing ahead while the first Block is decoded, instead of waiting for
+/// it at the end of each chunk, which ran the Blocks one at a time (#190).
+#[test]
+#[cfg_attr(miri, ignore)]
+fn push_decoder_reads_ahead_in_chunks() {
+    fn first_output<D: PushDecoder>(mut dec: D, c: &[u8], data: &[u8]) -> usize {
+        let (mut ip, mut first, mut out) = (0, None, Vec::new());
+        let mut buf = vec![0u8; 1 << 16];
+        loop {
+            let end = (ip + 4096).min(c.len());
+            let (used, n, status) = dec.decode(&c[ip..end], &mut buf, end == c.len()).unwrap();
+            ip += used;
+            out.extend_from_slice(&buf[..n]);
+            if n > 0 && first.is_none() {
+                first = Some(ip);
+            }
+            if status == Status::StreamEnd {
+                assert!(out == data);
+                return first.unwrap();
+            }
+        }
+    }
+    // 1 MB Blocks take the workers milliseconds to decode; reading the
+    // next one's 4 KiB chunks takes microseconds.
+    let data = text(6_000_000, 16);
+    let opts = EncoderOptions::preset(6)
+        .unwrap()
+        .threads(2)
+        .block_size(1_000_000);
+    let c = xz_native::compress_with_options(&data, &opts).unwrap();
+    let bl = blocks(&c, 0);
+    assert_eq!(bl.len(), 6);
+    let read = |ip: usize| bl.iter().filter(|b| b.0 + b.2 <= ip).count();
+    let ip = first_output(XzDecoder::with_options(threads(2)), &c, &data);
+    assert!(read(ip) >= 2, "XzDecoder: {} Blocks read", read(ip));
+    let ip = first_output(AutoDecoder::with_options(threads(2)), &c, &data);
+    assert!(read(ip) >= 2, "AutoDecoder: {} Blocks read", read(ip));
 }
 
 /// Input that fails once at each of some positions.
