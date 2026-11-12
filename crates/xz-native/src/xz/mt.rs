@@ -590,8 +590,9 @@ impl MtDecoder {
 
     /// [`XzDecoder::decode`] with threads: like [`read`](Self::read) on the
     /// input given so far. Without `finish`, the end of `input` only pauses
-    /// parsing; the Blocks already read are still returned, and when none is
-    /// ready, the call waits for a worker to finish one.
+    /// parsing; the Blocks already read are still returned. When none is
+    /// ready, the call returns for more input if it got some, and otherwise
+    /// waits for a worker to finish one.
     ///
     /// [`XzDecoder::decode`]: super::stream::XzDecoder::decode
     pub(crate) fn decode(
@@ -610,7 +611,11 @@ impl MtDecoder {
         let r = if output.is_empty() {
             self.pump(&mut src).map(|()| 0)
         } else {
-            self.read_from(&mut src, output)
+            // With new input, a Block that isn't ready yet returns for more
+            // input instead of waiting, so that parsing keeps the workers
+            // busy; only a call without new input waits (liblzma doesn't
+            // wait while it can make progress either).
+            self.read_from(&mut src, output, input.is_empty())
         };
         *ip = src.pos;
         self.consumed += src.pos as u64;
@@ -949,7 +954,7 @@ impl MtDecoder {
     /// [`std::io::Read::read`] of the decoded data.
     pub(crate) fn read<R: BufRead>(&mut self, inner: &mut R, out: &mut [u8]) -> io::Result<usize> {
         let mut counted = Counting { inner, consumed: 0 };
-        let r = self.read_from(&mut counted, out);
+        let r = self.read_from(&mut counted, out, true);
         self.consumed += counted.consumed;
         r
     }
@@ -965,7 +970,15 @@ impl MtDecoder {
         (self.consumed - self.with_workers - reading, self.decoded)
     }
 
-    fn read_from<R: BufRead>(&mut self, inner: &mut R, out: &mut [u8]) -> io::Result<usize> {
+    /// With `wait_paused` false, a Block that isn't ready while parsing
+    /// waits for input returns [`io::ErrorKind::WouldBlock`] instead of
+    /// waiting for a worker.
+    fn read_from<R: BufRead>(
+        &mut self,
+        inner: &mut R,
+        out: &mut [u8],
+        wait_paused: bool,
+    ) -> io::Result<usize> {
         if let Some(e) = self.failed {
             return Err(e.into());
         }
@@ -1025,6 +1038,9 @@ impl MtDecoder {
                 Item::Block { data: None, .. } => {
                     if written > 0 {
                         break;
+                    }
+                    if paused && !wait_paused {
+                        return Err(io::ErrorKind::WouldBlock.into());
                     }
                     if !self.collect(true) {
                         // `poll_decode`: the caller is woken instead.

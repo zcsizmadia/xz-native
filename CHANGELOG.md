@@ -18,6 +18,14 @@ Stability section. Before 1.0, a minor version could change the API.
   with threads they no longer block the executor thread while the workers
   compress or decompress. Single-threaded coders always return `Ready`.
 
+### Fixed
+- Multithreaded decoding through `XzDecoder` and `AutoDecoder` (and so
+  `AutoReader` and `xz-native -d` with the default `--format=auto`) fed in
+  chunks: a call that consumed input no longer waits for the next Block
+  before returning, so parsing keeps the workers busy instead of running
+  the Blocks about one at a time. `xz-native -dc -T0` on 200 MiB in 9
+  Blocks: 0.73 s to 0.45 s, even with xz 5.8.4 (#190).
+
 ## [1.0.2+xz.5.8.4]
 
 Still compatible with xz/liblzma 5.8.4. A faster decoder on Linux; the API
