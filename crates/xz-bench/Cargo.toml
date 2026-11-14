@@ -12,10 +12,9 @@ publish = false
 [lib]
 bench = false
 
-[dependencies]
-xz-native = { path = "../xz-native" }
-
 [dev-dependencies]
+# Only the benches, tests and examples use it; the library holds the datasets.
+xz-native = { path = "../xz-native" }
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 lzma-rust2 = "0.25"
 # C liblzma 5.8.4 built from the bundled source. Used only as a speed
