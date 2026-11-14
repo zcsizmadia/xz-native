@@ -26,6 +26,12 @@ Stability section. Before 1.0, a minor version could change the API.
   the Blocks about one at a time. `xz-native -dc -T0` on 200 MiB in 9
   Blocks: 0.73 s to 0.45 s, even with xz 5.8.4 (#190).
 
+### Changed
+- Single-threaded decoding on x86-64: the range decoder's assembly reads
+  the input at base plus index, so the decode loop no longer converts the
+  input position to a pointer and back around every bit tree. Text decodes
+  0.7-1.2% faster on the EPYC 7543; binary is unchanged (#183).
+
 ## [1.0.2+xz.5.8.4]
 
 Still compatible with xz/liblzma 5.8.4. A faster decoder on Linux; the API
