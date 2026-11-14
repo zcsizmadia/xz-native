@@ -655,8 +655,8 @@ impl LzmaEncoder {
 
         let mut rep_len = 0;
         let mut rep_index = 0;
-        for i in 0..REPS {
-            let back = buf - self.reps[i] as usize - 1;
+        for (i, &rep) in self.reps.iter().enumerate() {
+            let back = buf - rep as usize - 1;
             if mf.buf[buf] != mf.buf[back] || mf.buf[buf + 1] != mf.buf[back + 1] {
                 continue;
             }
@@ -725,8 +725,8 @@ impl LzmaEncoder {
 
         let buf = buf + 1;
         let limit = 2.max(len_main - 1) as usize;
-        for i in 0..REPS {
-            let back = buf - self.reps[i] as usize - 1;
+        for &rep in &self.reps {
+            let back = buf - rep as usize - 1;
             if mf.buf[buf..buf + limit] == mf.buf[back..back + limit] {
                 return (u32::MAX, 1);
             }
