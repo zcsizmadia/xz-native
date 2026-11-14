@@ -13,16 +13,18 @@
 
 use core::arch::asm;
 
-/// Reads the next input byte if the range is below 2^24.
+/// Reads the next input byte if the range is below 2^24. The input is
+/// addressed as base plus index, so the Rust side's index needs no
+/// conversion to and from a pointer around each block.
 macro_rules! normalize {
     () => {
         concat!(
             "cmp ${top}, {range:e}\n",
             "jae 1f\n",
             "shl $8, {code:e}\n",
-            "movb ({in_ptr}), {code:l}\n",
+            "movb ({in_buf},{in_pos}), {code:l}\n",
             "shl $8, {range:e}\n",
-            "inc {in_ptr}\n",
+            "inc {in_pos}\n",
             "1:\n",
         )
     };
@@ -147,7 +149,7 @@ macro_rules! bittree_fn {
         ) -> u32 {
             // SAFETY: the caller guarantees the input bytes and the tree.
             unsafe {
-                let mut in_ptr = input.as_ptr().add(*pos);
+                let mut in_pos = *pos;
                 let sym: usize;
                 asm!(
                     $($step),+,
@@ -158,7 +160,8 @@ macro_rules! bittree_fn {
                     p0 = out(reg) _,
                     p1 = out(reg) _,
                     sym = out(reg) sym,
-                    in_ptr = inout(reg) in_ptr,
+                    in_buf = in(reg) input.as_ptr(),
+            in_pos = inout(reg) in_pos,
                     base = in(reg) probs,
                     top = const 1 << 24,
                     off = const -2017,
@@ -167,8 +170,8 @@ macro_rules! bittree_fn {
                 );
                 // A symbol reads at most 20 bytes and the fast path keeps FAST_MIN
                 // available, so the end of the input is never passed.
-                debug_assert!(in_ptr <= input.as_ptr_range().end);
-                *pos = in_ptr.offset_from(input.as_ptr()) as usize;
+                debug_assert!(in_pos <= input.len());
+                *pos = in_pos;
                 sym as u32
             }
         }
@@ -273,7 +276,7 @@ pub(super) unsafe fn matched_literal(
 ) -> u32 {
     // SAFETY: the caller guarantees the input bytes and the coder.
     unsafe {
-        let mut in_ptr = input.as_ptr().add(*pos);
+        let mut in_pos = *pos;
         let mut sym: usize = 1;
         let mut match_byte = (match_byte << 1) as usize;
         let mut match_bit = match_byte;
@@ -296,7 +299,8 @@ pub(super) unsafe fn matched_literal(
             sym = inout(reg) sym,
             match_byte = inout(reg) match_byte,
             offset = inout(reg) offset,
-            in_ptr = inout(reg) in_ptr,
+            in_buf = in(reg) input.as_ptr(),
+            in_pos = inout(reg) in_pos,
             base = in(reg) probs,
             top = const 1 << 24,
             off = const -2017,
@@ -305,8 +309,8 @@ pub(super) unsafe fn matched_literal(
         let _ = (match_bit, match_byte, offset);
         // A symbol reads at most 20 bytes and the fast path keeps FAST_MIN
         // available, so the end of the input is never passed.
-        debug_assert!(in_ptr <= input.as_ptr_range().end);
-        *pos = in_ptr.offset_from(input.as_ptr()) as usize;
+        debug_assert!(in_pos <= input.len());
+        *pos = in_pos;
         sym as u32 - 0x100
     }
 }
@@ -328,7 +332,7 @@ pub(super) unsafe fn direct_bits(
     debug_assert!(count >= 1);
     // SAFETY: the caller guarantees the input bytes.
     unsafe {
-        let mut in_ptr = input.as_ptr().add(*pos);
+        let mut in_pos = *pos;
         let mut dest: u32 = 0;
         let mut count = count;
         asm!(
@@ -349,15 +353,16 @@ pub(super) unsafe fn direct_bits(
             t1 = out(reg) _,
             dest = inout(reg) dest,
             count = inout(reg) count,
-            in_ptr = inout(reg) in_ptr,
+            in_buf = in(reg) input.as_ptr(),
+            in_pos = inout(reg) in_pos,
             top = const 1 << 24,
             options(att_syntax, nostack),
         );
         let _ = count;
         // A symbol reads at most 20 bytes and the fast path keeps FAST_MIN
         // available, so the end of the input is never passed.
-        debug_assert!(in_ptr <= input.as_ptr_range().end);
-        *pos = in_ptr.offset_from(input.as_ptr()) as usize;
+        debug_assert!(in_pos <= input.len());
+        *pos = in_pos;
         dest
     }
 }
@@ -470,7 +475,7 @@ pub(super) unsafe fn bittree_rev4(
 ) -> u32 {
     // SAFETY: the caller guarantees the input bytes and the tree.
     unsafe {
-        let mut in_ptr = input.as_ptr().add(*pos);
+        let mut in_pos = *pos;
         let sym: usize;
         asm!(
             rev!(first, "p0", "p1"),
@@ -484,7 +489,8 @@ pub(super) unsafe fn bittree_rev4(
             p0 = out(reg) _,
             p1 = out(reg) _,
             sym = out(reg) sym,
-            in_ptr = inout(reg) in_ptr,
+            in_buf = in(reg) input.as_ptr(),
+            in_pos = inout(reg) in_pos,
             base = in(reg) probs,
             top = const 1 << 24,
             off = const -2017,
@@ -492,8 +498,8 @@ pub(super) unsafe fn bittree_rev4(
         );
         // A symbol reads at most 20 bytes and the fast path keeps FAST_MIN
         // available, so the end of the input is never passed.
-        debug_assert!(in_ptr <= input.as_ptr_range().end);
-        *pos = in_ptr.offset_from(input.as_ptr()) as usize;
+        debug_assert!(in_pos <= input.len());
+        *pos = in_pos;
         sym as u32
     }
 }
