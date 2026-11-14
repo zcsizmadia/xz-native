@@ -9,6 +9,14 @@ Stability section. Before 1.0, a minor version could change the API.
 
 ## [Unreleased]
 
+## [1.1.0+xz.5.8.4]
+
+Still compatible with xz/liblzma 5.8.4. New non-blocking `poll_*` methods
+for the multithreaded coders, so the async adapters no longer block the
+executor; faster multithreaded decoding of input fed in chunks. Existing
+code is unaffected: the methods added to the sealed `PushEncoder` and
+`PushDecoder` traits can't break implementations outside the crate.
+
 ### Added
 - `XzEncoder::poll_encode`, `XzDecoder::poll_decode` and
   `AutoDecoder::poll_decode`, also on the `PushEncoder` and `PushDecoder`
@@ -18,6 +26,12 @@ Stability section. Before 1.0, a minor version could change the API.
   with threads they no longer block the executor thread while the workers
   compress or decompress. Single-threaded coders always return `Ready`.
 
+### Changed
+- Single-threaded decoding on x86-64: the range decoder's assembly reads
+  the input at base plus index, so the decode loop no longer converts the
+  input position to a pointer and back around every bit tree. Text decodes
+  0.7-1.2% faster on the EPYC 7543; binary is unchanged (#183).
+
 ### Fixed
 - Multithreaded decoding through `XzDecoder` and `AutoDecoder` (and so
   `AutoReader` and `xz-native -d` with the default `--format=auto`) fed in
@@ -25,12 +39,6 @@ Stability section. Before 1.0, a minor version could change the API.
   before returning, so parsing keeps the workers busy instead of running
   the Blocks about one at a time. `xz-native -dc -T0` on 200 MiB in 9
   Blocks: 0.73 s to 0.45 s, even with xz 5.8.4 (#190).
-
-### Changed
-- Single-threaded decoding on x86-64: the range decoder's assembly reads
-  the input at base plus index, so the decode loop no longer converts the
-  input position to a pointer and back around every bit tree. Text decodes
-  0.7-1.2% faster on the EPYC 7543; binary is unchanged (#183).
 
 ## [1.0.2+xz.5.8.4]
 
@@ -422,7 +430,8 @@ First release. Compatible with xz/liblzma 5.8.4.
   the `portable` feature disables them.
 - `no_std` + `alloc` without the default `std` feature. MSRV 1.89.
 
-[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/zcsizmadia/xz-native/compare/v1.1.0...HEAD
+[1.1.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v1.0.2...v1.1.0
 [1.0.2+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v1.0.1...v1.0.2
 [1.0.1+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v1.0.0...v1.0.1
 [1.0.0+xz.5.8.4]: https://github.com/zcsizmadia/xz-native/compare/v0.4.0...v1.0.0
